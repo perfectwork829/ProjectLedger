@@ -1,0 +1,125 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Theme: Clarity Design System inspired (enterprise — cool gray canvas, action blue,
+ * restrained borders/shadows). Tokens are HSL for shadcn compatibility.
+ */
+
+@layer base {
+  :root {
+    /* Canvas & surfaces (Clarity-style neutral grays) */
+    --background: 220 14% 96%;
+    --foreground: 210 11% 15%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 210 11% 15%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 210 11% 15%;
+
+    /* Action blue (~#007cbb VMware Clarity action) */
+    --primary: 199 100% 37%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 13% 91%;
+    --secondary-foreground: 210 11% 15%;
+
+    --muted: 220 14% 93%;
+    --muted-foreground: 215 9% 43%;
+
+    --accent: 199 60% 95%;
+    --accent-foreground: 199 100% 28%;
+
+    --destructive: 9 86% 48%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 13% 84%;
+    --input: 220 13% 84%;
+    --ring: 199 100% 37%;
+
+    /* Tighter corners — Clarity UI leans compact */
+    --radius: 0.1875rem;
+
+    /* Sidebar / secondary chrome */
+    --sidebar-background: 220 16% 97%;
+    --sidebar-foreground: 215 15% 26%;
+    --sidebar-primary: 199 100% 37%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 199 55% 94%;
+    --sidebar-accent-foreground: 199 100% 26%;
+    --sidebar-border: 220 13% 88%;
+    --sidebar-ring: 199 100% 37%;
+  }
+
+  .dark {
+    --background: 220 16% 12%;
+    --foreground: 210 20% 96%;
+
+    --card: 220 16% 14%;
+    --card-foreground: 210 20% 96%;
+
+    --popover: 220 16% 14%;
+    --popover-foreground: 210 20% 96%;
+
+    --primary: 199 85% 52%;
+    --primary-foreground: 220 16% 10%;
+
+    --secondary: 220 14% 20%;
+    --secondary-foreground: 210 20% 96%;
+
+    --muted: 220 14% 18%;
+    --muted-foreground: 215 14% 68%;
+
+    --accent: 199 40% 18%;
+    --accent-foreground: 199 90% 85%;
+
+    --destructive: 9 75% 42%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 14% 22%;
+    --input: 220 14% 22%;
+    --ring: 199 85% 52%;
+
+    --sidebar-background: 220 18% 10%;
+    --sidebar-foreground: 210 15% 92%;
+    --sidebar-primary: 199 85% 52%;
+    --sidebar-primary-foreground: 220 18% 10%;
+    --sidebar-accent: 220 16% 18%;
+    --sidebar-accent-foreground: 210 20% 96%;
+    --sidebar-border: 220 14% 20%;
+    --sidebar-ring: 199 85% 52%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    @apply antialiased;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans text-[14px] leading-normal;
+  }
+
+  h1,
+  h2,
+  h3 {
+    @apply font-semibold tracking-tight text-foreground;
+  }
+}
+
+/* Subtle card elevation similar to Clarity cards */
+@layer components {
+  .clarity-card-elevated {
+    @apply border border-border bg-card shadow-[0_1px_2px_rgba(0,0,0,0.06)];
+  }
+
+  .clarity-header-strip {
+    @apply h-0.5 w-full bg-primary;
+  }
+}
