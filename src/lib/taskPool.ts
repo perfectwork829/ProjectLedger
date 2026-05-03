@@ -1,8 +1,70 @@
 import { supabase } from '@/lib/supabase';
 import type { ProjectPriority, ProjectStatus, SourceStorageType } from '@/lib/projects';
 
-export type TaskPoolStatus = ProjectStatus;
-export type PoolSubtaskStatus = 'todo' | 'in_progress' | 'review' | 'done' | 'blocked';
+/** Parent lead / pool item — same lifecycle as projects (not Trello columns). */
+export type TaskPoolItemStatus = ProjectStatus;
+
+export const TASK_POOL_ITEM_STATUS_OPTIONS = [
+  'planning',
+  'active',
+  'blocked',
+  'qa',
+  'completed',
+  'cancelled',
+] as const satisfies readonly ProjectStatus[];
+
+const POOL_ITEM_STATUS_LABELS: Record<string, string> = {
+  planning: 'Planning',
+  active: 'Active',
+  blocked: 'Blocked',
+  qa: 'QA',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+};
+
+export function taskPoolItemStatusLabel(status: string): string {
+  return POOL_ITEM_STATUS_LABELS[status] ?? status.replace(/_/g, ' ');
+}
+
+/** Per-item Trello / Kanban columns on subtasks. */
+export const TASK_POOL_SUBTASK_BOARD_STATUSES = [
+  'todo',
+  'doing',
+  'done',
+  'bug_list',
+  'cancelled',
+] as const;
+
+export type PoolSubtaskStatus = (typeof TASK_POOL_SUBTASK_BOARD_STATUSES)[number];
+
+const SUBTASK_BOARD_LABELS: Record<string, string> = {
+  todo: 'To do',
+  doing: 'Doing',
+  done: 'Done',
+  bug_list: 'Bug list',
+  cancelled: 'Cancelled',
+};
+
+export function poolSubtaskBoardLabel(status: string): string {
+  return SUBTASK_BOARD_LABELS[status] ?? status.replace(/_/g, ' ');
+}
+
+const LEGACY_SUBTASK_STATUS_MAP: Partial<Record<string, PoolSubtaskStatus>> = {
+  in_progress: 'doing',
+  review: 'doing',
+  blocked: 'bug_list',
+  things_to_do: 'todo',
+};
+
+/** Maps DB or legacy dev-task values onto the board. */
+export function coercePoolSubtaskStatus(raw: string | null | undefined): PoolSubtaskStatus {
+  const s = (raw ?? '').trim();
+  if (!s) return 'todo';
+  if ((TASK_POOL_SUBTASK_BOARD_STATUSES as readonly string[]).includes(s)) return s as PoolSubtaskStatus;
+  const mapped = LEGACY_SUBTASK_STATUS_MAP[s];
+  if (mapped) return mapped;
+  return 'todo';
+}
 
 export interface TaskPoolItemRecord {
   id: string;
@@ -28,7 +90,7 @@ export interface TaskPoolItemRecord {
   budget_amount: number | null;
   currency: string;
   github_url: string | null;
-  status: TaskPoolStatus;
+  status: TaskPoolItemStatus;
   priority: ProjectPriority;
   promoted_project_id: string | null;
   promoted_at: string | null;

@@ -1,6 +1,54 @@
--- Atomically promote a task-pool row into `projects` when status = 'done' (bypasses RLS via SECURITY DEFINER).
--- NOTE: superseded for existing DBs by 20260504120000_task_pool_trello_statuses.sql (status 'completed' -> 'done').
+-- Trello-style columns live on task_pool_subtasks (per lead). Parent task_pool_items uses workflow statuses again.
 
+-- 1) Parent: restore planning | active | blocked | qa | completed | cancelled
+ALTER TABLE public.task_pool_items DROP CONSTRAINT IF EXISTS task_pool_status_check;
+
+UPDATE public.task_pool_items
+SET status = CASE status
+  WHEN 'todo' THEN 'planning'
+  WHEN 'doing' THEN 'active'
+  WHEN 'done' THEN 'completed'
+  WHEN 'bug_list' THEN 'blocked'
+  WHEN 'things_to_do' THEN 'planning'
+  WHEN 'cancelled' THEN 'cancelled'
+  WHEN 'planning' THEN 'planning'
+  WHEN 'active' THEN 'active'
+  WHEN 'blocked' THEN 'blocked'
+  WHEN 'qa' THEN 'qa'
+  WHEN 'completed' THEN 'completed'
+  ELSE 'planning'
+END;
+
+ALTER TABLE public.task_pool_items ALTER COLUMN status SET DEFAULT 'planning';
+
+ALTER TABLE public.task_pool_items
+  ADD CONSTRAINT task_pool_status_check
+  CHECK (status IN ('planning', 'active', 'blocked', 'qa', 'completed', 'cancelled'));
+
+-- 2) Subtasks: todo | doing | done | bug_list | things_to_do | cancelled
+ALTER TABLE public.task_pool_subtasks DROP CONSTRAINT IF EXISTS task_pool_subtasks_status_check;
+
+UPDATE public.task_pool_subtasks
+SET status = CASE status
+  WHEN 'todo' THEN 'todo'
+  WHEN 'in_progress' THEN 'doing'
+  WHEN 'review' THEN 'doing'
+  WHEN 'done' THEN 'done'
+  WHEN 'blocked' THEN 'bug_list'
+  WHEN 'doing' THEN 'doing'
+  WHEN 'bug_list' THEN 'bug_list'
+  WHEN 'things_to_do' THEN 'things_to_do'
+  WHEN 'cancelled' THEN 'cancelled'
+  ELSE 'todo'
+END;
+
+ALTER TABLE public.task_pool_subtasks ALTER COLUMN status SET DEFAULT 'todo';
+
+ALTER TABLE public.task_pool_subtasks
+  ADD CONSTRAINT task_pool_subtasks_status_check
+  CHECK (status IN ('todo', 'doing', 'done', 'bug_list', 'things_to_do', 'cancelled'));
+
+-- 3) Promote when parent status = completed; map subtask board -> project_tasks statuses; skip cancelled subtasks
 CREATE OR REPLACE FUNCTION public.promote_task_pool_to_project(p_pool_id uuid)
 RETURNS uuid
 LANGUAGE plpgsql
@@ -22,7 +70,7 @@ BEGIN
     RETURN r.promoted_project_id;
   END IF;
 
-  IF r.status NOT IN ('completed', 'done') THEN
+  IF r.status <> 'completed' THEN
     RETURN NULL;
   END IF;
 
@@ -129,14 +177,22 @@ BEGIN
     t.title,
     t.description,
     t.assignee_personnel_id,
-    t.status,
+    CASE t.status
+      WHEN 'todo' THEN 'todo'
+      WHEN 'doing' THEN 'in_progress'
+      WHEN 'done' THEN 'done'
+      WHEN 'bug_list' THEN 'blocked'
+      WHEN 'things_to_do' THEN 'todo'
+      ELSE 'todo'
+    END,
     t.priority,
     t.deadline,
     t.created_by,
     t.created_at,
     t.updated_at
   FROM public.task_pool_subtasks t
-  WHERE t.pool_item_id = r.id;
+  WHERE t.pool_item_id = r.id
+    AND t.status <> 'cancelled';
 
   UPDATE public.task_pool_items
   SET promoted_project_id = v_project_id,

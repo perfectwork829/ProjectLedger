@@ -3,11 +3,10 @@ import { Link } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import ModuleSearchBar from '@/components/ModuleSearchBar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
@@ -19,10 +18,17 @@ import {
   PoolChatMessage,
   PoolSubtask,
   promoteCompletedPoolItemToProject,
+  TASK_POOL_ITEM_STATUS_OPTIONS,
+  TASK_POOL_SUBTASK_BOARD_STATUSES,
+  poolSubtaskBoardLabel,
+  taskPoolItemStatusLabel,
+  type PoolSubtaskStatus,
   TaskPoolItemRecord,
   TaskPoolScreenshot,
   TaskPoolSourceFile,
 } from '@/lib/taskPool';
+import PoolSubtaskKanban from '@/components/PoolSubtaskKanban';
+import PoolSubtaskDetailDialog from '@/components/PoolSubtaskDetailDialog';
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from '@/components/ui/carousel';
 import {
   AlertDialog,
@@ -34,10 +40,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Trash2 } from 'lucide-react';
-
-const POOL_STATUS_OPTIONS = ['planning', 'active', 'blocked', 'qa', 'completed', 'cancelled'] as const;
-const SUBTASK_STATUS_OPTIONS = ['todo', 'in_progress', 'review', 'done', 'blocked'] as const;
+import { ArrowLeft, Trash2 } from 'lucide-react';
 
 export default function TaskPool() {
   const { user, hasRole } = useAuth();
@@ -55,11 +58,12 @@ export default function TaskPool() {
 
   const [searchInput, setSearchInput] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [selectedStack, setSelectedStack] = useState<string>('all');
   const [newChat, setNewChat] = useState('');
   const [newTitle, setNewTitle] = useState('');
   const [newAssignee, setNewAssignee] = useState('');
+  const [newSubtaskColumn, setNewSubtaskColumn] = useState<PoolSubtaskStatus>('todo');
   const [taskDeleteConfirm, setTaskDeleteConfirm] = useState<{ id: string; title: string } | null>(null);
+  const [subtaskDetailId, setSubtaskDetailId] = useState<string | null>(null);
 
   const fetchAll = async () => {
     setLoading(true);
@@ -88,6 +92,15 @@ export default function TaskPool() {
     fetchAll();
   }, []);
 
+  useEffect(() => {
+    if (!selectedId) return;
+    if (!items.some((p) => p.id === selectedId)) setSelectedId(null);
+  }, [items, selectedId]);
+
+  useEffect(() => {
+    setSubtaskDetailId(null);
+  }, [selectedId]);
+
   const filtered = useMemo(() => {
     const q = searchInput.trim().toLowerCase();
     if (!q) return items;
@@ -96,25 +109,12 @@ export default function TaskPool() {
     );
   }, [items, searchInput]);
 
-  const stackTree = useMemo(() => {
-    const grouped = filtered.reduce<Record<string, TaskPoolItemRecord[]>>((acc, p) => {
-      const key = (p.main_stack || 'uncategorized').toLowerCase();
-      if (!acc[key]) acc[key] = [];
-      acc[key].push(p);
-      return acc;
-    }, {});
-    return Object.entries(grouped).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [filtered]);
-
-  const displayItems = useMemo(() => {
-    if (selectedStack === 'all') return filtered;
-    return filtered.filter((p) => (p.main_stack || 'uncategorized').toLowerCase() === selectedStack);
-  }, [filtered, selectedStack]);
-
   const selected = selectedId ? items.find((p) => p.id === selectedId) || null : null;
   const selectedScreenshots = selected ? screenshots.filter((s) => s.pool_item_id === selected.id) : [];
   const selectedFiles = selected ? sourceFiles.filter((s) => s.pool_item_id === selected.id) : [];
   const selectedSubtasks = selected ? subtasks.filter((t) => t.pool_item_id === selected.id) : [];
+  const detailSubtask =
+    selected && subtaskDetailId ? selectedSubtasks.find((t) => t.id === subtaskDetailId) ?? null : null;
   const selectedMessages = selected ? messages.filter((m) => m.pool_item_id === selected.id) : [];
 
   const canEditStatus =
@@ -136,8 +136,11 @@ export default function TaskPool() {
     if (newStatus === 'completed') {
       const { projectId, error } = await promoteCompletedPoolItemToProject(selected.id);
       if (error) toast({ title: 'Could not create project', description: error, variant: 'destructive' });
-      else if (projectId) toast({ title: 'Moved to Projects', description: 'This lead is now an active project.' });
-      fetchAll();
+      else if (projectId) {
+        toast({ title: 'Moved to Projects', description: 'This lead is now an active project.' });
+        const row = await supabase.from('task_pool_items').select('*').eq('id', selected.id).maybeSingle();
+        if (row.data) setItems((prev) => prev.map((x) => (x.id === selected.id ? (row.data as TaskPoolItemRecord) : x)));
+      }
     }
   };
 
@@ -164,7 +167,7 @@ export default function TaskPool() {
         pool_item_id: selected.id,
         title: newTitle.trim(),
         assignee_personnel_id: newAssignee || null,
-        status: 'todo',
+        status: newSubtaskColumn,
         priority: 'medium',
         created_by: user?.id || null,
         updated_at: new Date().toISOString(),
@@ -180,13 +183,38 @@ export default function TaskPool() {
     setSubtasks((prev) => [res.data as PoolSubtask, ...prev]);
   };
 
-  const updateSubtaskStatus = async (task: PoolSubtask, status: string) => {
-    const r = await supabase.from('task_pool_subtasks').update({ status, updated_at: new Date().toISOString() }).eq('id', task.id);
-    if (r.error) {
-      toast({ title: 'Update failed', description: r.error.message, variant: 'destructive' });
+  const saveSubtaskDetail = async (
+    taskId: string,
+    data: { title: string; description: string | null },
+  ): Promise<boolean> => {
+    const r = await supabase
+      .from('task_pool_subtasks')
+      .update({ ...data, updated_at: new Date().toISOString() })
+      .eq('id', taskId)
+      .select('*')
+      .single();
+    if (r.error || !r.data) {
+      toast({ title: 'Save failed', description: r.error?.message, variant: 'destructive' });
+      return false;
+    }
+    setSubtasks((prev) => prev.map((t) => (t.id === taskId ? (r.data as PoolSubtask) : t)));
+    toast({ title: 'Card saved', description: 'Title and description were updated.' });
+    return true;
+  };
+
+  const moveSubtaskToColumn = async (taskId: string, status: PoolSubtaskStatus) => {
+    const r = await supabase
+      .from('task_pool_subtasks')
+      .update({ status, updated_at: new Date().toISOString() })
+      .eq('id', taskId)
+      .select('*')
+      .single();
+    if (r.error || !r.data) {
+      toast({ title: 'Move failed', description: r.error?.message, variant: 'destructive' });
       return;
     }
-    fetchAll();
+    const updated = r.data as PoolSubtask;
+    setSubtasks((prev) => prev.map((t) => (t.id === taskId ? updated : t)));
   };
 
   const deleteSubtask = async (id: string) => {
@@ -196,6 +224,7 @@ export default function TaskPool() {
       return;
     }
     setSubtasks((prev) => prev.filter((t) => t.id !== id));
+    setSubtaskDetailId((cur) => (cur === id ? null : cur));
   };
 
   const execDel = async () => {
@@ -229,120 +258,88 @@ export default function TaskPool() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight text-foreground">Task pool</h2>
-          <p className="text-sm text-muted-foreground">Pre-project leads. Completing a task creates a project automatically.</p>
-        </div>
-        <ModuleSearchBar value={searchInput} onChange={setSearchInput} placeholder="Search task pool..." id="task-pool-search" />
-      </div>
+      {!selectedId ? (
+        <>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 className="text-2xl font-semibold tracking-tight text-foreground">Task pool</h2>
+              <p className="text-sm text-muted-foreground">
+                Open a lead to view details and the full-width <strong>Task board</strong>. Set a lead to <strong>Completed</strong> to promote it to Projects.
+              </p>
+            </div>
+            <ModuleSearchBar value={searchInput} onChange={setSearchInput} placeholder="Search task pool..." id="task-pool-search" />
+          </div>
 
-      <div className="grid gap-4 lg:grid-cols-4">
-        <Card className="lg:col-span-1">
-          <CardHeader>
-            <CardTitle className="text-base">Categories</CardTitle>
-          </CardHeader>
-          <CardContent className="max-h-[70vh] overflow-auto">
-            <button
-              type="button"
-              onClick={() => setSelectedStack('all')}
-              className={`mb-2 w-full rounded border px-3 py-2 text-left text-sm transition ${selectedStack === 'all' ? 'border-primary bg-primary/5 text-primary' : 'border-border hover:border-primary/40'}`}
-            >
-              All stacks ({filtered.length})
-            </button>
-            <Accordion type="multiple" className="w-full">
-              {stackTree.map(([stack, rows]) => (
-                <AccordionItem key={stack} value={stack}>
-                  <AccordionTrigger className="py-2 text-sm font-medium no-underline hover:no-underline">
-                    <span className="capitalize">{stack.replace('_', ' ')}</span>
-                    <span className="ml-2 text-xs text-muted-foreground">({rows.length})</span>
-                  </AccordionTrigger>
-                  <AccordionContent className="space-y-1 pb-2">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedStack(stack)}
-                      className={`w-full rounded border px-2 py-1.5 text-left text-xs transition ${selectedStack === stack ? 'border-primary bg-primary/5 text-primary' : 'border-border hover:border-primary/40'}`}
-                    >
-                      Show all in {stack.replace('_', ' ')}
-                    </button>
-                    {rows.slice(0, 5).map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => {
-                          setSelectedStack(stack);
-                          setSelectedId(item.id);
-                        }}
-                        className="block w-full truncate rounded px-2 py-1 text-left text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-                        title={item.name}
-                      >
-                        {item.name}
-                      </button>
-                    ))}
-                  </AccordionContent>
-                </AccordionItem>
-              ))}
-            </Accordion>
-          </CardContent>
-        </Card>
-
-        <Card className="lg:col-span-1">
-          <CardHeader>
-            <CardTitle className="text-base">Tasks ({displayItems.length})</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 max-h-[70vh] overflow-auto">
-            {displayItems.map((row) => (
-              <button
-                key={row.id}
-                type="button"
-                onClick={() => setSelectedId(row.id)}
-                className={`w-full rounded border p-3 text-left transition hover:border-primary/40 ${selectedId === row.id ? 'border-primary bg-primary/5' : 'border-border'}`}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <p className="font-medium text-foreground line-clamp-1">{row.name}</p>
-                  <Badge variant="secondary" className="capitalize">
-                    {row.status}
-                  </Badge>
-                </div>
-                {row.promoted_project_id ? (
-                  <Badge variant="outline" className="mt-1 text-[10px]">
-                    In Projects
-                  </Badge>
-                ) : null}
-                {row.task_source ? (
-                  <p className="mt-1 text-xs text-muted-foreground capitalize">Task source(from): {row.task_source.replace('_', ' ')}</p>
-                ) : null}
-                {row.main_stack ? <p className="mt-1 text-xs text-primary/90 capitalize">Stack: {row.main_stack.replace('_', ' ')}</p> : null}
-                <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{row.description || 'No description'}</p>
-              </button>
-            ))}
-            {displayItems.length === 0 && <p className="text-sm text-muted-foreground">No tasks found.</p>}
-          </CardContent>
-        </Card>
-
-        <Card className="lg:col-span-2">
-          {!selected ? (
-            <CardContent className="py-12 text-center text-muted-foreground">Select an item.</CardContent>
+          {filtered.length === 0 ? (
+            <div className="rounded-lg border bg-card py-12 text-center">
+              <p className="text-lg font-medium text-foreground">{searchInput.trim() ? 'No matching tasks' : 'No tasks yet'}</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {searchInput.trim() ? 'Try different keywords or clear the search.' : 'Tasks appear here when admins add them.'}
+              </p>
+            </div>
           ) : (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {filtered.map((row) => (
+                <Card
+                  key={row.id}
+                  className="cursor-pointer transition-all hover:border-primary/40 hover:shadow-md"
+                  onClick={() => setSelectedId(row.id)}
+                >
+                  <CardContent className="p-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="font-medium text-foreground line-clamp-2">{row.name}</p>
+                      <Badge variant="secondary" className="shrink-0">
+                        {taskPoolItemStatusLabel(row.status)}
+                      </Badge>
+                    </div>
+                    {row.promoted_project_id ? (
+                      <Badge variant="outline" className="mt-2 text-[10px]">
+                        In Projects
+                      </Badge>
+                    ) : null}
+                    {row.task_source ? (
+                      <p className="mt-2 text-xs text-muted-foreground capitalize">Source: {row.task_source.replace('_', ' ')}</p>
+                    ) : null}
+                    {row.main_stack ? (
+                      <p className="mt-1 text-xs text-primary/90 capitalize">Stack: {row.main_stack.replace('_', ' ')}</p>
+                    ) : null}
+                    <p className="mt-2 text-xs text-muted-foreground line-clamp-3">{row.description || 'No description'}</p>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <Button type="button" variant="ghost" size="sm" className="w-fit gap-2 text-muted-foreground" onClick={() => setSelectedId(null)}>
+              <ArrowLeft className="h-4 w-4" />
+              All tasks
+            </Button>
+          </div>
+
+          <Card className="min-w-0">
+            {selected ? (
             <CardContent className="pt-6">
               <div className="mb-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="text-xl font-semibold">{selected.name}</h3>
                   {canEditStatus ? (
                     <Select value={selected.status} onValueChange={updatePoolStatus}>
-                      <SelectTrigger className="w-[170px] h-8 text-xs">
+                      <SelectTrigger className="w-[200px] h-8 text-xs">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {POOL_STATUS_OPTIONS.map((s) => (
+                        {TASK_POOL_ITEM_STATUS_OPTIONS.map((s) => (
                           <SelectItem key={s} value={s}>
-                            {s}
+                            {taskPoolItemStatusLabel(s)}
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   ) : (
-                    <Badge className="capitalize">{selected.status}</Badge>
+                    <Badge>{taskPoolItemStatusLabel(selected.status)}</Badge>
                   )}
                 </div>
                 <p className="text-sm text-muted-foreground mt-1">{selected.description}</p>
@@ -372,7 +369,7 @@ export default function TaskPool() {
                   <TabsTrigger value="screenshots">Screenshots</TabsTrigger>
                   <TabsTrigger value="files">Source files</TabsTrigger>
                   <TabsTrigger value="chat">Chat</TabsTrigger>
-                  <TabsTrigger value="tasks">Dev tasks</TabsTrigger>
+                  <TabsTrigger value="tasks">Task board</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="overview" className="space-y-3">
@@ -457,12 +454,27 @@ export default function TaskPool() {
                   </div>
                 </TabsContent>
 
-                <TabsContent value="tasks" className="space-y-3">
-                  <div className="grid gap-2 sm:grid-cols-[1fr_220px_auto]">
-                    <Input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} placeholder="Dev task title" />
+                <TabsContent value="tasks" className="space-y-4">
+                  <p className="text-xs text-muted-foreground">
+                    About three columns show at once—scroll horizontally at the bottom to see the rest. Click a card for details. Drag from the grip to move between columns (To do, Doing, Done, Bug list, Cancelled).
+                  </p>
+                  <div className="grid gap-2 sm:grid-cols-[1fr_160px_220px_auto]">
+                    <Input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} placeholder="Card title" />
+                    <Select value={newSubtaskColumn} onValueChange={(v) => setNewSubtaskColumn(v as PoolSubtaskStatus)}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Column" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {TASK_POOL_SUBTASK_BOARD_STATUSES.map((s) => (
+                          <SelectItem key={s} value={s}>
+                            {poolSubtaskBoardLabel(s)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                     <Select value={newAssignee || 'none'} onValueChange={(v) => setNewAssignee(v === 'none' ? '' : v)}>
                       <SelectTrigger>
-                        <SelectValue placeholder="Developer" />
+                        <SelectValue placeholder="Assignee" />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="none">Unassigned</SelectItem>
@@ -473,52 +485,43 @@ export default function TaskPool() {
                         ))}
                       </SelectContent>
                     </Select>
-                    <Button onClick={addSubtask}>Add</Button>
+                    <Button onClick={addSubtask}>Add card</Button>
                   </div>
-                  <div className="space-y-2">
-                    {selectedSubtasks.map((task) => (
-                      <div key={task.id} className="rounded border p-3 flex items-center justify-between gap-3">
-                        <p className="font-medium text-sm">{task.title}</p>
-                        <div className="flex items-center gap-2">
-                          <Select value={task.status} onValueChange={(v) => updateSubtaskStatus(task, v)}>
-                            <SelectTrigger className="w-[150px]">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {SUBTASK_STATUS_OPTIONS.map((s) => (
-                                <SelectItem key={s} value={s}>
-                                  {s.replace('_', ' ')}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          {hasRole('admin') ? (
-                            <Button
-                              type="button"
-                              size="icon"
-                              variant="ghost"
-                              className="h-8 w-8 text-destructive"
-                              onClick={() => setTaskDeleteConfirm({ id: task.id, title: task.title })}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          ) : null}
-                        </div>
-                      </div>
-                    ))}
-                    {selectedSubtasks.length === 0 && <p className="text-sm text-muted-foreground">No dev tasks yet.</p>}
-                  </div>
+                  <PoolSubtaskKanban
+                    subtasks={selectedSubtasks}
+                    personnel={personnel}
+                    onMove={moveSubtaskToColumn}
+                    onSelect={(t) => setSubtaskDetailId(t.id)}
+                    canDelete={hasRole('admin')}
+                    onDelete={(id, title) => setTaskDeleteConfirm({ id, title })}
+                  />
                 </TabsContent>
               </Tabs>
             </CardContent>
-          )}
-        </Card>
-      </div>
+            ) : (
+              <CardContent className="py-12 text-center text-muted-foreground">
+                <p>This task is no longer available.</p>
+                <Button type="button" variant="outline" className="mt-4" onClick={() => setSelectedId(null)}>
+                  Back to all tasks
+                </Button>
+              </CardContent>
+            )}
+          </Card>
+        </>
+      )}
+
+      <PoolSubtaskDetailDialog
+        open={!!detailSubtask}
+        onOpenChange={(open) => !open && setSubtaskDetailId(null)}
+        task={detailSubtask}
+        personnel={personnel}
+        onSave={saveSubtaskDetail}
+      />
 
       <AlertDialog open={!!taskDeleteConfirm} onOpenChange={(open) => !open && setTaskDeleteConfirm(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete dev task</AlertDialogTitle>
+            <AlertDialogTitle>Delete board card</AlertDialogTitle>
             <AlertDialogDescription>
               Remove <strong>{taskDeleteConfirm?.title}</strong>?
             </AlertDialogDescription>

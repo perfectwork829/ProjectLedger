@@ -1,5 +1,30 @@
--- Atomically promote a task-pool row into `projects` when status = 'done' (bypasses RLS via SECURITY DEFINER).
--- NOTE: superseded for existing DBs by 20260504120000_task_pool_trello_statuses.sql (status 'completed' -> 'done').
+-- Align task_pool_items.status CHECK with the app (Trello-style values).
+-- Apply when you see: new row violates check constraint "task_pool_status_check"
+-- (database still had planning/active/... while the app sends todo/doing/...).
+
+ALTER TABLE public.task_pool_items DROP CONSTRAINT IF EXISTS task_pool_status_check;
+
+UPDATE public.task_pool_items
+SET status = CASE status
+  WHEN 'planning' THEN 'todo'
+  WHEN 'active' THEN 'doing'
+  WHEN 'blocked' THEN 'bug_list'
+  WHEN 'qa' THEN 'doing'
+  WHEN 'completed' THEN 'done'
+  WHEN 'cancelled' THEN 'cancelled'
+  WHEN 'todo' THEN 'todo'
+  WHEN 'doing' THEN 'doing'
+  WHEN 'done' THEN 'done'
+  WHEN 'bug_list' THEN 'bug_list'
+  WHEN 'things_to_do' THEN 'things_to_do'
+  ELSE 'todo'
+END;
+
+ALTER TABLE public.task_pool_items ALTER COLUMN status SET DEFAULT 'todo';
+
+ALTER TABLE public.task_pool_items
+  ADD CONSTRAINT task_pool_status_check
+  CHECK (status IN ('todo', 'doing', 'done', 'bug_list', 'things_to_do', 'cancelled'));
 
 CREATE OR REPLACE FUNCTION public.promote_task_pool_to_project(p_pool_id uuid)
 RETURNS uuid
@@ -22,7 +47,7 @@ BEGIN
     RETURN r.promoted_project_id;
   END IF;
 
-  IF r.status NOT IN ('completed', 'done') THEN
+  IF r.status <> 'done' THEN
     RETURN NULL;
   END IF;
 

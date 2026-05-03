@@ -6,7 +6,6 @@ import {
   FolderKanban,
   Users,
   CreditCard,
-  Wallet,
   ClipboardList,
   Shield,
   LogOut,
@@ -21,7 +20,6 @@ const navItems = [
   { to: '/dashboard/projects', label: 'Projects', icon: FolderKanban },
   { to: '/dashboard/clients', label: 'Clients', icon: Users },
   { to: '/dashboard/accounts', label: 'Accounts', icon: CreditCard },
-  { to: '/dashboard/payments', label: 'Payments', icon: Wallet },
   { to: '/dashboard/tasks', label: 'Tasks', icon: ClipboardList },
 ];
 

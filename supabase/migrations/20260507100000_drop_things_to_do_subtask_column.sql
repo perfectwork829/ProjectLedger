@@ -1,6 +1,17 @@
--- Atomically promote a task-pool row into `projects` when status = 'done' (bypasses RLS via SECURITY DEFINER).
--- NOTE: superseded for existing DBs by 20260504120000_task_pool_trello_statuses.sql (status 'completed' -> 'done').
+-- Remove "things_to_do" from task pool subtask board; migrate existing rows to "todo".
 
+UPDATE public.task_pool_subtasks
+SET status = 'todo',
+    updated_at = now()
+WHERE status = 'things_to_do';
+
+ALTER TABLE public.task_pool_subtasks DROP CONSTRAINT IF EXISTS task_pool_subtasks_status_check;
+
+ALTER TABLE public.task_pool_subtasks
+  ADD CONSTRAINT task_pool_subtasks_status_check
+  CHECK (status IN ('todo', 'doing', 'done', 'bug_list', 'cancelled'));
+
+-- Keep promotion mapping in sync (no things_to_do branch; ELSE -> todo).
 CREATE OR REPLACE FUNCTION public.promote_task_pool_to_project(p_pool_id uuid)
 RETURNS uuid
 LANGUAGE plpgsql
@@ -22,7 +33,7 @@ BEGIN
     RETURN r.promoted_project_id;
   END IF;
 
-  IF r.status NOT IN ('completed', 'done') THEN
+  IF r.status <> 'completed' THEN
     RETURN NULL;
   END IF;
 
@@ -129,14 +140,21 @@ BEGIN
     t.title,
     t.description,
     t.assignee_personnel_id,
-    t.status,
+    CASE t.status
+      WHEN 'todo' THEN 'todo'
+      WHEN 'doing' THEN 'in_progress'
+      WHEN 'done' THEN 'done'
+      WHEN 'bug_list' THEN 'blocked'
+      ELSE 'todo'
+    END,
     t.priority,
     t.deadline,
     t.created_by,
     t.created_at,
     t.updated_at
   FROM public.task_pool_subtasks t
-  WHERE t.pool_item_id = r.id;
+  WHERE t.pool_item_id = r.id
+    AND t.status <> 'cancelled';
 
   UPDATE public.task_pool_items
   SET promoted_project_id = v_project_id,

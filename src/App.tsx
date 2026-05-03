@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Route, Routes, Navigate } from "react-router-dom";
 import { Toaster } from "@/components/ui/toaster";
+import { RadixRouteCleanup } from "@/components/RadixRouteCleanup";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/contexts/AuthContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
@@ -14,8 +15,6 @@ import DashboardOverview from "@/pages/DashboardOverview";
 import AdminRoles from "@/pages/AdminRoles";
 import AdminAccounts from "@/pages/AdminAccounts";
 import FreelancingAccounts from "@/pages/FreelancingAccounts";
-import PaymentAccounts from "@/pages/PaymentAccounts";
-import PlaceholderPage from "@/pages/PlaceholderPage";
 import Projects from "@/pages/Projects";
 import AdminProjects from "@/pages/AdminProjects";
 import AdminTaskPool from "@/pages/AdminTaskPool";
@@ -35,6 +34,7 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <BrowserRouter>
+        <RadixRouteCleanup />
         <AuthProvider>
           <Routes>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
@@ -56,7 +56,7 @@ const App = () => (
               <Route path="projects" element={<Projects />} />
               <Route path="clients" element={<Clients />} />
               <Route path="accounts" element={<FreelancingAccounts />} />
-              <Route path="payments" element={<PaymentAccounts />} />
+              <Route path="payments" element={<Navigate to="/dashboard/accounts" replace />} />
               <Route path="tasks" element={<TaskPool />} />
               <Route path="personnel" element={<Personnel />} />
               <Route path="useful-links" element={<UsefulLinks />} />
@@ -76,7 +76,7 @@ const App = () => (
               <Route path="accounts" element={<AdminAccounts />} />
               <Route path="projects" element={<AdminProjects />} />
               <Route path="clients" element={<AdminClients />} />
-              <Route path="payments" element={<PlaceholderPage title="Admin: Payments" />} />
+              <Route path="payments" element={<Navigate to="/admin/accounts#payment" replace />} />
               <Route path="tasks" element={<AdminTaskPool />} />
               <Route path="personnel" element={<AdminPersonnel />} />
               <Route path="useful-links" element={<AdminUsefulLinks />} />

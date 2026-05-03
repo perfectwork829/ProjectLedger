@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
@@ -16,6 +17,9 @@ import { filterItemsBySearch } from '@/lib/clientSearch';
 import ModuleSearchBar from '@/components/ModuleSearchBar';
 import { isFreelancerPlatform, parseScreenshotUrls, isLikelyImageUrl } from '@/lib/accountPlatforms';
 import { formatBirthday } from '@/lib/identityDocuments';
+import { paymentProviderLabel } from '@/lib/paymentAccounts';
+import type { PaymentAccount } from '@/lib/paymentAccountModel';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface FreelancingAccount {
   id: string;
@@ -62,12 +66,6 @@ interface FreelancingAccount {
   backup_codes: string | null;
   authenticator_enabled: boolean | null;
   screenshot_urls: string[] | null;
-}
-
-interface PaymentAccountRef {
-  id: string;
-  provider: string;
-  account_identifier: string | null;
 }
 
 const PLATFORMS: Record<string, { label: string; color: string; icon: string }> = {
@@ -134,7 +132,7 @@ function InfoRow({ label, value }: { label: string; value: string | null | undef
   );
 }
 
-function AccountDetail({ account, paymentAccount }: { account: FreelancingAccount; paymentAccount?: PaymentAccountRef | null }) {
+function AccountDetail({ account, paymentAccount }: { account: FreelancingAccount; paymentAccount?: PaymentAccount | null }) {
   const acc = account;
   const accFreelancer = isFreelancerPlatform(acc.platform);
   const galleryShots = parseScreenshotUrls(acc.screenshot_urls);
@@ -336,7 +334,10 @@ function AccountDetail({ account, paymentAccount }: { account: FreelancingAccoun
           <div className="space-y-1">
             <InfoRow label="Payment Type" value={acc.connected_payment_type ? acc.connected_payment_type.replace('_', ' ') : null} />
             {paymentAccount && (
-              <InfoRow label="Linked Account" value={`${paymentAccount.provider}${paymentAccount.account_identifier ? ' — ' + paymentAccount.account_identifier : ''}`} />
+              <InfoRow
+                label="Linked payment account"
+                value={`${paymentProviderLabel(paymentAccount.provider)} — ${paymentAccount.label || '—'}${paymentAccount.account_identifier ? ` (${paymentAccount.account_identifier})` : ''}`}
+              />
             )}
             {!acc.connected_payment_type && !paymentAccount && <p className="text-sm text-muted-foreground">No payment info</p>}
           </div>
@@ -358,8 +359,11 @@ function AccountDetail({ account, paymentAccount }: { account: FreelancingAccoun
 
 export default function FreelancingAccounts() {
   const { toast } = useToast();
+  const { hasRole } = useAuth();
+  const isAdmin = hasRole('admin');
   const [allAccounts, setAllAccounts] = useState<FreelancingAccount[]>([]);
-  const [paymentAccounts, setPaymentAccounts] = useState<PaymentAccountRef[]>([]);
+  const [paymentAccounts, setPaymentAccounts] = useState<PaymentAccount[]>([]);
+  const [paymentAccountsLoading, setPaymentAccountsLoading] = useState(true);
   const [loading, setLoading] = useState(true);
 
   const [view, setView] = useState<View>('platforms');
@@ -368,11 +372,21 @@ export default function FreelancingAccounts() {
   const [searchInput, setSearchInput] = useState('');
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
-      const { data } = await supabase.from('payment_accounts').select('id, provider, account_identifier');
-      setPaymentAccounts(data || []);
+      setPaymentAccountsLoading(true);
+      const { data, error } = await supabase
+        .from('payment_accounts')
+        .select('*')
+        .order('is_default', { ascending: false })
+        .order('created_at', { ascending: false });
+      if (cancelled) return;
+      if (error) toast({ title: 'Error loading payment accounts', description: error.message, variant: 'destructive' });
+      else setPaymentAccounts((data as PaymentAccount[]) || []);
+      setPaymentAccountsLoading(false);
     })();
-  }, []);
+    return () => { cancelled = true; };
+  }, [toast]);
 
   useEffect(() => {
     let cancelled = false;
@@ -412,29 +426,6 @@ export default function FreelancingAccounts() {
     return <div className="flex items-center justify-center py-12"><div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" /></div>;
   }
 
-  if (allAccounts.length === 0) {
-    return (
-      <div className="space-y-6">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h2 className="text-2xl font-semibold tracking-tight text-foreground">Accounts</h2>
-            <p className="text-sm text-muted-foreground">Freelancing profiles and workspace accounts</p>
-          </div>
-          <ModuleSearchBar
-            value={searchInput}
-            onChange={setSearchInput}
-            placeholder="Search by username, email, notes, platform…"
-            id="accounts-search"
-          />
-        </div>
-        <div className="flex flex-col items-center justify-center rounded-lg border bg-card py-12 text-center">
-          <p className="text-lg font-medium text-foreground">No accounts</p>
-          <p className="mt-1 text-sm text-muted-foreground">Accounts are managed by admins</p>
-        </div>
-      </div>
-    );
-  }
-
   // Group accounts by platform (respects search + platform list context)
   const grouped = displayAccounts.reduce<Record<string, FreelancingAccount[]>>((acc, item) => {
     const key = item.platform;
@@ -471,7 +462,7 @@ export default function FreelancingAccounts() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight text-foreground">Accounts</h2>
-          <p className="text-sm text-muted-foreground">Freelancing profiles and workspace accounts</p>
+          <p className="text-sm text-muted-foreground">Freelancing profiles, workspace tools, and payment payout accounts</p>
         </div>
         {view !== 'detail' && (
           <ModuleSearchBar
@@ -508,49 +499,113 @@ export default function FreelancingAccounts() {
         </div>
       )}
 
-      {/* Platform Cards View */}
+      {/* Platform cards + payout payment methods (same tab) */}
       {view === 'platforms' && (
-        platformList.length === 0 ? (
-          <div className="rounded-lg border bg-card py-12 text-center">
-            <p className="text-lg font-medium text-foreground">{searchInput.trim() ? 'No matching accounts' : 'No accounts'}</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {searchInput.trim() ? 'Try different keywords or clear the search.' : 'Accounts are managed by admins'}
-            </p>
-          </div>
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {platformList.map(({ platform, info, count, activeCount }) => (
-              <Card
-                key={platform}
-                className="cursor-pointer transition-all hover:shadow-md hover:border-primary/30 group"
-                onClick={() => goToList(platform)}
-              >
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <div className="flex items-center gap-3">
-                    <div className={cn('flex h-10 w-10 items-center justify-center rounded-lg text-lg', info.color, 'text-white')}>
-                      {info.icon}
+        <div className="space-y-10">
+          {platformList.length === 0 ? (
+            <div className="rounded-lg border bg-card py-12 text-center">
+              <p className="text-lg font-medium text-foreground">{searchInput.trim() ? 'No matching accounts' : 'No accounts'}</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {searchInput.trim() ? 'Try different keywords or clear the search.' : 'Accounts are managed by admins'}
+              </p>
+            </div>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {platformList.map(({ platform, info, count, activeCount }) => (
+                <Card
+                  key={platform}
+                  className="cursor-pointer transition-all hover:shadow-md hover:border-primary/30 group"
+                  onClick={() => goToList(platform)}
+                >
+                  <CardHeader className="flex flex-row items-center justify-between pb-2">
+                    <div className="flex items-center gap-3">
+                      <div className={cn('flex h-10 w-10 items-center justify-center rounded-lg text-lg', info.color, 'text-white')}>
+                        {info.icon}
+                      </div>
+                      <CardTitle className="text-lg">{info.label}</CardTitle>
                     </div>
-                    <CardTitle className="text-lg">{info.label}</CardTitle>
-                  </div>
-                  <ChevronRight className="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-center gap-4">
-                    <div>
-                      <p className="text-2xl font-bold text-foreground">{count}</p>
-                      <p className="text-xs text-muted-foreground">Total Accounts</p>
+                    <ChevronRight className="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex items-center gap-4">
+                      <div>
+                        <p className="text-2xl font-bold text-foreground">{count}</p>
+                        <p className="text-xs text-muted-foreground">Total Accounts</p>
+                      </div>
+                      <Separator orientation="vertical" className="h-10" />
+                      <div>
+                        <p className="text-2xl font-bold text-emerald-600">{activeCount}</p>
+                        <p className="text-xs text-muted-foreground">Active</p>
+                      </div>
                     </div>
-                    <Separator orientation="vertical" className="h-10" />
-                    <div>
-                      <p className="text-2xl font-bold text-emerald-600">{activeCount}</p>
-                      <p className="text-xs text-muted-foreground">Active</p>
-                    </div>
-                  </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+
+          <Separator />
+
+          <section className="space-y-4">
+            <div>
+              <h3 className="text-lg font-semibold tracking-tight text-foreground">Payment methods</h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Payout accounts (PayPal, Wise, Payoneer, crypto, etc.) are read-only here. Admins manage them under{' '}
+                <strong>Admin → Manage Accounts → Payment methods</strong>.
+              </p>
+              {isAdmin && (
+                <p className="mt-2 text-sm">
+                  <Link to="/admin/accounts#payment" className="font-medium text-primary hover:underline">
+                    Open Admin → Accounts → Payment methods
+                  </Link>
+                </p>
+              )}
+            </div>
+            {paymentAccountsLoading ? (
+              <div className="flex justify-center py-8">
+                <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+              </div>
+            ) : paymentAccounts.length === 0 ? (
+              <Card>
+                <CardContent className="py-10 text-center text-sm text-muted-foreground">
+                  No payment accounts on file for your user. Ask an admin to add them in Manage Accounts.
                 </CardContent>
               </Card>
-            ))}
-          </div>
-        )
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {paymentAccounts.map((acc) => (
+                  <Card key={acc.id}>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="flex items-center gap-2 text-base font-medium">
+                        {paymentProviderLabel(acc.provider)}
+                        {acc.is_default && <Star className="h-4 w-4 fill-amber-400 text-amber-400" />}
+                      </CardTitle>
+                      <p className="text-sm text-muted-foreground">{acc.label}</p>
+                      <Badge variant={acc.status === 'good' ? 'default' : 'secondary'} className="w-fit">
+                        {acc.status === 'good' ? 'Good' : 'Disabled'}
+                      </Badge>
+                    </CardHeader>
+                    <CardContent className="space-y-1 text-sm text-muted-foreground">
+                      {acc.account_identifier && <p className="break-all font-mono text-xs">{acc.account_identifier}</p>}
+                      {acc.connected_phone && <p>Phone: {acc.connected_phone}</p>}
+                      {acc.email && <p>Email: {acc.email}</p>}
+                      {acc.id_card_drive_url && (
+                        <a
+                          href={acc.id_card_drive_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                        >
+                          <ExternalLink className="h-3 w-3" /> ID (Drive)
+                        </a>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
       )}
 
       {/* Account List View */}

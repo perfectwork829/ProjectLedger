@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
@@ -26,12 +28,19 @@ import {
   Plus, Pencil, Trash2, ExternalLink, Eye, EyeOff, ChevronRight, ArrowLeft,
   Award, Star, Clock, Briefcase, GraduationCap, Trophy, MessageSquare,
   Image, FolderKanban, MapPin, Shield, CreditCard, Mail, Phone,
-  CheckCircle, XCircle, Github, Linkedin,
+  CheckCircle, XCircle, Github, Linkedin, Wallet,
 } from 'lucide-react';
 import FileUpload from '@/components/FileUpload';
 import ImageGalleryUpload from '@/components/ImageGalleryUpload';
 import { useToast } from '@/hooks/use-toast';
 import { isFreelancerPlatform, parseScreenshotUrls, isLikelyImageUrl } from '@/lib/accountPlatforms';
+import { PAYMENT_PROVIDER_OPTIONS, paymentProviderLabel } from '@/lib/paymentAccounts';
+import {
+  emptyPaymentAccountForm,
+  paymentAccountToForm,
+  type PaymentAccount,
+  type PaymentAccountFormState,
+} from '@/lib/paymentAccountModel';
 import { formatBirthday } from '@/lib/identityDocuments';
 import { cn } from '@/lib/utils';
 import ModuleSearchBar from '@/components/ModuleSearchBar';
@@ -177,6 +186,7 @@ const statusColor: Record<string, string> = {
 interface PaymentAccountOption {
   id: string;
   provider: string;
+  label: string | null;
   account_identifier: string | null;
 }
 
@@ -197,6 +207,14 @@ const emptyForm = {
 };
 
 type View = 'platforms' | 'list' | 'detail';
+
+type AccountHub = 'categories' | 'freelancing' | 'workspace' | 'payment';
+
+type PaymentView = 'list' | 'detail';
+
+type DeleteTarget =
+  | { kind: 'freelancing'; id: string; label: string; navigateAfter?: () => void }
+  | { kind: 'payment'; id: string; label: string; navigateAfter?: () => void };
 
 function InfoRow({ label, value }: { label: string; value: string | null | undefined }) {
   if (!value) return null;
@@ -223,8 +241,9 @@ function DetailSection({ icon: Icon, title, children }: { icon: React.ElementTyp
 export default function AdminAccounts() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const location = useLocation();
   const [accounts, setAccounts] = useState<FreelancingAccount[]>([]);
-  const [paymentAccounts, setPaymentAccounts] = useState<PaymentAccountOption[]>([]);
+  const [paymentRecords, setPaymentRecords] = useState<PaymentAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -235,28 +254,73 @@ export default function AdminAccounts() {
   const [showAccountPassword, setShowAccountPassword] = useState(false);
   const [showAnydeskPassword, setShowAnydeskPassword] = useState(false);
 
-  // 3-level navigation state
+  const [accountHub, setAccountHub] = useState<AccountHub>('categories');
   const [view, setView] = useState<View>('platforms');
   const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const [paymentView, setPaymentView] = useState<PaymentView>('list');
+  const [selectedPaymentId, setSelectedPaymentId] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState('');
-  const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; label: string; navigateAfter?: () => void } | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<DeleteTarget | null>(null);
+
+  const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
+  const [paymentEditingId, setPaymentEditingId] = useState<string | null>(null);
+  const [paymentForm, setPaymentForm] = useState<PaymentAccountFormState>(emptyPaymentAccountForm);
+  const [paymentSaving, setPaymentSaving] = useState(false);
 
   const fetchAccounts = async () => {
     const [accountsRes, paymentsRes] = await Promise.all([
       supabase.from('freelancing_accounts').select('*').order('created_at', { ascending: false }),
-      supabase.from('payment_accounts').select('id, provider, account_identifier').order('provider'),
+      supabase.from('payment_accounts').select('*').order('provider'),
     ]);
     if (accountsRes.error) {
       toast({ title: 'Error loading accounts', description: accountsRes.error.message, variant: 'destructive' });
     } else {
       setAccounts(accountsRes.data || []);
     }
-    setPaymentAccounts(paymentsRes.data || []);
+    setPaymentRecords((paymentsRes.data as PaymentAccount[]) || []);
     setLoading(false);
   };
 
-  useEffect(() => { fetchAccounts(); }, []);
+  useEffect(() => {
+    fetchAccounts();
+  }, []);
+
+  useEffect(() => {
+    if (location.hash === '#payment') {
+      setAccountHub('payment');
+      setPaymentView('list');
+      setSelectedPaymentId(null);
+      setView('platforms');
+      setSelectedPlatform(null);
+      setSelectedAccountId(null);
+    }
+  }, [location.hash]);
+
+  const paymentAccounts: PaymentAccountOption[] = useMemo(
+    () =>
+      paymentRecords.map((r) => ({
+        id: r.id,
+        provider: r.provider,
+        label: r.label,
+        account_identifier: r.account_identifier,
+      })),
+    [paymentRecords],
+  );
+
+  const paymentSearchFiltered = useMemo(() => {
+    const q = searchInput.trim().toLowerCase();
+    if (!q) return paymentRecords;
+    return paymentRecords.filter(
+      (p) =>
+        (p.label && p.label.toLowerCase().includes(q)) ||
+        p.provider.toLowerCase().includes(q) ||
+        (p.account_identifier && p.account_identifier.toLowerCase().includes(q)) ||
+        (p.email && p.email.toLowerCase().includes(q)) ||
+        (p.notes && p.notes.toLowerCase().includes(q)) ||
+        (p.full_name && p.full_name.toLowerCase().includes(q)),
+    );
+  }, [paymentRecords, searchInput]);
 
   const openCreate = (platform?: string) => {
     setEditingId(null);
@@ -362,15 +426,104 @@ export default function AdminAccounts() {
   const handleDelete = async (id: string) => {
     const { error } = await supabase.from('freelancing_accounts').delete().eq('id', id);
     if (error) toast({ title: 'Delete failed', description: error.message, variant: 'destructive' });
-    else { toast({ title: 'Account deleted' }); fetchAccounts(); }
+    else {
+      toast({ title: 'Account deleted' });
+      fetchAccounts();
+    }
+  };
+
+  const handleDeletePayment = async (id: string) => {
+    const { error } = await supabase.from('payment_accounts').delete().eq('id', id);
+    if (error) toast({ title: 'Delete failed', description: error.message, variant: 'destructive' });
+    else {
+      toast({ title: 'Payment account deleted' });
+      fetchAccounts();
+    }
   };
 
   const executeDeleteAccount = async () => {
     if (!deleteConfirm) return;
-    const { id, navigateAfter } = deleteConfirm;
+    const { kind, id, navigateAfter } = deleteConfirm;
     setDeleteConfirm(null);
-    await handleDelete(id);
+    if (kind === 'freelancing') await handleDelete(id);
+    else await handleDeletePayment(id);
     navigateAfter?.();
+  };
+
+  const openPaymentCreate = () => {
+    setPaymentEditingId(null);
+    setPaymentForm(emptyPaymentAccountForm());
+    setPaymentDialogOpen(true);
+  };
+
+  const openPaymentEdit = (row: PaymentAccount) => {
+    setPaymentEditingId(row.id);
+    setPaymentForm(paymentAccountToForm(row));
+    setPaymentDialogOpen(true);
+  };
+
+  const handlePaymentSave = async () => {
+    if (!paymentForm.provider || !paymentForm.label) {
+      toast({ title: 'Provider and label are required', variant: 'destructive' });
+      return;
+    }
+    setPaymentSaving(true);
+
+    let disabled_at: string | null = null;
+    if (paymentForm.status === 'disabled') {
+      if (paymentEditingId) {
+        const prev = paymentRecords.find((a) => a.id === paymentEditingId);
+        disabled_at = prev?.disabled_at ?? new Date().toISOString();
+      } else {
+        disabled_at = new Date().toISOString();
+      }
+    }
+
+    let verified_at: string | null = null;
+    if (paymentForm.verified) {
+      verified_at = paymentForm.verified_at
+        ? new Date(`${paymentForm.verified_at}T12:00:00`).toISOString()
+        : new Date().toISOString();
+    }
+
+    const payload = {
+      provider: paymentForm.provider,
+      label: paymentForm.label,
+      account_identifier: paymentForm.account_identifier || null,
+      is_default: paymentForm.is_default,
+      status: paymentForm.status,
+      notes: paymentForm.notes || null,
+      email: paymentForm.email || null,
+      full_name: paymentForm.full_name || null,
+      payment_details: paymentForm.payment_details || null,
+      verified: paymentForm.verified,
+      verified_at,
+      backup_info: paymentForm.backup_info || null,
+      address: paymentForm.address || null,
+      city: paymentForm.city || null,
+      state: paymentForm.state || null,
+      zip: paymentForm.zip || null,
+      id_card_drive_url: paymentForm.id_card_drive_url || null,
+      connected_phone: paymentForm.connected_phone || null,
+      purchase_way: paymentForm.purchase_way || null,
+      credentials_note: paymentForm.credentials_note || null,
+      disabled_at,
+      user_id: user!.id,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (paymentEditingId) {
+      const { error } = await supabase.from('payment_accounts').update(payload).eq('id', paymentEditingId);
+      if (error) toast({ title: 'Update failed', description: error.message, variant: 'destructive' });
+      else toast({ title: 'Payment account updated' });
+    } else {
+      const { error } = await supabase.from('payment_accounts').insert(payload);
+      if (error) toast({ title: 'Create failed', description: error.message, variant: 'destructive' });
+      else toast({ title: 'Payment account created' });
+    }
+    setPaymentSaving(false);
+    setPaymentDialogOpen(false);
+    fetchAccounts();
   };
 
   const set = (key: string, value: string | boolean | string[]) => setForm(prev => ({ ...prev, [key]: value }));
@@ -380,10 +533,18 @@ export default function AdminAccounts() {
     [accounts, searchInput],
   );
 
+  const accountsInCategory = useMemo(() => {
+    if (accountHub === 'freelancing') return searchFiltered.filter((a) => isFreelancerPlatform(a.platform));
+    if (accountHub === 'workspace') return searchFiltered.filter((a) => !isFreelancerPlatform(a.platform));
+    return [];
+  }, [searchFiltered, accountHub]);
+
   const displayAccounts = useMemo(() => {
-    if (view === 'list' && selectedPlatform) return searchFiltered.filter((a) => a.platform === selectedPlatform);
-    return searchFiltered;
-  }, [searchFiltered, view, selectedPlatform]);
+    if (view === 'list' && selectedPlatform) {
+      return accountsInCategory.filter((a) => a.platform === selectedPlatform);
+    }
+    return accountsInCategory;
+  }, [accountsInCategory, view, selectedPlatform]);
 
   if (loading) {
     return <div className="flex items-center justify-center py-12"><div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" /></div>;
@@ -407,19 +568,77 @@ export default function AdminAccounts() {
   const filteredAccounts = selectedPlatform ? grouped[selectedPlatform] || [] : [];
   const selectedAccount = selectedAccountId ? accounts.find(a => a.id === selectedAccountId) : null;
   const linkedPayment = selectedAccount?.payment_account_id
-    ? paymentAccounts.find(p => p.id === selectedAccount.payment_account_id) || null
+    ? paymentAccounts.find((p) => p.id === selectedAccount.payment_account_id) || null
     : null;
 
-  const goToPlatforms = () => { setView('platforms'); setSelectedPlatform(null); setSelectedAccountId(null); };
-  const goToList = (platform: string) => { setView('list'); setSelectedPlatform(platform); setSelectedAccountId(null); };
-  const goToDetail = (id: string) => { setView('detail'); setSelectedAccountId(id); };
+  const goToCategories = () => {
+    setAccountHub('categories');
+    setView('platforms');
+    setSelectedPlatform(null);
+    setSelectedAccountId(null);
+    setPaymentView('list');
+    setSelectedPaymentId(null);
+    if (window.location.hash) {
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  };
+
+  const enterFreelancingHub = () => {
+    setAccountHub('freelancing');
+    setView('platforms');
+    setSelectedPlatform(null);
+    setSelectedAccountId(null);
+    if (window.location.hash) window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  };
+
+  const enterWorkspaceHub = () => {
+    setAccountHub('workspace');
+    setView('platforms');
+    setSelectedPlatform(null);
+    setSelectedAccountId(null);
+    if (window.location.hash) window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  };
+
+  const enterPaymentHub = () => {
+    setAccountHub('payment');
+    setPaymentView('list');
+    setSelectedPaymentId(null);
+    if (window.location.hash) window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  };
+
+  const goToPlatforms = () => {
+    setView('platforms');
+    setSelectedPlatform(null);
+    setSelectedAccountId(null);
+  };
+  const goToList = (platform: string) => {
+    setView('list');
+    setSelectedPlatform(platform);
+    setSelectedAccountId(null);
+  };
+  const goToDetail = (id: string) => {
+    setView('detail');
+    setSelectedAccountId(id);
+  };
+
+  const goToPaymentDetail = (id: string) => {
+    setPaymentView('detail');
+    setSelectedPaymentId(id);
+  };
 
   const platformLabel = selectedPlatform ? (PLATFORMS[selectedPlatform] || PLATFORMS.other).label : '';
 
   const searchPlaceholder =
-    view === 'list' && selectedPlatform
-      ? `Search ${(PLATFORMS[selectedPlatform] || PLATFORMS.other).label} accounts…`
-      : 'Search accounts by keyword (name, email, platform, notes…)';
+    accountHub === 'payment'
+      ? 'Search payment accounts by label, provider, email, identifier…'
+      : view === 'list' && selectedPlatform
+        ? `Search ${(PLATFORMS[selectedPlatform] || PLATFORMS.other).label} accounts…`
+        : 'Search accounts by keyword (name, email, platform, notes…)';
+
+  const selectedPayment = selectedPaymentId ? paymentRecords.find((p) => p.id === selectedPaymentId) : null;
+
+  const setPay = (key: keyof PaymentAccountFormState, value: string | boolean) =>
+    setPaymentForm((prev) => ({ ...prev, [key]: value }));
 
   const freelancerMode = isFreelancerPlatform(form.platform);
   const genericMode = form.platform && !freelancerMode;
@@ -549,7 +768,10 @@ export default function AdminAccounts() {
                         <SelectContent>
                           <SelectItem value="none">None</SelectItem>
                           {paymentAccounts.map((pa) => (
-                            <SelectItem key={pa.id} value={pa.id}>{pa.provider}{pa.account_identifier ? ` — ${pa.account_identifier}` : ''}</SelectItem>
+                            <SelectItem key={pa.id} value={pa.id}>
+                              {paymentProviderLabel(pa.provider)} — {pa.label || 'Untitled'}
+                              {pa.account_identifier ? ` (${pa.account_identifier})` : ''}
+                            </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -720,6 +942,176 @@ export default function AdminAccounts() {
     </Dialog>
   );
 
+  const PaymentFormDialog = (
+    <Dialog open={paymentDialogOpen} onOpenChange={setPaymentDialogOpen}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{paymentEditingId ? 'Edit payment account' : 'Add payment account'}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 pt-2">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2 sm:col-span-2">
+              <Label>Provider</Label>
+              <Select value={paymentForm.provider} onValueChange={(v) => setPay('provider', v)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select provider" />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAYMENT_PROVIDER_OPTIONS.map((p) => (
+                    <SelectItem key={p.value} value={p.value}>
+                      {p.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <Label>Label</Label>
+              <Input value={paymentForm.label} onChange={(e) => setPay('label', e.target.value)} placeholder="e.g. Main PayPal" />
+            </div>
+            <div className="space-y-2">
+              <Label>Account identifier</Label>
+              <Input
+                value={paymentForm.account_identifier}
+                onChange={(e) => setPay('account_identifier', e.target.value)}
+                placeholder="Email, IBAN, wallet…"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Connected phone</Label>
+              <Input value={paymentForm.connected_phone} onChange={(e) => setPay('connected_phone', e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>Email</Label>
+              <Input type="email" value={paymentForm.email} onChange={(e) => setPay('email', e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>Full name on account</Label>
+              <Input value={paymentForm.full_name} onChange={(e) => setPay('full_name', e.target.value)} />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label>Payment details</Label>
+            <Textarea
+              value={paymentForm.payment_details}
+              onChange={(e) => setPay('payment_details', e.target.value)}
+              placeholder="Bank, network, sub-accounts—avoid full card numbers"
+              rows={3}
+            />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label>Purchase way</Label>
+              <Select
+                value={paymentForm.purchase_way || '__none__'}
+                onValueChange={(v) => setPay('purchase_way', v === '__none__' ? '' : v)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Optional" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">—</SelectItem>
+                  <SelectItem value="broker">Broker</SelectItem>
+                  <SelectItem value="real_man">Real man</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Account health</Label>
+              <Select
+                value={paymentForm.status}
+                onValueChange={(v) => setPay('status', v as 'good' | 'disabled')}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="good">Good</SelectItem>
+                  <SelectItem value="disabled">Disabled</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label>ID card (Google Drive link)</Label>
+            <Input
+              value={paymentForm.id_card_drive_url}
+              onChange={(e) => setPay('id_card_drive_url', e.target.value)}
+              placeholder="https://drive.google.com/..."
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-6">
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={paymentForm.verified}
+                onCheckedChange={(v) => setPay('verified', v)}
+                id="p-verified"
+              />
+              <Label htmlFor="p-verified" className="cursor-pointer">
+                Verified
+              </Label>
+            </div>
+            {paymentForm.verified && (
+              <div className="space-y-1">
+                <Label className="text-xs">Verified date</Label>
+                <Input
+                  type="date"
+                  value={paymentForm.verified_at}
+                  onChange={(e) => setPay('verified_at', e.target.value)}
+                  className="w-auto"
+                />
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <Switch checked={paymentForm.is_default} onCheckedChange={(v) => setPay('is_default', v)} id="p-def" />
+              <Label htmlFor="p-def" className="cursor-pointer">
+                Default
+              </Label>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label>Address</Label>
+            <Input value={paymentForm.address} onChange={(e) => setPay('address', e.target.value)} />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="space-y-2">
+              <Label>City</Label>
+              <Input value={paymentForm.city} onChange={(e) => setPay('city', e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>State</Label>
+              <Input value={paymentForm.state} onChange={(e) => setPay('state', e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>ZIP</Label>
+              <Input value={paymentForm.zip} onChange={(e) => setPay('zip', e.target.value)} />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label>Backup / recovery info</Label>
+            <Textarea value={paymentForm.backup_info} onChange={(e) => setPay('backup_info', e.target.value)} rows={2} />
+          </div>
+          <div className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
+            <Label>Credentials note (no password storage)</Label>
+            <Textarea
+              value={paymentForm.credentials_note}
+              onChange={(e) => setPay('credentials_note', e.target.value)}
+              placeholder="Password manager reference only"
+              rows={2}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Notes</Label>
+            <Textarea value={paymentForm.notes} onChange={(e) => setPay('notes', e.target.value)} rows={2} />
+          </div>
+          <Button onClick={handlePaymentSave} disabled={paymentSaving} className="w-full">
+            {paymentSaving ? 'Saving…' : paymentEditingId ? 'Update' : 'Create'}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+
   // ---- Detail View ----
   const renderDetail = () => {
     if (!selectedAccount) return null;
@@ -750,6 +1142,7 @@ export default function AdminAccounts() {
               variant="outline"
               onClick={() =>
                 setDeleteConfirm({
+                  kind: 'freelancing',
                   id: acc.id,
                   label: `${platformInfo.label} @${acc.username}`,
                   navigateAfter: () => goToList(acc.platform),
@@ -848,7 +1241,12 @@ export default function AdminAccounts() {
           <DetailSection icon={CreditCard} title="Payment">
             <div className="space-y-1">
               <InfoRow label="Payment Type" value={acc.connected_payment_type?.replace('_', ' ') || null} />
-              {linkedPayment && <InfoRow label="Linked Account" value={`${linkedPayment.provider}${linkedPayment.account_identifier ? ' — ' + linkedPayment.account_identifier : ''}`} />}
+              {linkedPayment && (
+                <InfoRow
+                  label="Linked payment account"
+                  value={`${paymentProviderLabel(linkedPayment.provider)} — ${linkedPayment.label || '—'}${linkedPayment.account_identifier ? ` (${linkedPayment.account_identifier})` : ''}`}
+                />
+              )}
             </div>
           </DetailSection>
         )}
@@ -870,11 +1268,124 @@ export default function AdminAccounts() {
     );
   };
 
+  const renderPaymentDetail = () => {
+    if (!selectedPayment) return null;
+    const p = selectedPayment;
+    return (
+      <div className="space-y-8">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-2xl font-bold text-foreground">{paymentProviderLabel(p.provider)}</h2>
+            <p className="text-lg text-muted-foreground">{p.label}</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Badge variant={p.status === 'good' ? 'default' : 'secondary'}>{p.status === 'good' ? 'Good' : 'Disabled'}</Badge>
+              {p.is_default && (
+                <Badge variant="outline" className="gap-1">
+                  <Star className="h-3 w-3 fill-amber-400 text-amber-400" /> Default
+                </Badge>
+              )}
+              {p.verified && <Badge variant="outline">Verified{p.verified_at ? ` · ${p.verified_at.slice(0, 10)}` : ''}</Badge>}
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => openPaymentEdit(p)} className="gap-1.5">
+              <Pencil className="h-3.5 w-3.5" />
+              Edit
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5 text-destructive hover:bg-destructive hover:text-destructive-foreground"
+              onClick={() =>
+                setDeleteConfirm({
+                  kind: 'payment',
+                  id: p.id,
+                  label: `${paymentProviderLabel(p.provider)} — ${p.label}`,
+                  navigateAfter: () => {
+                    setPaymentView('list');
+                    setSelectedPaymentId(null);
+                  },
+                })
+              }
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete
+            </Button>
+          </div>
+        </div>
+        <Separator />
+        <DetailSection icon={CreditCard} title="Payout identity">
+          <div className="space-y-1">
+            <InfoRow label="Identifier" value={p.account_identifier} />
+            <InfoRow label="Email" value={p.email} />
+            <InfoRow label="Full name" value={p.full_name} />
+            <InfoRow label="Phone" value={p.connected_phone} />
+            {p.purchase_way && (
+              <InfoRow label="Purchase way" value={p.purchase_way === 'broker' ? 'Broker' : 'Real man'} />
+            )}
+          </div>
+        </DetailSection>
+        {p.payment_details && (
+          <DetailSection icon={FolderKanban} title="Payment details">
+            <p className="text-sm whitespace-pre-line text-foreground/80">{p.payment_details}</p>
+          </DetailSection>
+        )}
+        {(p.address || p.city || p.state || p.zip) && (
+          <DetailSection icon={MapPin} title="Address">
+            <InfoRow label="Line" value={p.address} />
+            <InfoRow
+              label="City / State / ZIP"
+              value={[p.city, p.state, p.zip].filter(Boolean).join(', ') || null}
+            />
+          </DetailSection>
+        )}
+        {(p.id_card_drive_url || p.backup_info || p.credentials_note) && (
+          <DetailSection icon={Shield} title="Documents & recovery">
+            {p.id_card_drive_url && (
+              <a
+                href={p.id_card_drive_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+              >
+                <ExternalLink className="h-4 w-4" /> ID card (Google Drive)
+              </a>
+            )}
+            {p.backup_info && (
+              <div className="mt-3">
+                <p className="text-xs font-medium text-muted-foreground">Backup info</p>
+                <p className="text-sm whitespace-pre-line">{p.backup_info}</p>
+              </div>
+            )}
+            {p.credentials_note && (
+              <div className="mt-3">
+                <p className="text-xs font-medium text-muted-foreground">Credentials note (vault ref)</p>
+                <p className="text-sm whitespace-pre-line">{p.credentials_note}</p>
+              </div>
+            )}
+          </DetailSection>
+        )}
+        {p.disabled_at && p.status === 'disabled' && (
+          <p className="text-sm text-muted-foreground">Disabled: {new Date(p.disabled_at).toLocaleString()}</p>
+        )}
+        {p.notes && (
+          <>
+            <Separator />
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Notes</p>
+              <p className="text-sm whitespace-pre-line text-foreground/80">{p.notes}</p>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  };
+
   const DeleteDialog = (
     <AlertDialog open={!!deleteConfirm} onOpenChange={(open) => !open && setDeleteConfirm(null)}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Delete account</AlertDialogTitle>
+          <AlertDialogTitle>{deleteConfirm?.kind === 'payment' ? 'Delete payment account' : 'Delete account'}</AlertDialogTitle>
           <AlertDialogDescription>
             Are you sure you want to delete <strong>{deleteConfirm?.label}</strong>? This action cannot be undone.
           </AlertDialogDescription>
@@ -889,134 +1400,367 @@ export default function AdminAccounts() {
     </AlertDialog>
   );
 
+  const hubTitle =
+    accountHub === 'freelancing'
+      ? 'Freelancing platforms'
+      : accountHub === 'workspace'
+        ? 'Accounts & workspace'
+        : accountHub === 'payment'
+          ? 'Payment methods'
+          : '';
+
+  const showFreelanceWorkspaceChrome = accountHub === 'freelancing' || accountHub === 'workspace';
+
   return (
     <div className="space-y-6">
       {FormDialog}
+      {PaymentFormDialog}
       {DeleteDialog}
 
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:flex-1 lg:justify-start lg:gap-8">
           <div>
-            <h2 className="text-2xl font-semibold tracking-tight text-foreground">Manage Accounts</h2>
-            <p className="text-sm text-muted-foreground">Freelancing profiles and workspace accounts (Gmail, Teams, GitHub, etc.)</p>
+            <h2 className="text-2xl font-semibold tracking-tight text-foreground">Manage accounts</h2>
+            <p className="text-sm text-muted-foreground">
+              {accountHub === 'categories' && 'Choose a category: freelancing marketplaces, workspace tools, or payment payout accounts.'}
+              {accountHub === 'freelancing' && 'Marketplace profiles (Upwork, Fiverr, etc.). Fields adapt to freelancing vs workspace when you add an account.'}
+              {accountHub === 'workspace' && 'Email, chat, GitHub, storage, and other non-marketplace accounts.'}
+              {accountHub === 'payment' && 'PayPal, Payoneer, Wise, crypto, bank rails. Passwords are not stored—use credentials note for vault references.'}
+            </p>
           </div>
-          {view !== 'detail' && (
-            <ModuleSearchBar
-              value={searchInput}
-              onChange={setSearchInput}
-              placeholder={searchPlaceholder}
-              id="admin-accounts-search"
-            />
+          {accountHub !== 'categories' &&
+            ((accountHub === 'payment' && paymentView === 'list') ||
+              (showFreelanceWorkspaceChrome && view !== 'detail')) && (
+              <ModuleSearchBar
+                value={searchInput}
+                onChange={setSearchInput}
+                placeholder={searchPlaceholder}
+                id="admin-accounts-search"
+              />
+            )}
+        </div>
+        <div className="flex shrink-0 gap-2">
+          {accountHub === 'payment' && paymentView === 'list' && (
+            <Button onClick={openPaymentCreate} className="gap-2">
+              <Plus className="h-4 w-4" />
+              Add payment account
+            </Button>
+          )}
+          {showFreelanceWorkspaceChrome && (
+            <Button onClick={() => openCreate(selectedPlatform || undefined)} className="gap-2">
+              <Plus className="h-4 w-4" />
+              Add account
+            </Button>
           )}
         </div>
-        <Button onClick={() => openCreate(selectedPlatform || undefined)} className="gap-2 shrink-0"><Plus className="h-4 w-4" />Add Account</Button>
       </div>
 
       {/* Breadcrumb */}
-      {view !== 'platforms' && (
-        <div className="flex items-center gap-2 text-sm">
-          <button onClick={goToPlatforms} className="text-primary hover:underline font-medium">All Platforms</button>
-          {selectedPlatform && (
+      {accountHub !== 'categories' && (
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <button type="button" onClick={goToCategories} className="text-primary hover:underline font-medium">
+            All categories
+          </button>
+          {accountHub === 'payment' ? (
             <>
-              <ChevronRight className="h-4 w-4 text-muted-foreground" />
-              {view === 'detail' ? (
-                <button onClick={() => goToList(selectedPlatform)} className="text-primary hover:underline font-medium">{platformLabel}</button>
+              <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+              {paymentView === 'detail' && selectedPayment ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPaymentView('list');
+                    setSelectedPaymentId(null);
+                  }}
+                  className="text-primary hover:underline font-medium"
+                >
+                  Payment methods
+                </button>
               ) : (
-                <span className="text-foreground font-medium">{platformLabel}</span>
+                <span className="text-foreground font-medium">Payment methods</span>
+              )}
+              {paymentView === 'detail' && selectedPayment && (
+                <>
+                  <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <span className="text-foreground font-medium">{selectedPayment.label}</span>
+                </>
+              )}
+            </>
+          ) : (
+            <>
+              <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+              <span className="text-foreground font-medium">{hubTitle}</span>
+              {(view === 'list' || view === 'detail') && (
+                <>
+                  <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <button type="button" onClick={goToPlatforms} className="text-primary hover:underline font-medium">
+                    All platforms
+                  </button>
+                </>
+              )}
+              {selectedPlatform && (
+                <>
+                  <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                  {view === 'detail' ? (
+                    <button
+                      type="button"
+                      onClick={() => goToList(selectedPlatform)}
+                      className="text-primary hover:underline font-medium"
+                    >
+                      {platformLabel}
+                    </button>
+                  ) : (
+                    <span className="text-foreground font-medium">{platformLabel}</span>
+                  )}
+                </>
+              )}
+              {view === 'detail' && selectedAccount && (
+                <>
+                  <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <span className="text-foreground font-medium">@{selectedAccount.username}</span>
+                </>
               )}
             </>
           )}
-          {view === 'detail' && selectedAccount && (
-            <>
-              <ChevronRight className="h-4 w-4 text-muted-foreground" />
-              <span className="text-foreground font-medium">@{selectedAccount.username}</span>
-            </>
+        </div>
+      )}
+
+      {/* Top-level categories */}
+      {accountHub === 'categories' && (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <Card
+            className="cursor-pointer transition-all hover:shadow-md hover:border-primary/35 border-emerald-500/20"
+            onClick={enterFreelancingHub}
+          >
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-500 text-lg text-white">💼</div>
+                <CardTitle className="text-lg">Freelancing platforms</CardTitle>
+              </div>
+              <ChevronRight className="h-5 w-5 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">Upwork, Fiverr, Freelancer.com, Toptal, LinkedIn marketplace, etc.</p>
+            </CardContent>
+          </Card>
+          <Card
+            className="cursor-pointer transition-all hover:shadow-md hover:border-primary/35 border-sky-500/20"
+            onClick={enterWorkspaceHub}
+          >
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-sky-600 text-lg text-white">✉️</div>
+                <CardTitle className="text-lg">Accounts & workspace</CardTitle>
+              </div>
+              <ChevronRight className="h-5 w-5 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">Gmail, Teams, Telegram, GitHub, Dropbox, and other tools.</p>
+            </CardContent>
+          </Card>
+          <Card
+            className="cursor-pointer transition-all hover:shadow-md hover:border-primary/35 border-primary/25"
+            onClick={enterPaymentHub}
+          >
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+                  <Wallet className="h-5 w-5" />
+                </div>
+                <CardTitle className="text-lg">Payment methods</CardTitle>
+              </div>
+              <ChevronRight className="h-5 w-5 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">Payout rails: PayPal, Wise, Payoneer, crypto, bank—managed here only.</p>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Payment hub */}
+      {accountHub === 'payment' && paymentView === 'list' && (
+        <>
+          {paymentSearchFiltered.length === 0 ? (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+                <p className="text-lg font-medium text-foreground">
+                  {searchInput.trim() ? 'No matching payment accounts' : 'No payment accounts yet'}
+                </p>
+                <Button onClick={openPaymentCreate} variant="outline" className="mt-4 gap-2">
+                  <Plus className="h-4 w-4" />
+                  Add payment account
+                </Button>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {paymentSearchFiltered.map((p) => (
+                <Card
+                  key={p.id}
+                  className="cursor-pointer transition-all hover:shadow-md hover:border-primary/30"
+                  onClick={() => goToPaymentDetail(p.id)}
+                >
+                  <CardHeader className="pb-2">
+                    <CardTitle className="flex items-center gap-2 text-base font-medium">
+                      {paymentProviderLabel(p.provider)}
+                      {p.is_default && <Star className="h-4 w-4 fill-amber-400 text-amber-400" />}
+                    </CardTitle>
+                    <p className="text-sm text-muted-foreground">{p.label}</p>
+                    <Badge variant={p.status === 'good' ? 'default' : 'secondary'} className="w-fit">
+                      {p.status === 'good' ? 'Good' : 'Disabled'}
+                    </Badge>
+                  </CardHeader>
+                  <CardContent className="text-sm text-muted-foreground space-y-1">
+                    {p.account_identifier && <p className="font-mono text-xs break-all">{p.account_identifier}</p>}
+                    {p.connected_phone && <p>Phone: {p.connected_phone}</p>}
+                    <ChevronRight className="h-4 w-4 text-muted-foreground ml-auto" />
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {accountHub === 'payment' && paymentView === 'detail' && renderPaymentDetail()}
+
+      {/* Freelancing / workspace: platform grid + list + detail */}
+      {showFreelanceWorkspaceChrome && view === 'platforms' && (
+        <>
+          {accountsInCategory.length === 0 ? (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+                <p className="text-lg font-medium text-foreground">No accounts in this category yet</p>
+                <p className="mt-1 text-sm text-muted-foreground">Add an account with the correct platform type.</p>
+                <Button onClick={() => openCreate()} variant="outline" className="mt-4 gap-2">
+                  <Plus className="h-4 w-4" />
+                  Add account
+                </Button>
+              </CardContent>
+            </Card>
+          ) : platformList.length === 0 ? (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+                <p className="text-lg font-medium text-foreground">
+                  {searchInput.trim() ? 'No matching accounts' : 'No accounts'}
+                </p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {searchInput.trim() ? 'Try different keywords or clear the search.' : 'Add an account to get started.'}
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {platformList.map(({ platform, info, count, activeCount }) => (
+                <Card
+                  key={platform}
+                  className="cursor-pointer transition-all hover:shadow-md hover:border-primary/30 group"
+                  onClick={() => goToList(platform)}
+                >
+                  <CardHeader className="flex flex-row items-center justify-between pb-2">
+                    <div className="flex items-center gap-3">
+                      <div className={cn('flex h-10 w-10 items-center justify-center rounded-lg text-lg text-white', info.color)}>
+                        {info.icon}
+                      </div>
+                      <CardTitle className="text-lg">{info.label}</CardTitle>
+                    </div>
+                    <ChevronRight className="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-2xl font-bold text-foreground">{count}</p>
+                    <p className="text-sm text-muted-foreground">{activeCount} active</p>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {showFreelanceWorkspaceChrome && view === 'list' && (
+        <div className="space-y-3">
+          <Button variant="ghost" size="sm" onClick={goToPlatforms} className="gap-2 text-muted-foreground">
+            <ArrowLeft className="h-4 w-4" /> Back to platforms
+          </Button>
+          {filteredAccounts.length === 0 ? (
+            <Card>
+              <CardContent className="py-8 text-center">
+                <p className="text-muted-foreground">
+                  {searchInput.trim() ? 'No matching accounts' : 'No accounts for this platform'}
+                </p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {searchInput.trim() ? 'Try different keywords or clear the search.' : ''}
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            filteredAccounts.map((acc) => (
+              <Card
+                key={acc.id}
+                className="cursor-pointer transition-all hover:shadow-md hover:border-primary/30"
+                onClick={() => goToDetail(acc.id)}
+              >
+                <CardContent className="flex items-center justify-between p-4">
+                  <div className="flex items-center gap-4 min-w-0">
+                    <div>
+                      <p className="font-medium text-foreground">@{acc.username}</p>
+                      {acc.profile_title && (
+                        <p className="text-sm text-muted-foreground truncate max-w-[300px]">{acc.profile_title}</p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <Badge variant="secondary" className={statusColor[acc.status] || ''}>
+                      {acc.status}
+                    </Badge>
+                    {isFreelancerPlatform(acc.platform) && acc.job_success_score != null && (
+                      <span className="text-sm font-medium">{acc.job_success_score}%</span>
+                    )}
+                    <div className="flex gap-1">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openEdit(acc);
+                        }}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const info = PLATFORMS[acc.platform] || PLATFORMS.other;
+                          setDeleteConfirm({
+                            kind: 'freelancing',
+                            id: acc.id,
+                            label: `${info.label} @${acc.username}`,
+                          });
+                        }}
+                        className="text-destructive"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                  </div>
+                </CardContent>
+              </Card>
+            ))
           )}
         </div>
       )}
 
-      {/* Platform Cards */}
-      {view === 'platforms' && (
-        accounts.length === 0 ? (
-          <Card>
-            <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-              <p className="text-lg font-medium text-foreground">No accounts yet</p>
-              <p className="mt-1 text-sm text-muted-foreground">Add the first freelancing account</p>
-              <Button onClick={() => openCreate()} variant="outline" className="mt-4 gap-2"><Plus className="h-4 w-4" />Add Account</Button>
-            </CardContent>
-          </Card>
-        ) : platformList.length === 0 ? (
-          <Card>
-            <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-              <p className="text-lg font-medium text-foreground">{searchInput.trim() ? 'No matching accounts' : 'No accounts'}</p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {searchInput.trim() ? 'Try different keywords or clear the search.' : 'Add an account to get started.'}
-              </p>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {platformList.map(({ platform, info, count, activeCount }) => (
-              <Card key={platform} className="cursor-pointer transition-all hover:shadow-md hover:border-primary/30 group" onClick={() => goToList(platform)}>
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <div className="flex items-center gap-3">
-                    <div className={cn('flex h-10 w-10 items-center justify-center rounded-lg text-lg text-white', info.color)}>{info.icon}</div>
-                    <CardTitle className="text-lg">{info.label}</CardTitle>
-                  </div>
-                  <ChevronRight className="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
-                </CardHeader>
-                <CardContent>
-                  <p className="text-2xl font-bold text-foreground">{count}</p>
-                  <p className="text-sm text-muted-foreground">{activeCount} active</p>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        )
+      {showFreelanceWorkspaceChrome && view === 'detail' && (
+        <>
+          <Button variant="ghost" size="sm" onClick={() => goToList(selectedPlatform!)} className="gap-2 text-muted-foreground">
+            <ArrowLeft className="h-4 w-4" /> Back to {platformLabel} accounts
+          </Button>
+          {renderDetail()}
+        </>
       )}
-
-      {/* Account List */}
-      {view === 'list' && (
-        <div className="space-y-3">
-          {filteredAccounts.length === 0 ? (
-            <Card><CardContent className="py-8 text-center"><p className="text-muted-foreground">{searchInput.trim() ? 'No matching accounts' : 'No accounts for this platform'}</p><p className="mt-1 text-sm text-muted-foreground">{searchInput.trim() ? 'Try different keywords or clear the search.' : ''}</p></CardContent></Card>
-          ) : filteredAccounts.map((acc) => (
-            <Card key={acc.id} className="cursor-pointer transition-all hover:shadow-md hover:border-primary/30" onClick={() => goToDetail(acc.id)}>
-              <CardContent className="flex items-center justify-between p-4">
-                <div className="flex items-center gap-4 min-w-0">
-                  <div>
-                    <p className="font-medium text-foreground">@{acc.username}</p>
-                    {acc.profile_title && <p className="text-sm text-muted-foreground truncate max-w-[300px]">{acc.profile_title}</p>}
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <Badge variant="secondary" className={statusColor[acc.status] || ''}>{acc.status}</Badge>
-                  {isFreelancerPlatform(acc.platform) && acc.job_success_score != null && <span className="text-sm font-medium">{acc.job_success_score}%</span>}
-                  <div className="flex gap-1">
-                    <Button size="icon" variant="ghost" onClick={(e) => { e.stopPropagation(); openEdit(acc); }}><Pencil className="h-4 w-4" /></Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        const info = PLATFORMS[acc.platform] || PLATFORMS.other;
-                        setDeleteConfirm({ id: acc.id, label: `${info.label} @${acc.username}` });
-                      }}
-                      className="text-destructive"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                  <ChevronRight className="h-5 w-5 text-muted-foreground" />
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
-
-      {/* Detail View */}
-      {view === 'detail' && renderDetail()}
     </div>
   );
 }
