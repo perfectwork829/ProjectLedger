@@ -88,6 +88,12 @@ export interface TaskPoolItemRecord {
   deadline: string | null;
   budget_type: 'fixed' | 'hourly';
   budget_amount: number | null;
+  upwork_connection_fee: number;
+  convert_fee: number;
+  transfer_fee: number;
+  upwork_fee: number;
+  withdraw_fee: number;
+  withdrawn_amount: number;
   currency: string;
   github_url: string | null;
   status: TaskPoolItemStatus;

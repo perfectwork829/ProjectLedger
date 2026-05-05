@@ -1,4 +1,4 @@
-import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
+import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -42,65 +42,42 @@ function readCollapsedPreference(): boolean {
   }
 }
 
-/**
- * Collapsed rail rows: left accent is `::before` (absolute) so the row stays full width and the icon
- * can be centered in the rail — same hover/active language as expanded links (see screenshot).
- */
-function railNavLinkClass(isActive: boolean) {
-  return cn(
-    'relative z-0 flex h-11 w-full min-w-0 shrink-0 items-center justify-center rounded-sm text-sm font-medium tracking-tight transition-colors',
-    'before:pointer-events-none before:absolute before:left-0 before:top-0 before:z-10 before:h-full before:w-[3px] before:transition-colors before:content-[""]',
+const railMenuLinkClass = ({ isActive }: { isActive: boolean }) =>
+  cn(
+    'relative flex h-10 w-full min-w-0 shrink-0 items-center justify-center rounded-sm py-2 text-sm font-medium tracking-tight transition-colors',
+    'before:pointer-events-none before:absolute before:left-0 before:top-0 before:h-full before:w-[3px] before:content-[""]',
     isActive
       ? 'bg-sidebar-accent font-semibold text-sidebar-accent-foreground before:bg-primary'
-      : cn(
-          'text-sidebar-foreground before:bg-transparent',
-          'hover:bg-muted/80 hover:text-sidebar-foreground hover:before:bg-sidebar-border',
-        ),
+      : 'text-sidebar-foreground before:bg-transparent hover:bg-muted/80 hover:text-sidebar-foreground hover:before:bg-sidebar-border',
   );
-}
 
-function railBackNavClass(isActive: boolean) {
-  return cn(
-    'relative z-0 flex h-11 w-full min-w-0 shrink-0 items-center justify-center rounded-sm text-sm font-medium tracking-tight transition-colors',
-    'before:pointer-events-none before:absolute before:left-0 before:top-0 before:z-10 before:h-full before:w-[3px] before:transition-colors before:content-[""]',
-    'text-muted-foreground before:bg-transparent hover:bg-muted hover:text-foreground hover:before:bg-sidebar-border',
+const railBackLinkClass = ({ isActive }: { isActive: boolean }) =>
+  cn(
+    'relative flex h-10 w-full min-w-0 shrink-0 items-center justify-center rounded-sm py-2 text-sm font-medium tracking-tight transition-colors',
+    'before:pointer-events-none before:absolute before:left-0 before:top-0 before:h-full before:w-[3px] before:bg-transparent before:content-[""]',
+    'text-muted-foreground hover:bg-muted hover:text-foreground hover:before:bg-sidebar-border',
     isActive && 'bg-muted/60 text-foreground',
   );
-}
 
-function railChromeRowClassName() {
-  return cn(
-    'relative z-0 flex h-11 w-full min-w-0 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors',
-    'before:pointer-events-none before:absolute before:left-0 before:top-0 before:z-10 before:h-full before:w-[3px] before:bg-transparent before:transition-colors before:content-[""]',
-    'hover:bg-muted/80 hover:text-sidebar-foreground hover:before:bg-sidebar-border',
-    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background',
-  );
-}
+const railChromeRowClass =
+  'relative flex h-10 w-full min-w-0 shrink-0 items-center justify-center rounded-sm py-2 text-muted-foreground transition-colors before:pointer-events-none before:absolute before:left-0 before:top-0 before:h-full before:w-[3px] before:bg-transparent before:content-[""] hover:bg-muted/80 hover:text-sidebar-foreground hover:before:bg-sidebar-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background';
 
 function AdminRailNavItem({
   to,
   label,
   icon: Icon,
+  isActive,
   onNavigate,
 }: {
   to: string;
   label: string;
   icon: typeof Shield;
+  isActive: boolean;
   onNavigate: () => void;
 }) {
-  const { pathname } = useLocation();
-  const isActive = pathname === to;
-
   const link = (
-    <NavLink
-      to={to}
-      end
-      onClick={onNavigate}
-      title={label}
-      aria-current={isActive ? 'page' : undefined}
-      className={() => railNavLinkClass(isActive)}
-    >
-      <Icon className="relative z-0 h-4 w-4 shrink-0" strokeWidth={2} />
+    <NavLink to={to} onClick={onNavigate} title={label} aria-current={isActive ? 'page' : undefined} className={() => railMenuLinkClass({ isActive })}>
+      <Icon className="h-4 w-4 shrink-0" strokeWidth={2} />
     </NavLink>
   );
 
@@ -126,35 +103,28 @@ function AdminDesktopRail({
   onSignOut: () => void;
 }) {
   const { pathname } = useLocation();
-  const backActive = pathname === '/dashboard';
+  const isPathActive = (to: string) => pathname === to || pathname.startsWith(`${to}/`);
 
   return (
     <div className="flex h-full min-w-0 flex-col bg-sidebar">
       <div className="shrink-0 border-b border-sidebar-border bg-card">
         <Tooltip delayDuration={300}>
           <TooltipTrigger asChild>
-            <button type="button" className={railChromeRowClassName()} aria-label="Show full menu" onClick={onExpand}>
-              <ChevronLeft className="relative z-0 h-4 w-4 shrink-0" strokeWidth={2} />
+            <button type="button" className={railChromeRowClass} aria-label="Show full menu" onClick={onExpand}>
+              <ChevronLeft className="h-4 w-4 shrink-0" strokeWidth={2} />
             </button>
           </TooltipTrigger>
           <TooltipContent side="right">Show menu</TooltipContent>
         </Tooltip>
       </div>
 
-      <nav className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-2 [scrollbar-gutter:stable]" aria-label="Admin">
-        <ul className="flex flex-col gap-0.5 px-0 py-0">
+      <nav className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-3 [scrollbar-gutter:stable]" aria-label="Admin">
+        <ul className="flex flex-col gap-0.5">
           <li className="w-full min-w-0 shrink-0 list-none">
             <Tooltip delayDuration={300}>
               <TooltipTrigger asChild>
-                <NavLink
-                  to="/dashboard"
-                  end
-                  onClick={onNavigate}
-                  title="Back to app"
-                  aria-current={backActive ? 'page' : undefined}
-                  className={() => railBackNavClass(backActive)}
-                >
-                  <ArrowLeft className="relative z-0 h-4 w-4 shrink-0 opacity-80" strokeWidth={2} />
+                <NavLink to="/dashboard" end onClick={onNavigate} title="Back to app" className={railBackLinkClass}>
+                  <ArrowLeft className="h-4 w-4 shrink-0 opacity-80" strokeWidth={2} />
                 </NavLink>
               </TooltipTrigger>
               <TooltipContent side="right" sideOffset={8}>
@@ -164,7 +134,7 @@ function AdminDesktopRail({
           </li>
 
           {adminItems.map((item) => (
-            <AdminRailNavItem key={item.to} to={item.to} label={item.label} icon={item.icon} onNavigate={onNavigate} />
+            <AdminRailNavItem key={item.to} to={item.to} label={item.label} icon={item.icon} isActive={isPathActive(item.to)} onNavigate={onNavigate} />
           ))}
         </ul>
       </nav>
@@ -172,8 +142,8 @@ function AdminDesktopRail({
       <div className="shrink-0 border-t border-sidebar-border bg-card/50">
         <Tooltip delayDuration={300}>
           <TooltipTrigger asChild>
-            <button type="button" className={railChromeRowClassName()} onClick={onSignOut} aria-label="Sign out">
-              <LogOut className="relative z-0 h-4 w-4 shrink-0" strokeWidth={2} />
+            <button type="button" className={cn(railChromeRowClass, 'w-full bg-transparent')} onClick={onSignOut} aria-label="Sign out">
+              <LogOut className="h-4 w-4 shrink-0" strokeWidth={2} />
             </button>
           </TooltipTrigger>
           <TooltipContent side="right">Sign out</TooltipContent>

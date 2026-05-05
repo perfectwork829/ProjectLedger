@@ -93,10 +93,18 @@ interface Client {
   payment_terms: string | null;
   project_history: string | null;
   client_source: string | null;
+  source_account_id: string | null;
+  source_account_label: string | null;
   client_status: string | null;
   birthday: string | null;
   identity_documents: IdentityDocuments | null;
   created_at: string;
+}
+
+interface SourceAccountOption {
+  id: string;
+  platform: string;
+  username: string;
 }
 
 const SEX_OPTIONS = [
@@ -246,6 +254,8 @@ const MET_PLACES = [
   { value: 'other', label: 'Other' },
 ];
 
+const PLATFORM_ACCOUNT_SOURCES = ['upwork', 'freelancer', 'guru', 'linkedin', 'discord'] as const;
+
 const availColor: Record<string, string> = {
   available: 'bg-emerald-100 text-emerald-800',
   busy: 'bg-red-100 text-red-800',
@@ -280,6 +290,8 @@ const emptyForm = {
   working_type: 'individual', good_fit: false as boolean,
   budget: '', payment_terms: '', project_history: '' as string,
   client_source: '', client_status: 'prospect',
+  source_account_id: '',
+  source_account_label: '',
   birthday: '',
   identity_documents: {} as IdentityDocuments,
 };
@@ -440,6 +452,7 @@ export default function AdminClients() {
   const { user } = useAuth();
   const { toast } = useToast();
   const [clients, setClients] = useState<Client[]>([]);
+  const [sourceAccounts, setSourceAccounts] = useState<SourceAccountOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -453,9 +466,20 @@ export default function AdminClients() {
   const [searchInput, setSearchInput] = useState('');
 
   const fetchClients = async () => {
-    const { data, error } = await supabase.from('clients').select('*').order('created_at', { ascending: false });
-    if (error) toast({ title: 'Error loading clients', description: error.message, variant: 'destructive' });
-    else setClients(data || []);
+    const [clientsRes, accountsRes] = await Promise.all([
+      supabase.from('clients').select('*').order('created_at', { ascending: false }),
+      supabase.from('freelancing_accounts').select('id, platform, username').order('created_at', { ascending: false }),
+    ]);
+    if (clientsRes.error) {
+      toast({ title: 'Error loading clients', description: clientsRes.error.message, variant: 'destructive' });
+    } else {
+      setClients((clientsRes.data || []) as Client[]);
+    }
+    if (accountsRes.error) {
+      toast({ title: 'Error loading source accounts', description: accountsRes.error.message, variant: 'destructive' });
+    } else {
+      setSourceAccounts((accountsRes.data || []) as SourceAccountOption[]);
+    }
     setLoading(false);
   };
 
@@ -496,6 +520,8 @@ export default function AdminClients() {
       working_type: c.working_type || 'individual', good_fit: c.good_fit || false,
       budget: c.budget || '', payment_terms: c.payment_terms || '',
       project_history: c.project_history || '',       client_source: c.client_source || '',
+      source_account_id: c.source_account_id || '',
+      source_account_label: c.source_account_label || '',
       client_status: c.client_status || 'prospect',
       birthday: c.birthday ? (c.birthday.includes('T') ? c.birthday.slice(0, 10) : c.birthday) : '',
       identity_documents: normalizeIdentityDocuments(c.identity_documents ?? null),
@@ -549,6 +575,8 @@ export default function AdminClients() {
       budget: form.budget || null, payment_terms: form.payment_terms || null,
       project_history: form.project_history || null,
       client_source: form.client_source || null, client_status: form.client_status || null,
+      source_account_id: form.source_account_id || null,
+      source_account_label: form.source_account_label || null,
       birthday: form.birthday?.trim() ? form.birthday.trim() : null,
       identity_documents: identityDocumentsForDb(form.identity_documents as IdentityDocuments),
       user_id: user!.id, updated_at: new Date().toISOString(),
@@ -588,6 +616,15 @@ export default function AdminClients() {
     () => filterItemsBySearch(clients, searchInput, CLIENT_SEARCH_COLUMNS),
     [clients, searchInput],
   );
+  const filteredSourceAccounts = useMemo(() => {
+    const met = (form.met_place || '').toLowerCase();
+    if (!PLATFORM_ACCOUNT_SOURCES.includes(met as (typeof PLATFORM_ACCOUNT_SOURCES)[number])) return sourceAccounts;
+    return sourceAccounts.filter((acc) => {
+      const platform = (acc.platform || '').toLowerCase();
+      if (platform === met) return true;
+      return platform.includes(met);
+    });
+  }, [form.met_place, sourceAccounts]);
 
   if (loading) return <div className="flex items-center justify-center py-12"><div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" /></div>;
 
@@ -595,6 +632,13 @@ export default function AdminClients() {
   const typeList = CLIENT_TYPES.map(t => ({ ...t, count: (grouped[t.value] || []).length, activeCount: (grouped[t.value] || []).filter(c => c.client_status === 'active').length }));
   const filteredClients = selectedType ? grouped[selectedType] || [] : [];
   const selectedClient = selectedId ? clients.find(c => c.id === selectedId) : null;
+  const selectedSourceAccount = selectedClient?.source_account_id
+    ? sourceAccounts.find((a) => a.id === selectedClient.source_account_id)
+    : null;
+  const sourceAccountDisplay =
+    selectedSourceAccount
+      ? `${selectedSourceAccount.platform} @${selectedSourceAccount.username}`
+      : (selectedClient?.source_account_label || null);
   const typeLabel = selectedType ? (CLIENT_TYPES_MAP[selectedType]?.label || selectedType) : '';
 
   const goToTypes = () => { setView('types'); setSelectedType(null); setSelectedId(null); };
@@ -755,6 +799,7 @@ export default function AdminClients() {
         <DetailSection icon={Briefcase} title="Work">
           <InfoRow label="Working Project" value={c.working_project_name} />
           <InfoRow label="Met Place" value={MET_PLACES.find(m => m.value === c.met_place)?.label || c.met_place} />
+          <InfoRow label="Source Account" value={sourceAccountDisplay} />
           <InfoRow label="Client Source" value={c.client_source} />
           {c.working_history && <div className="mt-2"><p className="text-xs font-semibold text-muted-foreground mb-1">Working History</p><div className="prose prose-sm max-w-none text-foreground/80 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5" dangerouslySetInnerHTML={{ __html: c.working_history }} /></div>}
           {c.activity_notes && <div className="mt-2"><p className="text-xs font-semibold text-muted-foreground mb-1">Activity Notes</p><p className="text-sm text-foreground/80 whitespace-pre-line">{c.activity_notes}</p></div>}
@@ -811,7 +856,16 @@ export default function AdminClients() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Met Place</Label>
-                    <Select value={form.met_place} onValueChange={(v) => set('met_place', v)}>
+                    <Select
+                      value={form.met_place}
+                      onValueChange={(v) => {
+                        set('met_place', v);
+                        const lower = v.toLowerCase();
+                        if (!PLATFORM_ACCOUNT_SOURCES.includes(lower as (typeof PLATFORM_ACCOUNT_SOURCES)[number])) {
+                          set('source_account_id', '');
+                        }
+                      }}
+                    >
                       <SelectTrigger><SelectValue placeholder="Where did you meet?" /></SelectTrigger>
                       <SelectContent>{MET_PLACES.map(m => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}</SelectContent>
                     </Select>
@@ -822,6 +876,30 @@ export default function AdminClients() {
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>{WORKING_TYPES.map(w => <SelectItem key={w.value} value={w.value}>{w.label}</SelectItem>)}</SelectContent>
                     </Select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Source Account (optional)</Label>
+                    <Select value={form.source_account_id || 'none'} onValueChange={(v) => set('source_account_id', v === 'none' ? '' : v)}>
+                      <SelectTrigger><SelectValue placeholder="Select account used to meet this client" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">None</SelectItem>
+                        {filteredSourceAccounts.map((a) => (
+                          <SelectItem key={a.id} value={a.id}>
+                            {a.platform} @{a.username}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Source Label / Note</Label>
+                    <Input
+                      value={form.source_account_label}
+                      onChange={(e) => set('source_account_label', e.target.value)}
+                      placeholder="e.g. Discord server, LinkedIn profile, Guru team account"
+                    />
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">

@@ -27,6 +27,13 @@ import {
   TaskPoolScreenshot,
   TaskPoolSourceFile,
 } from '@/lib/taskPool';
+import {
+  getLastPeriodBounds,
+  getPeriodBoundsForDate,
+  isWithinRange,
+  summarizeTaskPool,
+  type TaskPoolListFilter,
+} from '@/lib/taskPoolFinance';
 import PoolSubtaskKanban from '@/components/PoolSubtaskKanban';
 import PoolSubtaskDetailDialog from '@/components/PoolSubtaskDetailDialog';
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from '@/components/ui/carousel';
@@ -57,6 +64,7 @@ export default function TaskPool() {
   const [personnel, setPersonnel] = useState<PersonnelRef[]>([]);
 
   const [searchInput, setSearchInput] = useState('');
+  const [listFilter, setListFilter] = useState<TaskPoolListFilter>('all');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [newChat, setNewChat] = useState('');
   const [newTitle, setNewTitle] = useState('');
@@ -101,13 +109,41 @@ export default function TaskPool() {
     setSubtaskDetailId(null);
   }, [selectedId]);
 
-  const filtered = useMemo(() => {
+  const searchFiltered = useMemo(() => {
     const q = searchInput.trim().toLowerCase();
     if (!q) return items;
     return items.filter((p) =>
       [p.name, p.description, p.task_source, p.main_stack, p.skillset_csv, p.tags_csv, p.status].filter(Boolean).join(' ').toLowerCase().includes(q),
     );
   }, [items, searchInput]);
+
+  const now = useMemo(() => new Date(), [items.length, searchInput, listFilter]);
+  const thisPeriod = useMemo(() => getPeriodBoundsForDate(now), [now]);
+  const lastPeriod = useMemo(() => getLastPeriodBounds(now), [now]);
+  const yearStart = useMemo(() => new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0), [now]);
+  const yearEnd = useMemo(() => new Date(now.getFullYear() + 1, 0, 1, 0, 0, 0, 0), [now]);
+  const filtered = useMemo(() => {
+    const base = searchFiltered;
+    if (listFilter === 'all') return base;
+    if (listFilter === 'latest') return base.slice(0, 20);
+    if (listFilter === 'working') return base.filter((x) => !['completed', 'cancelled'].includes(x.status));
+    if (listFilter === 'this_period') return base.filter((x) => isWithinRange(x.created_at, thisPeriod.start, thisPeriod.end));
+    if (listFilter === 'last_period') return base.filter((x) => isWithinRange(x.created_at, lastPeriod.start, lastPeriod.end));
+    if (listFilter === 'this_year') return base.filter((x) => isWithinRange(x.created_at, yearStart, yearEnd));
+    return base;
+  }, [searchFiltered, listFilter, thisPeriod, lastPeriod, yearStart, yearEnd]);
+  const thisPeriodSummary = useMemo(
+    () => summarizeTaskPool(items.filter((x) => isWithinRange(x.created_at, thisPeriod.start, thisPeriod.end))),
+    [items, thisPeriod],
+  );
+  const lastPeriodSummary = useMemo(
+    () => summarizeTaskPool(items.filter((x) => isWithinRange(x.created_at, lastPeriod.start, lastPeriod.end))),
+    [items, lastPeriod],
+  );
+  const thisYearSummary = useMemo(
+    () => summarizeTaskPool(items.filter((x) => isWithinRange(x.created_at, yearStart, yearEnd))),
+    [items, yearStart, yearEnd],
+  );
 
   const selected = selectedId ? items.find((p) => p.id === selectedId) || null : null;
   const selectedScreenshots = selected ? screenshots.filter((s) => s.pool_item_id === selected.id) : [];
@@ -267,7 +303,27 @@ export default function TaskPool() {
                 Open a lead to view details and the full-width <strong>Task board</strong>. Set a lead to <strong>Completed</strong> to promote it to Projects.
               </p>
             </div>
-            <ModuleSearchBar value={searchInput} onChange={setSearchInput} placeholder="Search task pool..." id="task-pool-search" />
+            <div className="flex w-full max-w-3xl gap-3">
+              <ModuleSearchBar value={searchInput} onChange={setSearchInput} placeholder="Search task pool..." id="task-pool-search" />
+              <Select value={listFilter} onValueChange={(v) => setListFilter(v as TaskPoolListFilter)}>
+                <SelectTrigger className="w-[210px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All tasks</SelectItem>
+                  <SelectItem value="latest">Latest tasks</SelectItem>
+                  <SelectItem value="this_period">This period (25-25)</SelectItem>
+                  <SelectItem value="last_period">Last period (25-25)</SelectItem>
+                  <SelectItem value="this_year">This year</SelectItem>
+                  <SelectItem value="working">Current working</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <StatCard title="This period (25-25)" summary={thisPeriodSummary} />
+            <StatCard title="Last period (25-25)" summary={lastPeriodSummary} />
+            <StatCard title="This year" summary={thisYearSummary} />
           </div>
 
           {filtered.length === 0 ? (
@@ -303,6 +359,12 @@ export default function TaskPool() {
                     {row.main_stack ? (
                       <p className="mt-1 text-xs text-primary/90 capitalize">Stack: {row.main_stack.replace('_', ' ')}</p>
                     ) : null}
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Real: {row.currency} {Number(row.budget_amount ?? 0).toFixed(2)}
+                    </p>
+                    <p className="text-xs text-emerald-600">
+                      Withdrawn: {row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}
+                    </p>
                     <p className="mt-2 text-xs text-muted-foreground line-clamp-3">{row.description || 'No description'}</p>
                   </CardContent>
                 </Card>
@@ -360,6 +422,15 @@ export default function TaskPool() {
                   <span>Client: {clientLabel(selected)}</span>
                   <span>Account: {accountLabel(selected)}</span>
                   <span>Deadline: {selected.deadline ? new Date(selected.deadline).toLocaleDateString() : 'N/A'}</span>
+                  <span>Real budget: {selected.currency} {Number(selected.budget_amount ?? 0).toFixed(2)}</span>
+                  <span>Withdrawn: {selected.currency} {Number(selected.withdrawn_amount ?? 0).toFixed(2)}</span>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                  <span>Upwork connection fee: {selected.currency} {Number(selected.upwork_connection_fee ?? 0).toFixed(2)}</span>
+                  <span>Convert fee: {selected.currency} {Number(selected.convert_fee ?? 0).toFixed(2)}</span>
+                  <span>Transfer fee: {selected.currency} {Number(selected.transfer_fee ?? 0).toFixed(2)}</span>
+                  <span>Upwork fee: {selected.currency} {Number(selected.upwork_fee ?? 0).toFixed(2)}</span>
+                  <span>Withdraw fee: {selected.currency} {Number(selected.withdraw_fee ?? 0).toFixed(2)}</span>
                 </div>
               </div>
 
@@ -549,6 +620,23 @@ function InfoLink({ label, url }: { label: string; url: string | null }) {
       ) : (
         <p className="text-sm text-muted-foreground">N/A</p>
       )}
+    </div>
+  );
+}
+
+function StatCard({
+  title,
+  summary,
+}: {
+  title: string;
+  summary: { count: number; realBudget: number; withdrawnBudget: number };
+}) {
+  return (
+    <div className="rounded-lg border bg-card p-3">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</p>
+      <p className="mt-1 text-sm font-medium text-foreground">{summary.count} tasks</p>
+      <p className="mt-1 text-xs text-muted-foreground">Real budget: {summary.realBudget.toFixed(2)}</p>
+      <p className="text-xs text-emerald-600">Withdrawn: {summary.withdrawnBudget.toFixed(2)}</p>
     </div>
   );
 }

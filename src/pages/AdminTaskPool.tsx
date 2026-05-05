@@ -40,6 +40,14 @@ import {
   TaskPoolSourceFile,
   toCsv,
 } from '@/lib/taskPool';
+import {
+  calcWithdrawnAmount,
+  getLastPeriodBounds,
+  getPeriodBoundsForDate,
+  isWithinRange,
+  summarizeTaskPool,
+  type TaskPoolListFilter,
+} from '@/lib/taskPoolFinance';
 import PoolSubtaskKanban from '@/components/PoolSubtaskKanban';
 import PoolSubtaskDetailDialog from '@/components/PoolSubtaskDetailDialog';
 import { ArrowLeft, Calendar, MessageSquare, Pencil, Plus, Trash2, FolderKanban, Link2, Clock, ListTodo } from 'lucide-react';
@@ -76,6 +84,11 @@ const emptyForm = {
   deadline: '',
   budgetType: 'fixed',
   budgetAmount: '',
+  upworkConnectionFee: '',
+  convertFee: '',
+  transferFee: '',
+  upworkFee: '',
+  withdrawFee: '',
   currency: 'USD',
   githubUrl: '',
   screenshotUrls: [] as string[],
@@ -97,6 +110,7 @@ export default function AdminTaskPool() {
   const [personnel, setPersonnel] = useState<PersonnelRef[]>([]);
 
   const [searchInput, setSearchInput] = useState('');
+  const [listFilter, setListFilter] = useState<TaskPoolListFilter>('all');
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -110,6 +124,18 @@ export default function AdminTaskPool() {
   const [newChat, setNewChat] = useState('');
   const [pendingDelete, setPendingDelete] = useState<PendingDel | null>(null);
   const [subtaskDetailId, setSubtaskDetailId] = useState<string | null>(null);
+  const withdrawnPreview = useMemo(
+    () =>
+      calcWithdrawnAmount({
+        budgetAmount: Number(form.budgetAmount || 0),
+        upworkConnectionFee: Number(form.upworkConnectionFee || 0),
+        convertFee: Number(form.convertFee || 0),
+        transferFee: Number(form.transferFee || 0),
+        upworkFee: Number(form.upworkFee || 0),
+        withdrawFee: Number(form.withdrawFee || 0),
+      }),
+    [form],
+  );
 
   const fetchAll = async () => {
     setLoading(true);
@@ -169,7 +195,7 @@ export default function AdminTaskPool() {
     setSubtaskDetailId(null);
   }, [selectedId]);
 
-  const filteredItems = useMemo(() => {
+  const searchFilteredItems = useMemo(() => {
     const q = searchInput.trim().toLowerCase();
     if (!q) return items;
     return items.filter((p) => {
@@ -194,6 +220,36 @@ export default function AdminTaskPool() {
       return blob.includes(q);
     });
   }, [items, searchInput, clients, accounts]);
+
+  const now = useMemo(() => new Date(), [items.length, searchInput, listFilter]);
+  const thisPeriod = useMemo(() => getPeriodBoundsForDate(now), [now]);
+  const lastPeriod = useMemo(() => getLastPeriodBounds(now), [now]);
+  const yearStart = useMemo(() => new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0), [now]);
+  const yearEnd = useMemo(() => new Date(now.getFullYear() + 1, 0, 1, 0, 0, 0, 0), [now]);
+
+  const filteredItems = useMemo(() => {
+    const base = searchFilteredItems;
+    if (listFilter === 'all') return base;
+    if (listFilter === 'latest') return base.slice(0, 20);
+    if (listFilter === 'working') return base.filter((x) => !['completed', 'cancelled'].includes(x.status));
+    if (listFilter === 'this_period') return base.filter((x) => isWithinRange(x.created_at, thisPeriod.start, thisPeriod.end));
+    if (listFilter === 'last_period') return base.filter((x) => isWithinRange(x.created_at, lastPeriod.start, lastPeriod.end));
+    if (listFilter === 'this_year') return base.filter((x) => isWithinRange(x.created_at, yearStart, yearEnd));
+    return base;
+  }, [searchFilteredItems, listFilter, thisPeriod, lastPeriod, yearStart, yearEnd]);
+
+  const thisPeriodSummary = useMemo(
+    () => summarizeTaskPool(items.filter((x) => isWithinRange(x.created_at, thisPeriod.start, thisPeriod.end))),
+    [items, thisPeriod],
+  );
+  const lastPeriodSummary = useMemo(
+    () => summarizeTaskPool(items.filter((x) => isWithinRange(x.created_at, lastPeriod.start, lastPeriod.end))),
+    [items, lastPeriod],
+  );
+  const thisYearSummary = useMemo(
+    () => summarizeTaskPool(items.filter((x) => isWithinRange(x.created_at, yearStart, yearEnd))),
+    [items, yearStart, yearEnd],
+  );
 
   const selected = selectedId ? items.find((p) => p.id === selectedId) || null : null;
   const selectedScreenshots = selected ? screenshots.filter((s) => s.pool_item_id === selected.id) : [];
@@ -250,6 +306,11 @@ export default function AdminTaskPool() {
       deadline: row.deadline ? row.deadline.slice(0, 16) : '',
       budgetType: row.budget_type,
       budgetAmount: row.budget_amount?.toString() || '',
+      upworkConnectionFee: Number(row.upwork_connection_fee ?? 0).toString(),
+      convertFee: Number(row.convert_fee ?? 0).toString(),
+      transferFee: Number(row.transfer_fee ?? 0).toString(),
+      upworkFee: Number(row.upwork_fee ?? 0).toString(),
+      withdrawFee: Number(row.withdraw_fee ?? 0).toString(),
       currency: row.currency || 'USD',
       githubUrl: row.github_url || '',
       screenshotUrls: screenshots.filter((s) => s.pool_item_id === row.id).map((s) => s.image_url),
@@ -299,6 +360,11 @@ export default function AdminTaskPool() {
       deadline: form.deadline ? new Date(form.deadline).toISOString() : null,
       budget_type: form.budgetType,
       budget_amount: form.budgetAmount ? Number(form.budgetAmount) : null,
+      upwork_connection_fee: form.upworkConnectionFee ? Number(form.upworkConnectionFee) : 0,
+      convert_fee: form.convertFee ? Number(form.convertFee) : 0,
+      transfer_fee: form.transferFee ? Number(form.transferFee) : 0,
+      upwork_fee: form.upworkFee ? Number(form.upworkFee) : 0,
+      withdraw_fee: form.withdrawFee ? Number(form.withdrawFee) : 0,
       currency: form.currency.trim() || 'USD',
       github_url: form.githubUrl.trim() || null,
       updated_at: new Date().toISOString(),
@@ -512,11 +578,47 @@ export default function AdminTaskPool() {
             </div>
             <div className="flex w-full max-w-2xl gap-3">
               <ModuleSearchBar value={searchInput} onChange={setSearchInput} placeholder="Search tasks..." id="admin-task-pool-search" />
+              <Select value={listFilter} onValueChange={(v) => setListFilter(v as TaskPoolListFilter)}>
+                <SelectTrigger className="w-[210px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All tasks</SelectItem>
+                  <SelectItem value="latest">Latest tasks</SelectItem>
+                  <SelectItem value="this_period">This period (25-25)</SelectItem>
+                  <SelectItem value="last_period">Last period (25-25)</SelectItem>
+                  <SelectItem value="this_year">This year</SelectItem>
+                  <SelectItem value="working">Current working</SelectItem>
+                </SelectContent>
+              </Select>
               <Button className="gap-2 shrink-0" onClick={openCreate}>
                 <Plus className="h-4 w-4" />
                 New
               </Button>
             </div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-3">
+            <InfoCard icon={Calendar} title="This period (25-25)" value={`${thisPeriodSummary.count} tasks`} />
+            <InfoCard icon={Calendar} title="Last period (25-25)" value={`${lastPeriodSummary.count} tasks`} />
+            <InfoCard icon={Calendar} title="This year" value={`${thisYearSummary.count} tasks`} />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <InfoCard
+              icon={Link2}
+              title="This period budget"
+              value={`Real ${thisPeriodSummary.realBudget.toFixed(2)} / Withdrawn ${thisPeriodSummary.withdrawnBudget.toFixed(2)}`}
+            />
+            <InfoCard
+              icon={Link2}
+              title="Last period budget"
+              value={`Real ${lastPeriodSummary.realBudget.toFixed(2)} / Withdrawn ${lastPeriodSummary.withdrawnBudget.toFixed(2)}`}
+            />
+            <InfoCard
+              icon={Link2}
+              title="This year budget"
+              value={`Real ${thisYearSummary.realBudget.toFixed(2)} / Withdrawn ${thisYearSummary.withdrawnBudget.toFixed(2)}`}
+            />
           </div>
 
           {filteredItems.length === 0 ? (
@@ -552,6 +654,12 @@ export default function AdminTaskPool() {
                     {row.main_stack ? (
                       <p className="mt-1 text-xs text-primary/90 capitalize">Stack: {row.main_stack.replace('_', ' ')}</p>
                     ) : null}
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Real: {row.currency} {Number(row.budget_amount ?? 0).toFixed(2)}
+                    </p>
+                    <p className="text-xs text-emerald-600">
+                      Withdrawn: {row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}
+                    </p>
                     <p className="mt-2 text-xs text-muted-foreground line-clamp-3">{row.description || 'No description'}</p>
                   </CardContent>
                 </Card>
@@ -648,9 +756,21 @@ export default function AdminTaskPool() {
                         icon={Calendar}
                         title="Budget"
                         value={
-                          selected.budget_amount ? `${selected.currency} ${selected.budget_amount} (${selected.budget_type})` : 'Not set'
+                          `${selected.currency} ${Number(selected.budget_amount ?? 0).toFixed(2)} (${selected.budget_type})`
                         }
                       />
+                      <InfoCard
+                        icon={Calendar}
+                        title="Withdrawn amount"
+                        value={`${selected.currency} ${Number(selected.withdrawn_amount ?? 0).toFixed(2)}`}
+                      />
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                      <InfoCard icon={Clock} title="Upwork connection fee" value={`${selected.currency} ${Number(selected.upwork_connection_fee ?? 0).toFixed(2)}`} />
+                      <InfoCard icon={Clock} title="Convert fee" value={`${selected.currency} ${Number(selected.convert_fee ?? 0).toFixed(2)}`} />
+                      <InfoCard icon={Clock} title="Transfer fee" value={`${selected.currency} ${Number(selected.transfer_fee ?? 0).toFixed(2)}`} />
+                      <InfoCard icon={Clock} title="Upwork fee" value={`${selected.currency} ${Number(selected.upwork_fee ?? 0).toFixed(2)}`} />
+                      <InfoCard icon={Clock} title="Withdraw fee" value={`${selected.currency} ${Number(selected.withdraw_fee ?? 0).toFixed(2)}`} />
                     </div>
                     <div className="space-y-2">
                       <p className="text-sm font-medium">Skillset</p>
@@ -968,8 +1088,35 @@ export default function AdminTaskPool() {
               <Input type="number" value={form.budgetAmount} onChange={(e) => setForm((p) => ({ ...p, budgetAmount: e.target.value }))} />
             </div>
             <div className="space-y-2">
+              <Label>Upwork connection fee</Label>
+              <Input type="number" value={form.upworkConnectionFee} onChange={(e) => setForm((p) => ({ ...p, upworkConnectionFee: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Convert fee</Label>
+              <Input type="number" value={form.convertFee} onChange={(e) => setForm((p) => ({ ...p, convertFee: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Transfer fee</Label>
+              <Input type="number" value={form.transferFee} onChange={(e) => setForm((p) => ({ ...p, transferFee: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Upwork fee</Label>
+              <Input type="number" value={form.upworkFee} onChange={(e) => setForm((p) => ({ ...p, upworkFee: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Withdraw fee</Label>
+              <Input type="number" value={form.withdrawFee} onChange={(e) => setForm((p) => ({ ...p, withdrawFee: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
               <Label>Currency</Label>
               <Input value={form.currency} onChange={(e) => setForm((p) => ({ ...p, currency: e.target.value }))} />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label>Withdrawn amount (auto)</Label>
+              <Input value={`${form.currency || 'USD'} ${withdrawnPreview.toFixed(2)}`} readOnly />
+              <p className="text-xs text-muted-foreground">
+                Withdrawn = real budget - (upwork connection fee + convert fee + transfer fee + upwork fee + withdraw fee)
+              </p>
             </div>
             <div className="space-y-2 md:col-span-2">
               <Label>GitHub</Label>
