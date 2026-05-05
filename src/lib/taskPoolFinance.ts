@@ -1,6 +1,15 @@
 import type { TaskPoolItemRecord } from '@/lib/taskPool';
 
-export type TaskPoolListFilter = 'all' | 'latest' | 'this_period' | 'last_period' | 'this_year' | 'working';
+export type TaskPoolListFilter =
+  | 'all'
+  | 'latest'
+  | 'this_period'
+  | 'last_period'
+  | 'this_year'
+  | 'working'
+  | 'this_week'
+  | 'last_week'
+  | 'custom';
 
 export function calcWithdrawnAmount(input: {
   budgetAmount: number;
@@ -33,6 +42,21 @@ export function getLastPeriodBounds(now: Date): { start: Date; end: Date } {
     start: new Date(current.start.getFullYear(), current.start.getMonth() - 1, 25, 0, 0, 0, 0),
     end: current.start,
   };
+}
+
+export function getWeekBounds(now: Date): {
+  thisWeekStart: Date;
+  thisWeekEnd: Date;
+  lastWeekStart: Date;
+  lastWeekEnd: Date;
+} {
+  const weekday = now.getDay(); // 0=Sun...6=Sat
+  const diffFromMonday = (weekday + 6) % 7;
+  const thisWeekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diffFromMonday, 0, 0, 0, 0);
+  const thisWeekEnd = new Date(thisWeekStart.getFullYear(), thisWeekStart.getMonth(), thisWeekStart.getDate() + 7, 0, 0, 0, 0);
+  const lastWeekStart = new Date(thisWeekStart.getFullYear(), thisWeekStart.getMonth(), thisWeekStart.getDate() - 7, 0, 0, 0, 0);
+  const lastWeekEnd = thisWeekStart;
+  return { thisWeekStart, thisWeekEnd, lastWeekStart, lastWeekEnd };
 }
 
 export function isWithinRange(dateIso: string | null, start: Date, end: Date): boolean {

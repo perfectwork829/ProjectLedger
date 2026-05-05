@@ -5,6 +5,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import {
   Shield,
   CreditCard,
+  DollarSign,
   Users,
   FolderKanban,
   ClipboardList,
@@ -27,6 +28,7 @@ const EXPANDED_SIDEBAR_WIDTH = 'w-[260px]';
 const adminItems = [
   { to: '/admin/roles', label: 'Manage Roles', icon: Shield },
   { to: '/admin/accounts', label: 'Manage Accounts', icon: CreditCard },
+  { to: '/admin/payments', label: 'Manage Payments', icon: DollarSign },
   { to: '/admin/projects', label: 'Manage Projects', icon: FolderKanban },
   { to: '/admin/clients', label: 'Manage Clients', icon: Users },
   { to: '/admin/tasks', label: 'Manage Tasks', icon: ClipboardList },

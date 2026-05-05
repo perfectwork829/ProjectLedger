@@ -12,24 +12,26 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
-  ClientRef,
+  type AccountRef,
+  type ClientRef,
   loadProjectDependencies,
-  PersonnelRef,
-  PoolChatMessage,
-  PoolSubtask,
+  type PersonnelRef,
+  type PoolChatMessage,
+  type PoolSubtask,
   promoteCompletedPoolItemToProject,
   TASK_POOL_ITEM_STATUS_OPTIONS,
   TASK_POOL_SUBTASK_BOARD_STATUSES,
   poolSubtaskBoardLabel,
   taskPoolItemStatusLabel,
   type PoolSubtaskStatus,
-  TaskPoolItemRecord,
-  TaskPoolScreenshot,
-  TaskPoolSourceFile,
+  type TaskPoolItemRecord,
+  type TaskPoolScreenshot,
+  type TaskPoolSourceFile,
 } from '@/lib/taskPool';
 import {
   getLastPeriodBounds,
   getPeriodBoundsForDate,
+  getWeekBounds,
   isWithinRange,
   summarizeTaskPool,
   type TaskPoolListFilter,
@@ -64,7 +66,10 @@ export default function TaskPool() {
   const [personnel, setPersonnel] = useState<PersonnelRef[]>([]);
 
   const [searchInput, setSearchInput] = useState('');
-  const [listFilter, setListFilter] = useState<TaskPoolListFilter>('all');
+  const [listFilter, setListFilter] = useState<TaskPoolListFilter>('working');
+  const [viewMode, setViewMode] = useState<'card' | 'list' | 'line' | 'table'>('table');
+  const [customStart, setCustomStart] = useState('');
+  const [customEnd, setCustomEnd] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [newChat, setNewChat] = useState('');
   const [newTitle, setNewTitle] = useState('');
@@ -120,6 +125,7 @@ export default function TaskPool() {
   const now = useMemo(() => new Date(), [items.length, searchInput, listFilter]);
   const thisPeriod = useMemo(() => getPeriodBoundsForDate(now), [now]);
   const lastPeriod = useMemo(() => getLastPeriodBounds(now), [now]);
+  const { thisWeekStart, thisWeekEnd, lastWeekStart, lastWeekEnd } = useMemo(() => getWeekBounds(now), [now]);
   const yearStart = useMemo(() => new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0), [now]);
   const yearEnd = useMemo(() => new Date(now.getFullYear() + 1, 0, 1, 0, 0, 0, 0), [now]);
   const filtered = useMemo(() => {
@@ -127,23 +133,33 @@ export default function TaskPool() {
     if (listFilter === 'all') return base;
     if (listFilter === 'latest') return base.slice(0, 20);
     if (listFilter === 'working') return base.filter((x) => !['completed', 'cancelled'].includes(x.status));
-    if (listFilter === 'this_period') return base.filter((x) => isWithinRange(x.created_at, thisPeriod.start, thisPeriod.end));
-    if (listFilter === 'last_period') return base.filter((x) => isWithinRange(x.created_at, lastPeriod.start, lastPeriod.end));
-    if (listFilter === 'this_year') return base.filter((x) => isWithinRange(x.created_at, yearStart, yearEnd));
+    if (listFilter === 'this_period') return base.filter((x) => isWithinRange(x.task_received_at || x.created_at, thisPeriod.start, thisPeriod.end));
+    if (listFilter === 'last_period') return base.filter((x) => isWithinRange(x.task_received_at || x.created_at, lastPeriod.start, lastPeriod.end));
+    if (listFilter === 'this_week') return base.filter((x) => isWithinRange(x.task_received_at || x.created_at, thisWeekStart, thisWeekEnd));
+    if (listFilter === 'last_week') return base.filter((x) => isWithinRange(x.task_received_at || x.created_at, lastWeekStart, lastWeekEnd));
+    if (listFilter === 'custom' && customStart && customEnd) {
+      const start = new Date(customStart);
+      const end = new Date(new Date(customEnd).getFullYear(), new Date(customEnd).getMonth(), new Date(customEnd).getDate() + 1);
+      return base.filter((x) => isWithinRange(x.task_received_at || x.created_at, start, end));
+    }
+    if (listFilter === 'this_year') return base.filter((x) => isWithinRange(x.task_received_at || x.created_at, yearStart, yearEnd));
     return base;
-  }, [searchFiltered, listFilter, thisPeriod, lastPeriod, yearStart, yearEnd]);
+  }, [searchFiltered, listFilter, thisPeriod, lastPeriod, thisWeekStart, thisWeekEnd, lastWeekStart, lastWeekEnd, yearStart, yearEnd, customStart, customEnd]);
   const thisPeriodSummary = useMemo(
-    () => summarizeTaskPool(items.filter((x) => isWithinRange(x.created_at, thisPeriod.start, thisPeriod.end))),
+    () => summarizeTaskPool(items.filter((x) => isWithinRange(x.task_received_at || x.created_at, thisPeriod.start, thisPeriod.end))),
     [items, thisPeriod],
   );
   const lastPeriodSummary = useMemo(
-    () => summarizeTaskPool(items.filter((x) => isWithinRange(x.created_at, lastPeriod.start, lastPeriod.end))),
+    () => summarizeTaskPool(items.filter((x) => isWithinRange(x.task_received_at || x.created_at, lastPeriod.start, lastPeriod.end))),
     [items, lastPeriod],
   );
   const thisYearSummary = useMemo(
-    () => summarizeTaskPool(items.filter((x) => isWithinRange(x.created_at, yearStart, yearEnd))),
+    () => summarizeTaskPool(items.filter((x) => isWithinRange(x.task_received_at || x.created_at, yearStart, yearEnd))),
     [items, yearStart, yearEnd],
   );
+  const thisMonthLabel = useMemo(() => now.toLocaleString('en-US', { month: 'long' }), [now]);
+  const lastMonthLabel = useMemo(() => new Date(now.getFullYear(), now.getMonth() - 1, 1).toLocaleString('en-US', { month: 'long' }), [now]);
+  const yearLabel = useMemo(() => now.getFullYear().toString(), [now]);
 
   const selected = selectedId ? items.find((p) => p.id === selectedId) || null : null;
   const selectedScreenshots = selected ? screenshots.filter((s) => s.pool_item_id === selected.id) : [];
@@ -312,18 +328,39 @@ export default function TaskPool() {
                 <SelectContent>
                   <SelectItem value="all">All tasks</SelectItem>
                   <SelectItem value="latest">Latest tasks</SelectItem>
-                  <SelectItem value="this_period">This period (25-25)</SelectItem>
-                  <SelectItem value="last_period">Last period (25-25)</SelectItem>
-                  <SelectItem value="this_year">This year</SelectItem>
+                  <SelectItem value="this_period">{`This month (${thisMonthLabel})`}</SelectItem>
+                  <SelectItem value="last_period">{`Last month (${lastMonthLabel})`}</SelectItem>
+                  <SelectItem value="this_week">This week</SelectItem>
+                  <SelectItem value="last_week">Last week</SelectItem>
+                  <SelectItem value="custom">Custom period</SelectItem>
+                  <SelectItem value="this_year">{`Year (${yearLabel})`}</SelectItem>
                   <SelectItem value="working">Current working</SelectItem>
                 </SelectContent>
               </Select>
+              <Select value={viewMode} onValueChange={(v) => setViewMode(v as 'card' | 'list' | 'line' | 'table')}>
+                <SelectTrigger className="w-[160px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="card">Card mode</SelectItem>
+                  <SelectItem value="list">List mode</SelectItem>
+                  <SelectItem value="line">Line mode</SelectItem>
+                  <SelectItem value="table">Table mode</SelectItem>
+                </SelectContent>
+              </Select>
+              {listFilter === 'custom' ? (
+                <div className="flex items-center gap-2">
+                  <Input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} className="w-[150px]" />
+                  <span className="text-xs text-muted-foreground">to</span>
+                  <Input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} className="w-[150px]" />
+                </div>
+              ) : null}
             </div>
           </div>
           <div className="grid gap-3 sm:grid-cols-3">
-            <StatCard title="This period (25-25)" summary={thisPeriodSummary} />
-            <StatCard title="Last period (25-25)" summary={lastPeriodSummary} />
-            <StatCard title="This year" summary={thisYearSummary} />
+            <StatCard title={`This Month (${thisMonthLabel})`} summary={thisPeriodSummary} />
+            <StatCard title={`Last Month (${lastMonthLabel})`} summary={lastPeriodSummary} />
+            <StatCard title={`Year (${yearLabel})`} summary={thisYearSummary} />
           </div>
 
           {filtered.length === 0 ? (
@@ -333,7 +370,7 @@ export default function TaskPool() {
                 {searchInput.trim() ? 'Try different keywords or clear the search.' : 'Tasks appear here when admins add them.'}
               </p>
             </div>
-          ) : (
+          ) : viewMode === 'card' ? (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {filtered.map((row) => (
                 <Card
@@ -365,7 +402,73 @@ export default function TaskPool() {
                     <p className="text-xs text-emerald-600">
                       Withdrawn: {row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}
                     </p>
+                    <p className="text-xs text-muted-foreground">
+                      Received: {row.task_received_at ? new Date(row.task_received_at).toLocaleDateString() : 'N/A'}
+                    </p>
                     <p className="mt-2 text-xs text-muted-foreground line-clamp-3">{row.description || 'No description'}</p>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : viewMode === 'table' ? (
+            <div className="overflow-x-auto rounded-lg border bg-card">
+              <table className="min-w-full text-sm">
+                <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2">Task</th>
+                    <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2">Source</th>
+                    <th className="px-3 py-2">Received</th>
+                    <th className="px-3 py-2">Real</th>
+                    <th className="px-3 py-2">Withdrawn</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((row) => (
+                    <tr key={row.id} className="cursor-pointer border-t hover:bg-muted/30" onClick={() => setSelectedId(row.id)}>
+                      <td className="px-3 py-2 font-medium">{row.name}</td>
+                      <td className="px-3 py-2">{taskPoolItemStatusLabel(row.status)}</td>
+                      <td className="px-3 py-2 capitalize">{(row.task_source || '-').replace('_', ' ')}</td>
+                      <td className="px-3 py-2">{row.task_received_at ? new Date(row.task_received_at).toLocaleDateString() : 'N/A'}</td>
+                      <td className="px-3 py-2">{row.currency} {Number(row.budget_amount ?? 0).toFixed(2)}</td>
+                      <td className="px-3 py-2 text-emerald-600">{row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : viewMode === 'line' ? (
+            <div className="rounded-lg border bg-card">
+              {filtered.map((row) => (
+                <button
+                  key={row.id}
+                  type="button"
+                  className="flex w-full items-center justify-between gap-3 border-b px-3 py-2 text-left last:border-b-0 hover:bg-muted/30"
+                  onClick={() => setSelectedId(row.id)}
+                >
+                  <div className="min-w-0">
+                    <p className="truncate font-medium">{row.name}</p>
+                    <p className="text-xs text-muted-foreground capitalize">{(row.task_source || 'n/a').replace('_', ' ')}</p>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <p className="text-xs text-muted-foreground">{taskPoolItemStatusLabel(row.status)}</p>
+                    <p className="text-xs text-emerald-600">{row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {filtered.map((row) => (
+                <Card key={row.id} className="cursor-pointer hover:border-primary/40" onClick={() => setSelectedId(row.id)}>
+                  <CardContent className="flex items-center justify-between p-3">
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{row.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {taskPoolItemStatusLabel(row.status)} · {row.currency} {Number(row.budget_amount ?? 0).toFixed(2)}
+                      </p>
+                    </div>
+                    <Badge variant="outline" className="shrink-0">{row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}</Badge>
                   </CardContent>
                 </Card>
               ))}
@@ -422,6 +525,7 @@ export default function TaskPool() {
                   <span>Client: {clientLabel(selected)}</span>
                   <span>Account: {accountLabel(selected)}</span>
                   <span>Deadline: {selected.deadline ? new Date(selected.deadline).toLocaleDateString() : 'N/A'}</span>
+                  <span>Received: {selected.task_received_at ? new Date(selected.task_received_at).toLocaleDateString() : 'N/A'}</span>
                   <span>Real budget: {selected.currency} {Number(selected.budget_amount ?? 0).toFixed(2)}</span>
                   <span>Withdrawn: {selected.currency} {Number(selected.withdrawn_amount ?? 0).toFixed(2)}</span>
                 </div>

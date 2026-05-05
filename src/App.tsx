@@ -25,6 +25,8 @@ import AdminClients from "@/pages/AdminClients";
 import Clients from "@/pages/Clients";
 import AdminUsefulLinks from "@/pages/AdminUsefulLinks";
 import UsefulLinks from "@/pages/UsefulLinks";
+import AdminPayments from "@/pages/AdminPayments";
+import Payments from "@/pages/Payments";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -56,7 +58,7 @@ const App = () => (
               <Route path="projects" element={<Projects />} />
               <Route path="clients" element={<Clients />} />
               <Route path="accounts" element={<FreelancingAccounts />} />
-              <Route path="payments" element={<Navigate to="/dashboard/accounts" replace />} />
+              <Route path="payments" element={<Payments />} />
               <Route path="tasks" element={<TaskPool />} />
               <Route path="personnel" element={<Personnel />} />
               <Route path="useful-links" element={<UsefulLinks />} />
@@ -76,7 +78,7 @@ const App = () => (
               <Route path="accounts" element={<AdminAccounts />} />
               <Route path="projects" element={<AdminProjects />} />
               <Route path="clients" element={<AdminClients />} />
-              <Route path="payments" element={<Navigate to="/admin/accounts#payment" replace />} />
+              <Route path="payments" element={<AdminPayments />} />
               <Route path="tasks" element={<AdminTaskPool />} />
               <Route path="personnel" element={<AdminPersonnel />} />
               <Route path="useful-links" element={<AdminUsefulLinks />} />

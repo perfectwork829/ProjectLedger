@@ -85,6 +85,7 @@ export interface TaskPoolItemRecord {
   initial_document_url: string | null;
   source_storage_type: SourceStorageType;
   source_storage_url: string | null;
+  task_received_at: string | null;
   deadline: string | null;
   budget_type: 'fixed' | 'hourly';
   budget_amount: number | null;

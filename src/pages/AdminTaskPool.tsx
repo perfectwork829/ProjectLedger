@@ -44,6 +44,7 @@ import {
   calcWithdrawnAmount,
   getLastPeriodBounds,
   getPeriodBoundsForDate,
+  getWeekBounds,
   isWithinRange,
   summarizeTaskPool,
   type TaskPoolListFilter,
@@ -81,6 +82,7 @@ const emptyForm = {
   initialDocumentUrl: '',
   sourceStorageType: 'drive',
   sourceStorageUrl: '',
+  taskReceivedAt: '',
   deadline: '',
   budgetType: 'fixed',
   budgetAmount: '',
@@ -110,7 +112,10 @@ export default function AdminTaskPool() {
   const [personnel, setPersonnel] = useState<PersonnelRef[]>([]);
 
   const [searchInput, setSearchInput] = useState('');
-  const [listFilter, setListFilter] = useState<TaskPoolListFilter>('all');
+  const [listFilter, setListFilter] = useState<TaskPoolListFilter>('working');
+  const [customStart, setCustomStart] = useState('');
+  const [customEnd, setCustomEnd] = useState('');
+  const [viewMode, setViewMode] = useState<'card' | 'list' | 'line' | 'table'>('card');
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -224,6 +229,7 @@ export default function AdminTaskPool() {
   const now = useMemo(() => new Date(), [items.length, searchInput, listFilter]);
   const thisPeriod = useMemo(() => getPeriodBoundsForDate(now), [now]);
   const lastPeriod = useMemo(() => getLastPeriodBounds(now), [now]);
+  const { thisWeekStart, thisWeekEnd, lastWeekStart, lastWeekEnd } = useMemo(() => getWeekBounds(now), [now]);
   const yearStart = useMemo(() => new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0), [now]);
   const yearEnd = useMemo(() => new Date(now.getFullYear() + 1, 0, 1, 0, 0, 0, 0), [now]);
 
@@ -232,24 +238,34 @@ export default function AdminTaskPool() {
     if (listFilter === 'all') return base;
     if (listFilter === 'latest') return base.slice(0, 20);
     if (listFilter === 'working') return base.filter((x) => !['completed', 'cancelled'].includes(x.status));
-    if (listFilter === 'this_period') return base.filter((x) => isWithinRange(x.created_at, thisPeriod.start, thisPeriod.end));
-    if (listFilter === 'last_period') return base.filter((x) => isWithinRange(x.created_at, lastPeriod.start, lastPeriod.end));
-    if (listFilter === 'this_year') return base.filter((x) => isWithinRange(x.created_at, yearStart, yearEnd));
+    if (listFilter === 'this_period') return base.filter((x) => isWithinRange(x.task_received_at || x.created_at, thisPeriod.start, thisPeriod.end));
+    if (listFilter === 'last_period') return base.filter((x) => isWithinRange(x.task_received_at || x.created_at, lastPeriod.start, lastPeriod.end));
+    if (listFilter === 'this_week') return base.filter((x) => isWithinRange(x.task_received_at || x.created_at, thisWeekStart, thisWeekEnd));
+    if (listFilter === 'last_week') return base.filter((x) => isWithinRange(x.task_received_at || x.created_at, lastWeekStart, lastWeekEnd));
+    if (listFilter === 'custom' && customStart && customEnd) {
+      const start = new Date(customStart);
+      const end = new Date(new Date(customEnd).getFullYear(), new Date(customEnd).getMonth(), new Date(customEnd).getDate() + 1);
+      return base.filter((x) => isWithinRange(x.task_received_at || x.created_at, start, end));
+    }
+    if (listFilter === 'this_year') return base.filter((x) => isWithinRange(x.task_received_at || x.created_at, yearStart, yearEnd));
     return base;
-  }, [searchFilteredItems, listFilter, thisPeriod, lastPeriod, yearStart, yearEnd]);
+  }, [searchFilteredItems, listFilter, thisPeriod, lastPeriod, thisWeekStart, thisWeekEnd, lastWeekStart, lastWeekEnd, yearStart, yearEnd, customStart, customEnd]);
 
   const thisPeriodSummary = useMemo(
-    () => summarizeTaskPool(items.filter((x) => isWithinRange(x.created_at, thisPeriod.start, thisPeriod.end))),
+    () => summarizeTaskPool(items.filter((x) => isWithinRange(x.task_received_at || x.created_at, thisPeriod.start, thisPeriod.end))),
     [items, thisPeriod],
   );
   const lastPeriodSummary = useMemo(
-    () => summarizeTaskPool(items.filter((x) => isWithinRange(x.created_at, lastPeriod.start, lastPeriod.end))),
+    () => summarizeTaskPool(items.filter((x) => isWithinRange(x.task_received_at || x.created_at, lastPeriod.start, lastPeriod.end))),
     [items, lastPeriod],
   );
   const thisYearSummary = useMemo(
-    () => summarizeTaskPool(items.filter((x) => isWithinRange(x.created_at, yearStart, yearEnd))),
+    () => summarizeTaskPool(items.filter((x) => isWithinRange(x.task_received_at || x.created_at, yearStart, yearEnd))),
     [items, yearStart, yearEnd],
   );
+  const thisMonthLabel = useMemo(() => now.toLocaleString('en-US', { month: 'long' }), [now]);
+  const lastMonthLabel = useMemo(() => new Date(now.getFullYear(), now.getMonth() - 1, 1).toLocaleString('en-US', { month: 'long' }), [now]);
+  const yearLabel = useMemo(() => now.getFullYear().toString(), [now]);
 
   const selected = selectedId ? items.find((p) => p.id === selectedId) || null : null;
   const selectedScreenshots = selected ? screenshots.filter((s) => s.pool_item_id === selected.id) : [];
@@ -303,6 +319,7 @@ export default function AdminTaskPool() {
       initialDocumentUrl: row.initial_document_url || '',
       sourceStorageType: row.source_storage_type,
       sourceStorageUrl: row.source_storage_url || '',
+      taskReceivedAt: row.task_received_at ? row.task_received_at.slice(0, 16) : '',
       deadline: row.deadline ? row.deadline.slice(0, 16) : '',
       budgetType: row.budget_type,
       budgetAmount: row.budget_amount?.toString() || '',
@@ -357,6 +374,7 @@ export default function AdminTaskPool() {
       initial_document_url: form.initialDocumentUrl.trim() || null,
       source_storage_type: form.sourceStorageType,
       source_storage_url: form.sourceStorageUrl.trim(),
+      task_received_at: form.taskReceivedAt ? new Date(form.taskReceivedAt).toISOString() : null,
       deadline: form.deadline ? new Date(form.deadline).toISOString() : null,
       budget_type: form.budgetType,
       budget_amount: form.budgetAmount ? Number(form.budgetAmount) : null,
@@ -585,10 +603,31 @@ export default function AdminTaskPool() {
                 <SelectContent>
                   <SelectItem value="all">All tasks</SelectItem>
                   <SelectItem value="latest">Latest tasks</SelectItem>
-                  <SelectItem value="this_period">This period (25-25)</SelectItem>
-                  <SelectItem value="last_period">Last period (25-25)</SelectItem>
+                  <SelectItem value="this_period">{`This month (${thisMonthLabel})`}</SelectItem>
+                  <SelectItem value="last_period">{`Last month (${lastMonthLabel})`}</SelectItem>
+                  <SelectItem value="this_week">This week</SelectItem>
+                  <SelectItem value="last_week">Last week</SelectItem>
+                  <SelectItem value="custom">Custom period</SelectItem>
                   <SelectItem value="this_year">This year</SelectItem>
                   <SelectItem value="working">Current working</SelectItem>
+                </SelectContent>
+              </Select>
+              {listFilter === 'custom' ? (
+                <div className="flex items-center gap-2">
+                  <Input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} className="w-[150px]" />
+                  <span className="text-xs text-muted-foreground">to</span>
+                  <Input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} className="w-[150px]" />
+                </div>
+              ) : null}
+              <Select value={viewMode} onValueChange={(v) => setViewMode(v as 'card' | 'list' | 'line' | 'table')}>
+                <SelectTrigger className="w-[160px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="card">Card mode</SelectItem>
+                  <SelectItem value="list">List mode</SelectItem>
+                  <SelectItem value="line">Line mode</SelectItem>
+                  <SelectItem value="table">Table mode</SelectItem>
                 </SelectContent>
               </Select>
               <Button className="gap-2 shrink-0" onClick={openCreate}>
@@ -599,26 +638,9 @@ export default function AdminTaskPool() {
           </div>
 
           <div className="grid gap-3 sm:grid-cols-3">
-            <InfoCard icon={Calendar} title="This period (25-25)" value={`${thisPeriodSummary.count} tasks`} />
-            <InfoCard icon={Calendar} title="Last period (25-25)" value={`${lastPeriodSummary.count} tasks`} />
-            <InfoCard icon={Calendar} title="This year" value={`${thisYearSummary.count} tasks`} />
-          </div>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <InfoCard
-              icon={Link2}
-              title="This period budget"
-              value={`Real ${thisPeriodSummary.realBudget.toFixed(2)} / Withdrawn ${thisPeriodSummary.withdrawnBudget.toFixed(2)}`}
-            />
-            <InfoCard
-              icon={Link2}
-              title="Last period budget"
-              value={`Real ${lastPeriodSummary.realBudget.toFixed(2)} / Withdrawn ${lastPeriodSummary.withdrawnBudget.toFixed(2)}`}
-            />
-            <InfoCard
-              icon={Link2}
-              title="This year budget"
-              value={`Real ${thisYearSummary.realBudget.toFixed(2)} / Withdrawn ${thisYearSummary.withdrawnBudget.toFixed(2)}`}
-            />
+            <AdminTaskStatCard title={`This Month (${thisMonthLabel})`} summary={thisPeriodSummary} />
+            <AdminTaskStatCard title={`Last Month (${lastMonthLabel})`} summary={lastPeriodSummary} />
+            <AdminTaskStatCard title={`Year (${yearLabel})`} summary={thisYearSummary} />
           </div>
 
           {filteredItems.length === 0 ? (
@@ -628,7 +650,7 @@ export default function AdminTaskPool() {
                 {searchInput.trim() ? 'Try different keywords or clear the search.' : 'Create a task with New.'}
               </p>
             </div>
-          ) : (
+          ) : viewMode === 'card' ? (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {filteredItems.map((row) => (
                 <Card
@@ -660,7 +682,71 @@ export default function AdminTaskPool() {
                     <p className="text-xs text-emerald-600">
                       Withdrawn: {row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}
                     </p>
+                    <p className="text-xs text-muted-foreground">
+                      Received: {row.task_received_at ? new Date(row.task_received_at).toLocaleDateString() : 'N/A'}
+                    </p>
                     <p className="mt-2 text-xs text-muted-foreground line-clamp-3">{row.description || 'No description'}</p>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : viewMode === 'table' ? (
+            <div className="overflow-x-auto rounded-lg border bg-card">
+              <table className="min-w-full text-sm">
+                <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2">Task</th>
+                    <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2">Source</th>
+                    <th className="px-3 py-2">Real</th>
+                    <th className="px-3 py-2">Withdrawn</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredItems.map((row) => (
+                    <tr key={row.id} className="cursor-pointer border-t hover:bg-muted/30" onClick={() => setSelectedId(row.id)}>
+                      <td className="px-3 py-2 font-medium">{row.name}</td>
+                      <td className="px-3 py-2">{taskPoolItemStatusLabel(row.status)}</td>
+                      <td className="px-3 py-2 capitalize">{(row.task_source || '-').replace('_', ' ')}</td>
+                      <td className="px-3 py-2">{row.currency} {Number(row.budget_amount ?? 0).toFixed(2)}</td>
+                      <td className="px-3 py-2 text-emerald-600">{row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : viewMode === 'line' ? (
+            <div className="rounded-lg border bg-card">
+              {filteredItems.map((row) => (
+                <button
+                  key={row.id}
+                  type="button"
+                  className="flex w-full items-center justify-between gap-3 border-b px-3 py-2 text-left last:border-b-0 hover:bg-muted/30"
+                  onClick={() => setSelectedId(row.id)}
+                >
+                  <div className="min-w-0">
+                    <p className="truncate font-medium">{row.name}</p>
+                    <p className="text-xs text-muted-foreground capitalize">{(row.task_source || 'n/a').replace('_', ' ')}</p>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <p className="text-xs text-muted-foreground">{taskPoolItemStatusLabel(row.status)}</p>
+                    <p className="text-xs text-emerald-600">{row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {filteredItems.map((row) => (
+                <Card key={row.id} className="cursor-pointer hover:border-primary/40" onClick={() => setSelectedId(row.id)}>
+                  <CardContent className="flex items-center justify-between p-3">
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{row.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {taskPoolItemStatusLabel(row.status)} · {row.currency} {Number(row.budget_amount ?? 0).toFixed(2)}
+                      </p>
+                    </div>
+                    <Badge variant="outline" className="shrink-0">{row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}</Badge>
                   </CardContent>
                 </Card>
               ))}
@@ -752,6 +838,11 @@ export default function AdminTaskPool() {
                       <InfoCard icon={FolderKanban} title="Client" value={poolClientLabel(selected)} />
                       <InfoCard icon={Link2} title="Account" value={poolAccountLabel(selected)} />
                       <InfoCard icon={Clock} title="Deadline" value={selected.deadline ? new Date(selected.deadline).toLocaleString() : 'Not set'} />
+                      <InfoCard
+                        icon={Calendar}
+                        title="Task received"
+                        value={selected.task_received_at ? new Date(selected.task_received_at).toLocaleString() : 'Not set'}
+                      />
                       <InfoCard
                         icon={Calendar}
                         title="Budget"
@@ -1068,6 +1159,10 @@ export default function AdminTaskPool() {
               </Select>
             </div>
             <div className="space-y-2">
+              <Label>Task received at (offer date)</Label>
+              <Input type="datetime-local" value={form.taskReceivedAt} onChange={(e) => setForm((p) => ({ ...p, taskReceivedAt: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
               <Label>Deadline</Label>
               <Input type="datetime-local" value={form.deadline} onChange={(e) => setForm((p) => ({ ...p, deadline: e.target.value }))} />
             </div>
@@ -1239,6 +1334,23 @@ function InfoCard({ icon: Icon, title, value }: { icon: React.ElementType; title
         {title}
       </p>
       <p className="text-sm font-medium text-foreground mt-1">{value}</p>
+    </div>
+  );
+}
+
+function AdminTaskStatCard({
+  title,
+  summary,
+}: {
+  title: string;
+  summary: { count: number; realBudget: number; withdrawnBudget: number };
+}) {
+  return (
+    <div className="rounded-lg border bg-card p-3">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</p>
+      <p className="mt-1 text-sm font-medium text-foreground">{summary.count} tasks</p>
+      <p className="mt-1 text-xs text-muted-foreground">Real: {summary.realBudget.toFixed(2)}</p>
+      <p className="text-xs text-emerald-600">Withdrawn: {summary.withdrawnBudget.toFixed(2)}</p>
     </div>
   );
 }
