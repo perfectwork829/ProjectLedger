@@ -464,6 +464,7 @@ export default function AdminClients() {
   const [selectedType, setSelectedType] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState('');
+  const [listViewMode, setListViewMode] = useState<'card' | 'list' | 'line' | 'table'>('card');
 
   const fetchClients = async () => {
     const [clientsRes, accountsRes] = await Promise.all([
@@ -1154,9 +1155,20 @@ export default function AdminClients() {
 
       {view === 'list' && (
         <div className="space-y-3">
+          <div className="flex justify-end">
+            <Select value={listViewMode} onValueChange={(v) => setListViewMode(v as 'card' | 'list' | 'line' | 'table')}>
+              <SelectTrigger className="w-[150px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="card">Card mode</SelectItem>
+                <SelectItem value="list">List mode</SelectItem>
+                <SelectItem value="line">Line mode</SelectItem>
+                <SelectItem value="table">Table mode</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           {filteredClients.length === 0 ? (
             <Card><CardContent className="py-8 text-center"><p className="text-muted-foreground">{searchInput.trim() ? `No ${typeLabel} clients match your search` : `No ${typeLabel} clients yet`}</p></CardContent></Card>
-          ) : filteredClients.map(c => {
+          ) : listViewMode === 'card' ? filteredClients.map(c => {
             const mainSkills = c.main_skill_list ? c.main_skill_list.split(',').slice(0, 3).map(s => s.trim()) : [];
             return (
               <Card key={c.id} className="cursor-pointer transition-all hover:shadow-md hover:border-primary/30" onClick={() => goToDetail(c.id)}>
@@ -1188,7 +1200,58 @@ export default function AdminClients() {
                 </CardContent>
               </Card>
             );
-          })}
+          }) : listViewMode === 'line' ? (
+            <Card><CardContent className="p-0">
+              {filteredClients.map((c) => (
+                <div key={c.id} className="flex items-center justify-between border-t px-3 py-2 first:border-t-0">
+                  <button type="button" onClick={() => goToDetail(c.id)} className="text-left">
+                    <p className="text-sm font-medium">{c.first_name} {c.last_name}</p>
+                    <p className="text-xs text-muted-foreground">{c.company_name || c.title || 'N/A'}</p>
+                  </button>
+                  <div className="flex items-center gap-1">
+                    <Button size="icon" variant="ghost" onClick={() => openEdit(c)}><Pencil className="h-4 w-4" /></Button>
+                    <Button size="icon" variant="ghost" onClick={() => confirmDelete(c.id, `${c.first_name} ${c.last_name}`)} className="text-destructive"><Trash2 className="h-4 w-4" /></Button>
+                  </div>
+                </div>
+              ))}
+            </CardContent></Card>
+          ) : listViewMode === 'table' ? (
+            <div className="overflow-x-auto rounded-lg border bg-card">
+              <table className="min-w-full text-sm">
+                <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+                  <tr><th className="px-3 py-2">Name</th><th className="px-3 py-2">Company</th><th className="px-3 py-2">Country</th><th className="px-3 py-2">Status</th><th className="px-3 py-2"></th></tr>
+                </thead>
+                <tbody>
+                  {filteredClients.map((c) => (
+                    <tr key={c.id} className="border-t hover:bg-muted/30">
+                      <td className="px-3 py-2 cursor-pointer font-medium" onClick={() => goToDetail(c.id)}>{c.first_name} {c.last_name}</td>
+                      <td className="px-3 py-2">{c.company_name || '-'}</td>
+                      <td className="px-3 py-2">{c.country || '-'}</td>
+                      <td className="px-3 py-2">{c.client_status || '-'}</td>
+                      <td className="px-3 py-2 text-right"><Button size="icon" variant="ghost" onClick={() => openEdit(c)}><Pencil className="h-4 w-4" /></Button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {filteredClients.map((c) => (
+                <Card key={c.id} className="hover:border-primary/40">
+                  <CardContent className="space-y-2 p-4">
+                    <button type="button" onClick={() => goToDetail(c.id)} className="w-full text-left">
+                      <p className="font-medium">{c.first_name} {c.last_name}</p>
+                      <p className="text-xs text-muted-foreground">{c.company_name || 'No company'}</p>
+                    </button>
+                    <div className="flex items-center justify-between">
+                      <Badge variant="secondary" className={statusColor[c.client_status || ''] || ''}>{c.client_status || 'N/A'}</Badge>
+                      <Button size="icon" variant="ghost" onClick={() => openEdit(c)}><Pencil className="h-4 w-4" /></Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

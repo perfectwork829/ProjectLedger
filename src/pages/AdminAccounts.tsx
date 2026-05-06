@@ -256,6 +256,7 @@ export default function AdminAccounts() {
 
   const [accountHub, setAccountHub] = useState<AccountHub>('categories');
   const [view, setView] = useState<View>('platforms');
+  const [listViewMode, setListViewMode] = useState<'card' | 'list' | 'line' | 'table'>('card');
   const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [paymentView, setPaymentView] = useState<PaymentView>('list');
@@ -1679,6 +1680,17 @@ export default function AdminAccounts() {
 
       {showFreelanceWorkspaceChrome && view === 'list' && (
         <div className="space-y-3">
+          <div className="flex justify-end">
+            <Select value={listViewMode} onValueChange={(v) => setListViewMode(v as 'card' | 'list' | 'line' | 'table')}>
+              <SelectTrigger className="w-[150px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="card">Card mode</SelectItem>
+                <SelectItem value="list">List mode</SelectItem>
+                <SelectItem value="line">Line mode</SelectItem>
+                <SelectItem value="table">Table mode</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           <Button variant="ghost" size="sm" onClick={goToPlatforms} className="gap-2 text-muted-foreground">
             <ArrowLeft className="h-4 w-4" /> Back to platforms
           </Button>
@@ -1693,7 +1705,7 @@ export default function AdminAccounts() {
                 </p>
               </CardContent>
             </Card>
-          ) : (
+          ) : listViewMode === 'card' ? (
             filteredAccounts.map((acc) => (
               <Card
                 key={acc.id}
@@ -1749,6 +1761,57 @@ export default function AdminAccounts() {
                 </CardContent>
               </Card>
             ))
+          ) : listViewMode === 'line' ? (
+            <Card><CardContent className="p-0">
+              {filteredAccounts.map((acc) => (
+                <div key={acc.id} className="flex items-center justify-between border-t px-3 py-2 first:border-t-0">
+                  <button type="button" className="text-left" onClick={() => goToDetail(acc.id)}>
+                    <p className="text-sm font-medium">@{acc.username}</p>
+                    <p className="text-xs text-muted-foreground">{acc.profile_title || (PLATFORMS[acc.platform] || PLATFORMS.other).label}</p>
+                  </button>
+                  <div className="flex items-center gap-1">
+                    <Button size="icon" variant="ghost" onClick={() => openEdit(acc)}><Pencil className="h-4 w-4" /></Button>
+                    <Button size="icon" variant="ghost" className="text-destructive" onClick={() => {
+                      const info = PLATFORMS[acc.platform] || PLATFORMS.other;
+                      setDeleteConfirm({ kind: 'freelancing', id: acc.id, label: `${info.label} @${acc.username}` });
+                    }}><Trash2 className="h-4 w-4" /></Button>
+                  </div>
+                </div>
+              ))}
+            </CardContent></Card>
+          ) : listViewMode === 'table' ? (
+            <div className="overflow-x-auto rounded-lg border bg-card">
+              <table className="min-w-full text-sm">
+                <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+                  <tr><th className="px-3 py-2">Username</th><th className="px-3 py-2">Platform</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Score</th><th className="px-3 py-2"></th></tr>
+                </thead>
+                <tbody>
+                  {filteredAccounts.map((acc) => (
+                    <tr key={acc.id} className="border-t hover:bg-muted/30">
+                      <td className="px-3 py-2 cursor-pointer font-medium" onClick={() => goToDetail(acc.id)}>@{acc.username}</td>
+                      <td className="px-3 py-2">{(PLATFORMS[acc.platform] || PLATFORMS.other).label}</td>
+                      <td className="px-3 py-2">{acc.status}</td>
+                      <td className="px-3 py-2">{acc.job_success_score != null ? `${acc.job_success_score}%` : '-'}</td>
+                      <td className="px-3 py-2 text-right"><Button size="icon" variant="ghost" onClick={() => openEdit(acc)}><Pencil className="h-4 w-4" /></Button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {filteredAccounts.map((acc) => (
+                <Card key={acc.id} className="hover:border-primary/40">
+                  <CardContent className="flex items-center justify-between p-3">
+                    <button type="button" className="text-left" onClick={() => goToDetail(acc.id)}>
+                      <p className="font-medium">@{acc.username}</p>
+                      <p className="text-xs text-muted-foreground">{(PLATFORMS[acc.platform] || PLATFORMS.other).label}</p>
+                    </button>
+                    <Badge variant="secondary" className={statusColor[acc.status] || ''}>{acc.status}</Badge>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
           )}
         </div>
       )}

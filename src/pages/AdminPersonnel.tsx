@@ -467,6 +467,7 @@ export default function AdminPersonnel() {
   const [selectedRole, setSelectedRole] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState('');
+  const [listViewMode, setListViewMode] = useState<'card' | 'list' | 'line' | 'table'>('card');
 
   const fetchPeople = useCallback(async () => {
     setLoading(true);
@@ -1129,9 +1130,20 @@ export default function AdminPersonnel() {
       {/* Person List */}
       {view === 'list' && (
         <div className="space-y-3">
+          <div className="flex justify-end">
+            <Select value={listViewMode} onValueChange={(v) => setListViewMode(v as 'card' | 'list' | 'line' | 'table')}>
+              <SelectTrigger className="w-[150px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="card">Card mode</SelectItem>
+                <SelectItem value="list">List mode</SelectItem>
+                <SelectItem value="line">Line mode</SelectItem>
+                <SelectItem value="table">Table mode</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           {filteredPeople.length === 0 ? (
             <Card><CardContent className="py-8 text-center"><p className="text-muted-foreground">{searchInput.trim() ? `No ${roleLabel}s match your search` : `No ${roleLabel}s yet`}</p></CardContent></Card>
-          ) : filteredPeople.map(p => {
+          ) : listViewMode === 'card' ? filteredPeople.map(p => {
             const mainSkills = p.main_skill_list ? p.main_skill_list.split(',').slice(0, 3).map(s => s.trim()) : [];
             return (
               <Card key={p.id} className="cursor-pointer transition-all hover:shadow-md hover:border-primary/30" onClick={() => goToDetail(p.id)}>
@@ -1162,7 +1174,58 @@ export default function AdminPersonnel() {
                 </CardContent>
               </Card>
             );
-          })}
+          }) : listViewMode === 'line' ? (
+            <Card><CardContent className="p-0">
+              {filteredPeople.map((p) => (
+                <div key={p.id} className="flex items-center justify-between border-t px-3 py-2 first:border-t-0">
+                  <button type="button" onClick={() => goToDetail(p.id)} className="text-left">
+                    <p className="text-sm font-medium">{p.first_name} {p.last_name}</p>
+                    <p className="text-xs text-muted-foreground">{p.title || 'N/A'}{p.country ? ` · ${p.country}` : ''}</p>
+                  </button>
+                  <div className="flex items-center gap-1">
+                    <Button size="icon" variant="ghost" onClick={() => openEdit(p)}><Pencil className="h-4 w-4" /></Button>
+                    <Button size="icon" variant="ghost" onClick={() => confirmDelete(p.id, `${p.first_name} ${p.last_name}`)} className="text-destructive"><Trash2 className="h-4 w-4" /></Button>
+                  </div>
+                </div>
+              ))}
+            </CardContent></Card>
+          ) : listViewMode === 'table' ? (
+            <div className="overflow-x-auto rounded-lg border bg-card">
+              <table className="min-w-full text-sm">
+                <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+                  <tr><th className="px-3 py-2">Name</th><th className="px-3 py-2">Title</th><th className="px-3 py-2">Country</th><th className="px-3 py-2">Status</th><th className="px-3 py-2"></th></tr>
+                </thead>
+                <tbody>
+                  {filteredPeople.map((p) => (
+                    <tr key={p.id} className="border-t hover:bg-muted/30">
+                      <td className="px-3 py-2 cursor-pointer font-medium" onClick={() => goToDetail(p.id)}>{p.first_name} {p.last_name}</td>
+                      <td className="px-3 py-2">{p.title || '-'}</td>
+                      <td className="px-3 py-2">{p.country || '-'}</td>
+                      <td className="px-3 py-2">{p.availability_status || '-'}</td>
+                      <td className="px-3 py-2 text-right"><Button size="icon" variant="ghost" onClick={() => openEdit(p)}><Pencil className="h-4 w-4" /></Button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {filteredPeople.map((p) => (
+                <Card key={p.id} className="hover:border-primary/40">
+                  <CardContent className="space-y-2 p-4">
+                    <button type="button" onClick={() => goToDetail(p.id)} className="w-full text-left">
+                      <p className="font-medium">{p.first_name} {p.last_name}</p>
+                      <p className="text-xs text-muted-foreground">{p.title || 'N/A'}</p>
+                    </button>
+                    <div className="flex items-center justify-between">
+                      <Badge variant="secondary" className={availColor[p.availability_status || ''] || ''}>{p.availability_status || 'N/A'}</Badge>
+                      <Button size="icon" variant="ghost" onClick={() => openEdit(p)}><Pencil className="h-4 w-4" /></Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
