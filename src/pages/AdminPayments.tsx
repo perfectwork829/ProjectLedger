@@ -381,6 +381,7 @@ function StatCard({ title, summary }: { title: string; summary: { incoming: numb
       <p className="text-xs text-emerald-600">Incoming: {summary.incoming.toFixed(2)}</p>
       <p className="text-xs text-red-600">Outgoing: {summary.outgoing.toFixed(2)}</p>
       <p className="mt-1 text-sm font-medium text-foreground">Net: {summary.net.toFixed(2)}</p>
+      <p className="text-[11px] text-muted-foreground">Net = Incoming - Outgoing</p>
     </div>
   );
 }
