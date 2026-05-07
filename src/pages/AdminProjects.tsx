@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import ModuleSearchBar from '@/components/ModuleSearchBar';
+import { CloudGoogleDriveUpload } from '@/components/CloudGoogleDriveUpload';
 import {
   AccountRef,
   ClientRef,
@@ -32,6 +33,7 @@ import {
   ProjectRecord,
   ProjectScreenshot,
   ProjectTask,
+  SOURCE_STORAGE_PROVIDER_OPTIONS,
   toCsv,
 } from '@/lib/projects';
 import { Calendar, MessageSquare, Pencil, Plus, Trash2, FolderKanban, Link2, Clock } from 'lucide-react';
@@ -397,6 +399,12 @@ export default function AdminProjects() {
     return a ? `${a.platform} @${a.username}` : 'N/A';
   };
 
+  const projectSourceFiles = (project: ProjectRecord): string[] => {
+    const raw = (project.metadata_json as { source_file_urls?: unknown } | null)?.source_file_urls;
+    if (!Array.isArray(raw)) return [];
+    return raw.map((x) => String(x || '').trim()).filter(Boolean);
+  };
+
   if (loading) {
     return <div className="flex items-center justify-center py-12"><div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" /></div>;
   }
@@ -543,6 +551,22 @@ export default function AdminProjects() {
                       <LinkField label="Source Storage" url={selectedProject.source_storage_url} />
                       <LinkField label="GitHub" url={selectedProject.github_url} />
                       <LinkField label="Initial Document" url={selectedProject.initial_document_url} />
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium">Source files (from Task promotion)</p>
+                      {projectSourceFiles(selectedProject).length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No source files linked.</p>
+                      ) : (
+                        <ul className="space-y-1">
+                          {projectSourceFiles(selectedProject).map((url) => (
+                            <li key={url}>
+                              <a href={url} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline break-all">
+                                {url}
+                              </a>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </div>
                     <div className="space-y-2">
                       <p className="text-sm font-medium">Metadata</p>
@@ -730,8 +754,32 @@ export default function AdminProjects() {
             <div className="space-y-2"><Label>Currency</Label><Input value={form.currency} onChange={(e) => setForm((p) => ({ ...p, currency: e.target.value }))} /></div>
             <div className="space-y-2"><Label>GitHub link</Label><Input value={form.githubUrl} onChange={(e) => setForm((p) => ({ ...p, githubUrl: e.target.value }))} placeholder="https://github.com/..." /></div>
 
-            <div className="space-y-2"><Label>Source storage type</Label><Select value={form.sourceStorageType} onValueChange={(v) => setForm((p) => ({ ...p, sourceStorageType: v }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="drive">drive</SelectItem><SelectItem value="dropbox">dropbox</SelectItem><SelectItem value="onedrive">onedrive</SelectItem><SelectItem value="other">other</SelectItem></SelectContent></Select></div>
+            <div className="space-y-2"><Label>Source storage type</Label><Select value={form.sourceStorageType} onValueChange={(v) => setForm((p) => ({ ...p, sourceStorageType: v }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{SOURCE_STORAGE_PROVIDER_OPTIONS.map((provider) => <SelectItem key={provider} value={provider}>{provider}</SelectItem>)}</SelectContent></Select></div>
             <div className="space-y-2"><Label>Source storage URL *</Label><Input value={form.sourceStorageUrl} onChange={(e) => setForm((p) => ({ ...p, sourceStorageUrl: e.target.value }))} placeholder="Drive folder link" /></div>
+            {(form.sourceStorageType === 'google_drive' || form.sourceStorageType === 'drive') && (
+              <div className="space-y-3 md:col-span-2">
+                <CloudGoogleDriveUpload
+                  title="Upload screenshots to Google Drive"
+                  accept="image/*"
+                  onUrlAdded={(url) => setForm((p) => ({ ...p, screenshotUrls: [...p.screenshotUrls, url] }))}
+                />
+                <CloudGoogleDriveUpload
+                  title="Upload source file to Google Drive"
+                  accept="*/*"
+                  onUrlAdded={(url) =>
+                    setForm((p) => {
+                      if (!p.sourceStorageUrl.trim()) return { ...p, sourceStorageUrl: url };
+                      toast({
+                        title: 'Drive file uploaded',
+                        description: `Primary URL is already set. Use this link if needed: ${url}`,
+                        duration: 12_000,
+                      });
+                      return p;
+                    })
+                  }
+                />
+              </div>
+            )}
 
             <div className="space-y-2"><Label>Initial document URL (PDF/DOCX)</Label><Input value={form.initialDocumentUrl} onChange={(e) => setForm((p) => ({ ...p, initialDocumentUrl: e.target.value }))} /></div>
             <div className="space-y-2"><Label>Legacy chat history</Label><Textarea value={form.chatHistory} onChange={(e) => setForm((p) => ({ ...p, chatHistory: e.target.value }))} /></div>

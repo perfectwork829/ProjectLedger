@@ -3,7 +3,24 @@ import { supabase } from '@/lib/supabase';
 export type ProjectStatus = 'planning' | 'active' | 'blocked' | 'qa' | 'completed' | 'cancelled';
 export type ProjectPriority = 'low' | 'medium' | 'high' | 'critical';
 export type ProjectBudgetType = 'fixed' | 'hourly';
-export type SourceStorageType = 'drive' | 'dropbox' | 'onedrive' | 'other';
+export const SOURCE_STORAGE_PROVIDER_OPTIONS = [
+  'drive',
+  'google_drive',
+  'mega',
+  'pcloud',
+  'box',
+  'filen',
+  'koofr',
+  'icedrive',
+  'sync_com',
+  'proton_drive',
+  'icloud_drive',
+  'dropbox',
+  'onedrive',
+  'other',
+] as const;
+
+export type SourceStorageType = (typeof SOURCE_STORAGE_PROVIDER_OPTIONS)[number];
 
 export interface ProjectRecord {
   id: string;
@@ -26,6 +43,9 @@ export interface ProjectRecord {
   initial_document_url: string | null;
   source_storage_type: SourceStorageType;
   source_storage_url: string | null;
+  github_links: unknown;
+  source_storage_urls: unknown;
+  initial_document_urls: unknown;
   deadline: string | null;
   budget_type: ProjectBudgetType;
   budget_amount: number | null;

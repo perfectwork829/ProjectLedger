@@ -32,7 +32,7 @@ export default function Payments() {
       supabase
         .from('task_pool_items')
         .select(
-          'id, name, currency, task_received_at, created_at, withdrawn_amount, upwork_connection_fee, convert_fee, transfer_fee, upwork_fee, withdraw_fee',
+          'id, name, currency, task_received_at, created_at, budget_type, fixed_budget_mode, withdrawn_amount, upwork_connection_fee, convert_fee, transfer_fee, upwork_fee, withdraw_fee',
         )
         .order('task_received_at', { ascending: false }),
     ]);

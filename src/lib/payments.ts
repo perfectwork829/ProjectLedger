@@ -13,7 +13,8 @@ export interface PaymentEntryRecord {
   currency: string;
   occurred_at: string;
   note: string | null;
-  source_kind: 'manual';
+  source_kind: PaymentSourceKind;
+  pool_item_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -24,6 +25,8 @@ export interface TaskFinanceRow {
   currency: string;
   task_received_at: string | null;
   created_at: string;
+  budget_type: 'fixed' | 'hourly';
+  fixed_budget_mode?: 'project' | 'recurring' | null;
   withdrawn_amount: number | null;
   upwork_connection_fee: number;
   convert_fee: number;
@@ -51,15 +54,22 @@ export interface PaymentSummary {
 }
 
 export function buildTaskAutoRows(tasks: TaskFinanceRow[]): UnifiedPaymentRow[] {
+  // Task cashflow is confirmation-driven and persisted in `payment_entries` (source_kind='task_auto').
+  // Keep this empty to avoid double-counting virtual rows against confirmed rows.
+  void tasks;
+  return [];
+
+  /*
   const rows: UnifiedPaymentRow[] = [];
   for (const t of tasks) {
     const occurred = t.task_received_at || t.created_at;
     const baseId = `task:${t.id}`;
     const currency = t.currency || 'USD';
     const taskNameNote = t.name ? `Task: ${t.name}` : null;
+    const accrual = taskFinanceUsesAccrual(t);
 
     const withdrawn = Number(t.withdrawn_amount ?? 0);
-    if (withdrawn > 0) {
+    if (!accrual && withdrawn > 0) {
       rows.push({
         id: `${baseId}:incoming:withdrawn`,
         entry_type: 'incoming',
@@ -72,28 +82,31 @@ export function buildTaskAutoRows(tasks: TaskFinanceRow[]): UnifiedPaymentRow[] 
       });
     }
 
-    const outgoingFees: Array<[string, number]> = [
-      ['Upwork connections fee', Number(t.upwork_connection_fee ?? 0)],
-      ['Convert fee', Number(t.convert_fee ?? 0)],
-      ['Transfer fee', Number(t.transfer_fee ?? 0)],
-      ['Upwork fee', Number(t.upwork_fee ?? 0)],
-      ['Withdraw fee', Number(t.withdraw_fee ?? 0)],
-    ];
-    outgoingFees.forEach(([category, amount]) => {
-      if (amount <= 0) return;
-      rows.push({
-        id: `${baseId}:outgoing:${category.toLowerCase().replace(/\s+/g, '_')}`,
-        entry_type: 'outgoing',
-        category,
-        amount,
-        currency,
-        occurred_at: occurred,
-        note: taskNameNote,
-        source_kind: 'task_auto',
+    if (!accrual) {
+      const outgoingFees: Array<[string, number]> = [
+        ['Upwork connections fee', Number(t.upwork_connection_fee ?? 0)],
+        ['Convert fee', Number(t.convert_fee ?? 0)],
+        ['Transfer fee', Number(t.transfer_fee ?? 0)],
+        ['Upwork fee', Number(t.upwork_fee ?? 0)],
+        ['Withdraw fee', Number(t.withdraw_fee ?? 0)],
+      ];
+      outgoingFees.forEach(([category, amount]) => {
+        if (amount <= 0) return;
+        rows.push({
+          id: `${baseId}:outgoing:${category.toLowerCase().replace(/\s+/g, '_')}`,
+          entry_type: 'outgoing',
+          category,
+          amount,
+          currency,
+          occurred_at: occurred,
+          note: taskNameNote,
+          source_kind: 'task_auto',
+        });
       });
-    });
+    }
   }
   return rows;
+  */
 }
 
 export function normalizeManualRows(entries: PaymentEntryRecord[]): UnifiedPaymentRow[] {
@@ -105,7 +118,7 @@ export function normalizeManualRows(entries: PaymentEntryRecord[]): UnifiedPayme
     currency: e.currency || 'USD',
     occurred_at: e.occurred_at,
     note: e.note,
-    source_kind: 'manual',
+    source_kind: e.source_kind,
   }));
 }
 

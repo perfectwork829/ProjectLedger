@@ -23,17 +23,27 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import ModuleSearchBar from '@/components/ModuleSearchBar';
+import { CloudGoogleDriveUpload } from '@/components/CloudGoogleDriveUpload';
+import { CountrySelect } from '@/components/CountrySelect';
+import { canonicalCountryNameOrLegacy } from '@/lib/countries';
 import {
+  AccountRef,
   ClientRef,
+  LabeledLink,
   loadProjectDependencies,
+  parseLabeledLinks,
   PersonnelRef,
   PoolChatMessage,
   PoolSubtask,
   promoteCompletedPoolItemToProject,
+  serializeLabeledLinks,
+  taskPoolNeedsAccrualAck,
+  taskUsesAccrualPayments,
   TASK_POOL_ITEM_STATUS_OPTIONS,
   TASK_POOL_SUBTASK_BOARD_STATUSES,
   poolSubtaskBoardLabel,
   taskPoolItemStatusLabel,
+  taskPoolFixedMode,
   type PoolSubtaskStatus,
   TaskPoolItemRecord,
   TaskPoolScreenshot,
@@ -49,9 +59,22 @@ import {
   summarizeTaskPool,
   type TaskPoolListFilter,
 } from '@/lib/taskPoolFinance';
+import { SOURCE_STORAGE_PROVIDER_OPTIONS } from '@/lib/projects';
+import {
+  advanceRecurringDueJstYmd,
+  addDaysToJstYmd,
+  datetimeLocalJstToIso,
+  formatIsoInJst,
+  formatJstYmd,
+  getJstMondayYmd,
+  isoToDatetimeLocalInJst,
+} from '@/lib/jst';
+import { RichTextEditor } from '@/components/RichTextEditor';
+import { TagChipsInput } from '@/components/TagChipsInput';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import PoolSubtaskKanban from '@/components/PoolSubtaskKanban';
 import PoolSubtaskDetailDialog from '@/components/PoolSubtaskDetailDialog';
-import { ArrowLeft, Calendar, MessageSquare, Pencil, Plus, Trash2, FolderKanban, Link2, Clock, ListTodo } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Calendar, MessageSquare, Pencil, Plus, Trash2, FolderKanban, Link2, Clock, ListTodo } from 'lucide-react';
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from '@/components/ui/carousel';
 
 const PRIORITY_OPTIONS = ['low', 'medium', 'high', 'critical'] as const;
@@ -68,8 +91,8 @@ const emptyForm = {
   description: '',
   taskSource: '',
   mainStack: '',
-  skillsetCsv: '',
-  tagsCsv: '',
+  skillsetTags: [] as string[],
+  tagsTags: [] as string[],
   status: 'planning',
   priority: 'medium',
   clientId: '',
@@ -82,9 +105,17 @@ const emptyForm = {
   initialDocumentUrl: '',
   sourceStorageType: 'drive',
   sourceStorageUrl: '',
+  githubLinks: [] as LabeledLink[],
+  sourceStorageLinks: [] as LabeledLink[],
+  initialDocLinks: [] as LabeledLink[],
   taskReceivedAt: '',
   deadline: '',
-  budgetType: 'fixed',
+  budgetType: 'fixed' as 'fixed' | 'hourly',
+  fixedBudgetMode: 'project' as 'project' | 'recurring',
+  recurringCadence: '' as '' | 'weekly' | 'biweekly' | 'monthly',
+  nextPaymentDueAt: '',
+  hourlyRate: '',
+  weeklyHoursCap: '40',
   budgetAmount: '',
   upworkConnectionFee: '',
   convertFee: '',
@@ -129,17 +160,41 @@ export default function AdminTaskPool() {
   const [newChat, setNewChat] = useState('');
   const [pendingDelete, setPendingDelete] = useState<PendingDel | null>(null);
   const [subtaskDetailId, setSubtaskDetailId] = useState<string | null>(null);
-  const withdrawnPreview = useMemo(
-    () =>
-      calcWithdrawnAmount({
-        budgetAmount: Number(form.budgetAmount || 0),
-        upworkConnectionFee: Number(form.upworkConnectionFee || 0),
-        convertFee: Number(form.convertFee || 0),
-        transferFee: Number(form.transferFee || 0),
-        upworkFee: Number(form.upworkFee || 0),
-        withdrawFee: Number(form.withdrawFee || 0),
-      }),
-    [form],
+  const [accrualDialog, setAccrualDialog] = useState<null | { row: TaskPoolItemRecord; kind: 'project' | 'recurring' | 'hourly' }>(null);
+  const [accrualHours, setAccrualHours] = useState('');
+
+  const withdrawnPreview = useMemo(() => {
+    if (form.budgetType === 'fixed' && form.fixedBudgetMode === 'project') {
+      if (!editingId) return 0;
+      const row = items.find((i) => i.id === editingId);
+      return Number(row?.withdrawn_amount ?? 0);
+    }
+    const accrualForm =
+      form.budgetType === 'hourly' || (form.budgetType === 'fixed' && form.fixedBudgetMode === 'recurring');
+    if (!accrualForm) return 0;
+    if (!editingId) return 0;
+    const row = items.find((i) => i.id === editingId);
+    if (!row) return 0;
+    if (!taskUsesAccrualPayments(row)) return 0;
+    return Number(row.withdrawn_amount ?? 0);
+  }, [form, editingId, items]);
+
+  const hasPendingProjectPayment = (row: TaskPoolItemRecord): boolean => {
+    if (row.budget_type !== 'fixed' || taskPoolFixedMode(row) !== 'project') return false;
+    const targetNet = calcWithdrawnAmount({
+      budgetAmount: Number(row.budget_amount ?? 0),
+      upworkConnectionFee: Number(row.upwork_connection_fee ?? 0),
+      convertFee: Number(row.convert_fee ?? 0),
+      transferFee: Number(row.transfer_fee ?? 0),
+      upworkFee: Number(row.upwork_fee ?? 0),
+      withdrawFee: Number(row.withdraw_fee ?? 0),
+    });
+    return Number(row.withdrawn_amount ?? 0) + 0.0001 < targetNet;
+  };
+
+  const accrualDueItems = useMemo(
+    () => items.filter((t) => taskPoolNeedsAccrualAck(t) || hasPendingProjectPayment(t)),
+    [items],
   );
 
   const fetchAll = async () => {
@@ -294,24 +349,36 @@ export default function AdminTaskPool() {
 
   const openCreate = () => {
     setEditingId(null);
-    setForm(emptyForm);
+    setForm({
+      ...emptyForm,
+      sourceStorageLinks: [{ label: 'Storage', url: '' }],
+    });
     setDialogOpen(true);
   };
 
   const openEdit = (row: TaskPoolItemRecord) => {
     setEditingId(row.id);
+    const gh = parseLabeledLinks(row.github_links, row.github_url, 'GitHub');
+    const st = parseLabeledLinks(row.source_storage_urls, row.source_storage_url, 'Storage');
+    const doc = parseLabeledLinks(row.initial_document_urls, row.initial_document_url, 'Document');
     setForm({
       name: row.name,
       description: row.description || '',
       taskSource: row.task_source || '',
       mainStack: row.main_stack || '',
-      skillsetCsv: row.skillset_csv || '',
-      tagsCsv: row.tags_csv || '',
+      skillsetTags: (row.skillset_csv || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
+      tagsTags: (row.tags_csv || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
       status: row.status,
       priority: row.priority,
       clientId: row.client_id || '',
       clientNameOverride: row.client_name_override || '',
-      clientCountry: row.client_country || '',
+      clientCountry: canonicalCountryNameOrLegacy(row.client_country || ''),
       clientTimezone: row.client_timezone || '',
       accountId: row.account_id || '',
       chatHistory: row.chat_history || '',
@@ -319,9 +386,17 @@ export default function AdminTaskPool() {
       initialDocumentUrl: row.initial_document_url || '',
       sourceStorageType: row.source_storage_type,
       sourceStorageUrl: row.source_storage_url || '',
-      taskReceivedAt: row.task_received_at ? row.task_received_at.slice(0, 16) : '',
-      deadline: row.deadline ? row.deadline.slice(0, 16) : '',
+      githubLinks: gh,
+      sourceStorageLinks: st,
+      initialDocLinks: doc,
+      taskReceivedAt: row.task_received_at ? isoToDatetimeLocalInJst(row.task_received_at) : '',
+      deadline: row.deadline ? isoToDatetimeLocalInJst(row.deadline) : '',
       budgetType: row.budget_type,
+      fixedBudgetMode: taskPoolFixedMode(row),
+      recurringCadence: (row.recurring_cadence || '') as '' | 'weekly' | 'biweekly' | 'monthly',
+      nextPaymentDueAt: row.next_payment_due_at || '',
+      hourlyRate: row.hourly_rate != null ? String(row.hourly_rate) : '',
+      weeklyHoursCap: row.weekly_hours_cap != null ? String(row.weekly_hours_cap) : '40',
       budgetAmount: row.budget_amount?.toString() || '',
       upworkConnectionFee: Number(row.upwork_connection_fee ?? 0).toString(),
       convertFee: Number(row.convert_fee ?? 0).toString(),
@@ -341,9 +416,26 @@ export default function AdminTaskPool() {
       toast({ title: 'Name is required', variant: 'destructive' });
       return;
     }
-    if (!form.sourceStorageUrl.trim()) {
-      toast({ title: 'Source storage URL is required', description: 'Add your Drive folder link.', variant: 'destructive' });
+    const storageLinks = serializeLabeledLinks(form.sourceStorageLinks);
+    if (storageLinks.length === 0) {
+      toast({ title: 'Source storage URL is required', description: 'Add at least one storage link.', variant: 'destructive' });
       return;
+    }
+    if (form.budgetType === 'fixed' && form.fixedBudgetMode === 'recurring') {
+      if (!form.nextPaymentDueAt.trim()) {
+        toast({ title: 'Next payment date required', variant: 'destructive' });
+        return;
+      }
+      if (!form.budgetAmount || Number(form.budgetAmount) <= 0) {
+        toast({ title: 'Installment amount required', variant: 'destructive' });
+        return;
+      }
+    }
+    if (form.budgetType === 'hourly') {
+      if (!form.hourlyRate || Number(form.hourlyRate) <= 0) {
+        toast({ title: 'Hourly rate required', variant: 'destructive' });
+        return;
+      }
     }
     let metadata: Record<string, unknown> = {};
     try {
@@ -353,6 +445,47 @@ export default function AdminTaskPool() {
       return;
     }
 
+    const gh = serializeLabeledLinks(form.githubLinks);
+    const docs = serializeLabeledLinks(form.initialDocLinks);
+    const existing = editingId ? items.find((i) => i.id === editingId) : null;
+
+    const upworkConnectionFee = form.upworkConnectionFee ? Number(form.upworkConnectionFee) : 0;
+    const convertFee = form.convertFee ? Number(form.convertFee) : 0;
+    const transferFee = form.transferFee ? Number(form.transferFee) : 0;
+    const upworkFee = form.upworkFee ? Number(form.upworkFee) : 0;
+    const withdrawFee = form.withdrawFee ? Number(form.withdrawFee) : 0;
+
+    const isAccrualForm =
+      form.budgetType === 'hourly' || (form.budgetType === 'fixed' && form.fixedBudgetMode === 'recurring');
+
+    let withdrawn_amount = 0;
+    if (form.budgetType === 'fixed' && form.fixedBudgetMode === 'project') {
+      const wasProjectFixed = existing?.budget_type === 'fixed' && taskPoolFixedMode(existing) === 'project';
+      withdrawn_amount = wasProjectFixed ? Number(existing?.withdrawn_amount ?? 0) : 0;
+    } else if (isAccrualForm) {
+      const wasAccrual = existing ? taskUsesAccrualPayments(existing) : false;
+      if (!existing) {
+        withdrawn_amount = 0;
+      } else if (!wasAccrual) {
+        // Switched from one-shot fixed (or any non-accrual) to installment/hourly: do not carry over full-project net.
+        withdrawn_amount = 0;
+      } else {
+        withdrawn_amount = Number(existing.withdrawn_amount ?? 0);
+      }
+    } else if (existing) {
+      withdrawn_amount = Number(existing.withdrawn_amount ?? 0);
+    }
+
+    const fixedMode = form.budgetType === 'hourly' ? 'project' : form.fixedBudgetMode;
+    const recurringCadence =
+      form.budgetType === 'fixed' && form.fixedBudgetMode === 'recurring'
+        ? form.recurringCadence || 'weekly'
+        : null;
+    const next_payment_due_at =
+      form.budgetType === 'fixed' && form.fixedBudgetMode === 'recurring' && form.nextPaymentDueAt.trim()
+        ? form.nextPaymentDueAt.trim()
+        : null;
+
     setSaving(true);
     const payload = {
       user_id: user?.id || null,
@@ -360,8 +493,8 @@ export default function AdminTaskPool() {
       description: form.description.trim() || null,
       task_source: form.taskSource.trim() || null,
       main_stack: form.mainStack || null,
-      skillset_csv: toCsv(form.skillsetCsv.split(',')) || null,
-      tags_csv: toCsv(form.tagsCsv.split(',')) || null,
+      skillset_csv: toCsv(form.skillsetTags) || null,
+      tags_csv: toCsv(form.tagsTags) || null,
       status: form.status,
       priority: form.priority,
       client_id: form.clientId || null,
@@ -371,20 +504,29 @@ export default function AdminTaskPool() {
       account_id: form.accountId || null,
       chat_history: form.chatHistory.trim() || null,
       metadata_json: metadata,
-      initial_document_url: form.initialDocumentUrl.trim() || null,
+      initial_document_url: docs[0]?.url ?? null,
       source_storage_type: form.sourceStorageType,
-      source_storage_url: form.sourceStorageUrl.trim(),
-      task_received_at: form.taskReceivedAt ? new Date(form.taskReceivedAt).toISOString() : null,
-      deadline: form.deadline ? new Date(form.deadline).toISOString() : null,
+      source_storage_url: storageLinks[0]?.url ?? null,
+      github_links: gh,
+      source_storage_urls: storageLinks,
+      initial_document_urls: docs,
+      task_received_at: form.taskReceivedAt ? datetimeLocalJstToIso(form.taskReceivedAt) : null,
+      deadline: form.deadline ? datetimeLocalJstToIso(form.deadline) : null,
       budget_type: form.budgetType,
+      fixed_budget_mode: fixedMode,
+      recurring_cadence: recurringCadence,
+      next_payment_due_at,
+      hourly_rate: form.budgetType === 'hourly' && form.hourlyRate ? Number(form.hourlyRate) : null,
+      weekly_hours_cap: form.budgetType === 'hourly' ? Number(form.weeklyHoursCap || 40) : null,
       budget_amount: form.budgetAmount ? Number(form.budgetAmount) : null,
-      upwork_connection_fee: form.upworkConnectionFee ? Number(form.upworkConnectionFee) : 0,
-      convert_fee: form.convertFee ? Number(form.convertFee) : 0,
-      transfer_fee: form.transferFee ? Number(form.transferFee) : 0,
-      upwork_fee: form.upworkFee ? Number(form.upworkFee) : 0,
-      withdraw_fee: form.withdrawFee ? Number(form.withdrawFee) : 0,
+      upwork_connection_fee: upworkConnectionFee,
+      convert_fee: convertFee,
+      transfer_fee: transferFee,
+      upwork_fee: upworkFee,
+      withdraw_fee: withdrawFee,
+      withdrawn_amount,
       currency: form.currency.trim() || 'USD',
-      github_url: form.githubUrl.trim() || null,
+      github_url: gh[0]?.url ?? null,
       updated_at: new Date().toISOString(),
     };
 
@@ -427,6 +569,96 @@ export default function AdminTaskPool() {
     toast({ title: editingId ? 'Task updated' : 'Task created' });
     await refreshTaskPoolDataQuiet();
     await promoteIfNeeded(poolId, form.status);
+  };
+
+  const submitAccrualConfirm = async () => {
+    if (!accrualDialog || !user?.id) return;
+    const row = items.find((i) => i.id === accrualDialog.row.id) ?? accrualDialog.row;
+    const fees = {
+      upworkConnectionFee: Number(row.upwork_connection_fee ?? 0),
+      convertFee: Number(row.convert_fee ?? 0),
+      transferFee: Number(row.transfer_fee ?? 0),
+      upworkFee: Number(row.upwork_fee ?? 0),
+      withdrawFee: Number(row.withdraw_fee ?? 0),
+    };
+    let net = 0;
+    let noteExtra = '';
+    let nextDue: string | null = row.next_payment_due_at;
+    let hourlyAck: string | null = row.hourly_last_ack_week_monday;
+
+    if (accrualDialog.kind === 'project') {
+      const full = Number(row.budget_amount ?? 0);
+      net = calcWithdrawnAmount({ budgetAmount: full, ...fees });
+      const already = Number(row.withdrawn_amount ?? 0);
+      net = Math.max(0, net - already);
+      noteExtra = 'Fixed project · one-time client payment confirmation (JST)';
+    } else if (accrualDialog.kind === 'recurring') {
+      const installment = Number(row.budget_amount ?? 0);
+      net = calcWithdrawnAmount({ budgetAmount: installment, ...fees });
+      if (!row.recurring_cadence || !row.next_payment_due_at) {
+        toast({ title: 'Task is missing cadence or due date', variant: 'destructive' });
+        return;
+      }
+      nextDue = advanceRecurringDueJstYmd(row.next_payment_due_at, row.recurring_cadence);
+      noteExtra = `Fixed ${row.recurring_cadence} · due ${row.next_payment_due_at} (JST)`;
+    } else {
+      const cap = Number(row.weekly_hours_cap ?? 40);
+      const hours = Math.min(Math.max(Number(accrualHours || 0), 0), cap);
+      const gross = hours * Number(row.hourly_rate ?? 0);
+      net = calcWithdrawnAmount({ budgetAmount: gross, ...fees });
+      hourlyAck = addDaysToJstYmd(getJstMondayYmd(new Date()), -7);
+      noteExtra = `Hourly (JST Mon–Sun) · ${hours}h × ${row.hourly_rate} · week ending before ${formatJstYmd(new Date())}`;
+    }
+
+    if (net <= 0) {
+      toast({ title: 'Net accrual is zero', description: 'Check amounts and fees.', variant: 'destructive' });
+      return;
+    }
+
+    const newWithdrawn = Number(row.withdrawn_amount ?? 0) + net;
+
+    const payRes = await supabase.from('payment_entries').insert({
+      user_id: user.id,
+      entry_type: 'incoming',
+      category:
+        accrualDialog.kind === 'project'
+          ? 'Task pool (fixed project)'
+          : accrualDialog.kind === 'recurring'
+            ? 'Task pool (fixed installment)'
+            : 'Task pool (hourly)',
+      amount: net,
+      currency: row.currency || 'USD',
+      occurred_at: new Date().toISOString(),
+      note: `${row.name} — ${noteExtra}`,
+      source_kind: 'task_auto',
+      pool_item_id: row.id,
+      updated_at: new Date().toISOString(),
+    });
+    if (payRes.error) {
+      toast({ title: 'Payment entry failed', description: payRes.error.message, variant: 'destructive' });
+      return;
+    }
+
+    const upd = await supabase
+      .from('task_pool_items')
+      .update({
+        withdrawn_amount: newWithdrawn,
+        next_payment_due_at: accrualDialog.kind === 'recurring' ? nextDue : row.next_payment_due_at,
+        hourly_last_ack_week_monday: accrualDialog.kind === 'hourly' ? hourlyAck : row.hourly_last_ack_week_monday,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', row.id)
+      .select('*')
+      .single();
+
+    if (upd.error || !upd.data) {
+      toast({ title: 'Task update failed', description: upd.error?.message, variant: 'destructive' });
+      return;
+    }
+
+    setAccrualDialog(null);
+    toast({ title: 'Payment confirmed', description: `Recorded ${row.currency} ${net.toFixed(2)} incoming and updated withdrawn.` });
+    setItems((prev) => prev.map((x) => (x.id === row.id ? (upd.data as TaskPoolItemRecord) : x)));
   };
 
   const deletePoolItem = async (id: string) => {
@@ -585,6 +817,47 @@ export default function AdminTaskPool() {
 
   return (
     <div className="space-y-6">
+      {accrualDueItems.length > 0 ? (
+        <Alert className="border-amber-500/40 bg-amber-500/5">
+          <AlertTriangle className="h-4 w-4 text-amber-600" />
+          <AlertTitle>Confirm accrual (JST)</AlertTitle>
+          <AlertDescription>
+            <p className="text-sm text-muted-foreground mb-2">
+              One or more tasks need confirmation that the last weekly / bi-weekly / monthly / hourly (Mon–Sun) payment was received. This updates withdrawn and adds an incoming payment row.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {accrualDueItems.map((t) => (
+                <Button
+                  key={t.id}
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  className="gap-1"
+                  onClick={() => {
+                    if (t.budget_type === 'hourly') {
+                      setAccrualHours(String(t.weekly_hours_cap ?? 40));
+                      setAccrualDialog({ row: t, kind: 'hourly' });
+                    } else if (t.budget_type === 'fixed' && taskPoolFixedMode(t) === 'project') {
+                      setAccrualDialog({ row: t, kind: 'project' });
+                    } else {
+                      setAccrualDialog({ row: t, kind: 'recurring' });
+                    }
+                  }}
+                >
+                  {t.name}
+                  <Badge variant="outline" className="text-[10px]">
+                    {t.budget_type === 'hourly'
+                      ? 'hourly'
+                      : taskPoolFixedMode(t) === 'project'
+                        ? 'project'
+                        : t.recurring_cadence}
+                  </Badge>
+                </Button>
+              ))}
+            </div>
+          </AlertDescription>
+        </Alert>
+      ) : null}
       {!selectedId ? (
         <>
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -661,9 +934,14 @@ export default function AdminTaskPool() {
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between gap-2">
                       <p className="font-medium text-foreground line-clamp-2">{row.name}</p>
-                      <Badge variant="secondary" className="shrink-0">
-                        {taskPoolItemStatusLabel(row.status)}
-                      </Badge>
+                      <div className="flex flex-col items-end gap-1 shrink-0">
+                        <Badge variant="secondary">{taskPoolItemStatusLabel(row.status)}</Badge>
+                        {taskPoolNeedsAccrualAck(row) ? (
+                          <Badge variant="destructive" className="text-[10px]">
+                            Accrual due
+                          </Badge>
+                        ) : null}
+                      </div>
                     </div>
                     {row.promoted_project_id ? (
                       <Badge variant="outline" className="mt-2 text-[10px]">
@@ -683,9 +961,11 @@ export default function AdminTaskPool() {
                       Withdrawn: {row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      Received: {row.task_received_at ? new Date(row.task_received_at).toLocaleDateString() : 'N/A'}
+                      Received: {formatIsoInJst(row.task_received_at)}
                     </p>
-                    <p className="mt-2 text-xs text-muted-foreground line-clamp-3">{row.description || 'No description'}</p>
+                    <p className="mt-2 text-xs text-muted-foreground line-clamp-3">
+                      {row.description?.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() || 'No description'}
+                    </p>
                   </CardContent>
                 </Card>
               ))}
@@ -768,8 +1048,11 @@ export default function AdminTaskPool() {
               <CardHeader className="border-b">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
-                    <CardTitle className="text-xl">{selected.name}</CardTitle>
-                    <p className="text-sm text-muted-foreground mt-1">{selected.description || 'No description.'}</p>
+                <CardTitle className="text-xl">{selected.name}</CardTitle>
+                <div
+                  className="prose prose-sm max-w-none text-muted-foreground mt-1 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5 [&_a]:text-primary"
+                  dangerouslySetInnerHTML={{ __html: selected.description?.trim() ? selected.description : '<p>No description.</p>' }}
+                />
                     <div className="mt-2 flex flex-wrap items-center gap-2">
                       <Select value={selected.status} onValueChange={(v) => updateDetailStatus(v)}>
                         <SelectTrigger className="w-[160px] h-8 text-xs">
@@ -806,7 +1089,26 @@ export default function AdminTaskPool() {
                       </p>
                     ) : null}
                   </div>
-                  <div className="flex gap-2 shrink-0">
+                  <div className="flex flex-wrap gap-2 shrink-0">
+                    {taskPoolNeedsAccrualAck(selected) || hasPendingProjectPayment(selected) ? (
+                      <Button
+                        size="sm"
+                        className="gap-1"
+                        onClick={() => {
+                          if (selected.budget_type === 'hourly') {
+                            setAccrualHours(String(selected.weekly_hours_cap ?? 40));
+                            setAccrualDialog({ row: selected, kind: 'hourly' });
+                          } else if (selected.budget_type === 'fixed' && taskPoolFixedMode(selected) === 'project') {
+                            setAccrualDialog({ row: selected, kind: 'project' });
+                          } else {
+                            setAccrualDialog({ row: selected, kind: 'recurring' });
+                          }
+                        }}
+                      >
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                        Confirm accrual
+                      </Button>
+                    ) : null}
                     <Button size="sm" variant="outline" className="gap-1" onClick={() => openEdit(selected)}>
                       <Pencil className="h-3.5 w-3.5" />
                       Edit
@@ -837,19 +1139,28 @@ export default function AdminTaskPool() {
                     <div className="grid gap-3 sm:grid-cols-2">
                       <InfoCard icon={FolderKanban} title="Client" value={poolClientLabel(selected)} />
                       <InfoCard icon={Link2} title="Account" value={poolAccountLabel(selected)} />
-                      <InfoCard icon={Clock} title="Deadline" value={selected.deadline ? new Date(selected.deadline).toLocaleString() : 'Not set'} />
+                      <InfoCard icon={Clock} title="Deadline" value={selected.deadline ? formatIsoInJst(selected.deadline) : 'Not set'} />
                       <InfoCard
                         icon={Calendar}
                         title="Task received"
-                        value={selected.task_received_at ? new Date(selected.task_received_at).toLocaleString() : 'Not set'}
+                        value={selected.task_received_at ? formatIsoInJst(selected.task_received_at) : 'Not set'}
                       />
                       <InfoCard
                         icon={Calendar}
                         title="Budget"
                         value={
-                          `${selected.currency} ${Number(selected.budget_amount ?? 0).toFixed(2)} (${selected.budget_type})`
+                          selected.budget_type === 'hourly'
+                            ? `${selected.currency} ${Number(selected.hourly_rate ?? 0).toFixed(2)}/hr · cap ${Number(selected.weekly_hours_cap ?? 40)}h/wk (JST)`
+                            : `${selected.currency} ${Number(selected.budget_amount ?? 0).toFixed(2)} · fixed ${taskPoolFixedMode(selected)}${
+                                taskPoolFixedMode(selected) === 'recurring' && selected.recurring_cadence
+                                  ? ` · ${selected.recurring_cadence}`
+                                  : ''
+                              }`
                         }
                       />
+                      {taskPoolFixedMode(selected) === 'recurring' && selected.next_payment_due_at ? (
+                        <InfoCard icon={Calendar} title="Next payment due (JST date)" value={selected.next_payment_due_at} />
+                      ) : null}
                       <InfoCard
                         icon={Calendar}
                         title="Withdrawn amount"
@@ -877,10 +1188,10 @@ export default function AdminTaskPool() {
                           ))}
                       </div>
                     </div>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <LinkField label="Source storage" url={selected.source_storage_url} />
-                      <LinkField label="GitHub" url={selected.github_url} />
-                      <LinkField label="Initial document" url={selected.initial_document_url} />
+                    <div className="space-y-3">
+                      <MultiLinkField title="Source storage" links={parseLabeledLinks(selected.source_storage_urls, selected.source_storage_url, 'Storage')} />
+                      <MultiLinkField title="GitHub" links={parseLabeledLinks(selected.github_links, selected.github_url, 'GitHub')} />
+                      <MultiLinkField title="Initial documents" links={parseLabeledLinks(selected.initial_document_urls, selected.initial_document_url, 'Document')} />
                     </div>
                     <div className="space-y-2">
                       <p className="text-sm font-medium">Metadata</p>
@@ -1032,6 +1343,33 @@ export default function AdminTaskPool() {
         onSave={saveSubtaskDetail}
       />
 
+      <AlertDialog open={!!accrualDialog} onOpenChange={(open) => !open && setAccrualDialog(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm you received this payment?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3 text-sm text-muted-foreground">
+                <p>
+                  Only confirm if the last <strong className="text-foreground">weekly / bi-weekly / monthly / hourly (Mon–Sun JST)</strong> amount was
+                  actually received. This will increase <strong className="text-foreground">withdrawn</strong> on the task and add a matching{' '}
+                  <strong className="text-foreground">incoming</strong> row in Payments.
+                </p>
+                {accrualDialog?.kind === 'hourly' ? (
+                  <div className="space-y-2">
+                    <Label>Billable hours this week (max {accrualDialog.row.weekly_hours_cap ?? 40})</Label>
+                    <Input type="number" value={accrualHours} onChange={(e) => setAccrualHours(e.target.value)} min={0} />
+                  </div>
+                ) : null}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void submitAccrualConfirm()}>Yes, payment received</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-auto">
           <DialogHeader>
@@ -1044,7 +1382,11 @@ export default function AdminTaskPool() {
             </div>
             <div className="space-y-2 md:col-span-2">
               <Label>Description</Label>
-              <Textarea value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} />
+              <RichTextEditor
+                value={form.description}
+                onChange={(val) => setForm((p) => ({ ...p, description: val }))}
+                placeholder="Task details…"
+              />
             </div>
             <div className="space-y-2">
               <Label>Task source(from)</Label>
@@ -1064,13 +1406,21 @@ export default function AdminTaskPool() {
                 ))}
               </datalist>
             </div>
-            <div className="space-y-2">
-              <Label>Skillset (comma)</Label>
-              <Input value={form.skillsetCsv} onChange={(e) => setForm((p) => ({ ...p, skillsetCsv: e.target.value }))} />
+            <div className="space-y-2 md:col-span-2">
+              <TagChipsInput
+                label="Skillset"
+                values={form.skillsetTags}
+                onChange={(next) => setForm((p) => ({ ...p, skillsetTags: next }))}
+                placeholder="Type skill, Enter or comma"
+              />
             </div>
-            <div className="space-y-2">
-              <Label>Tags (comma)</Label>
-              <Input value={form.tagsCsv} onChange={(e) => setForm((p) => ({ ...p, tagsCsv: e.target.value }))} />
+            <div className="space-y-2 md:col-span-2">
+              <TagChipsInput
+                label="Tags"
+                values={form.tagsTags}
+                onChange={(next) => setForm((p) => ({ ...p, tagsTags: next }))}
+                placeholder="Type tag, Enter or comma"
+              />
             </div>
             <div className="space-y-2">
               <Label>Status</Label>
@@ -1111,8 +1461,11 @@ export default function AdminTaskPool() {
                   setForm((p) => ({
                     ...p,
                     clientId: v === 'none' ? '' : v,
-                    clientCountry: c?.country || p.clientCountry,
-                    clientTimezone: c?.timezone || p.clientTimezone,
+                    clientCountry:
+                      v === 'none'
+                        ? p.clientCountry
+                        : canonicalCountryNameOrLegacy(c?.country || '') || p.clientCountry,
+                    clientTimezone: v === 'none' ? p.clientTimezone : c?.timezone || p.clientTimezone,
                   }));
                 }}
               >
@@ -1134,10 +1487,11 @@ export default function AdminTaskPool() {
               <Label>Client name (manual)</Label>
               <Input value={form.clientNameOverride} onChange={(e) => setForm((p) => ({ ...p, clientNameOverride: e.target.value }))} />
             </div>
-            <div className="space-y-2">
-              <Label>Client country</Label>
-              <Input value={form.clientCountry} onChange={(e) => setForm((p) => ({ ...p, clientCountry: e.target.value }))} />
-            </div>
+            <CountrySelect
+              label="Client country"
+              value={form.clientCountry}
+              onChange={(clientCountry) => setForm((p) => ({ ...p, clientCountry }))}
+            />
             <div className="space-y-2">
               <Label>Client timezone</Label>
               <Input value={form.clientTimezone} onChange={(e) => setForm((p) => ({ ...p, clientTimezone: e.target.value }))} />
@@ -1159,29 +1513,107 @@ export default function AdminTaskPool() {
               </Select>
             </div>
             <div className="space-y-2">
-              <Label>Task received at (offer date)</Label>
+              <Label>Task received at (offer date, JST)</Label>
               <Input type="datetime-local" value={form.taskReceivedAt} onChange={(e) => setForm((p) => ({ ...p, taskReceivedAt: e.target.value }))} />
+              <p className="text-[11px] text-muted-foreground">Interpreted as Asia/Tokyo, not your computer timezone.</p>
             </div>
             <div className="space-y-2">
-              <Label>Deadline</Label>
+              <Label>Deadline (JST)</Label>
               <Input type="datetime-local" value={form.deadline} onChange={(e) => setForm((p) => ({ ...p, deadline: e.target.value }))} />
             </div>
             <div className="space-y-2">
               <Label>Budget type</Label>
-              <Select value={form.budgetType} onValueChange={(v) => setForm((p) => ({ ...p, budgetType: v }))}>
+              <Select
+                value={form.budgetType}
+                onValueChange={(v) =>
+                  setForm((p) => ({
+                    ...p,
+                    budgetType: v as 'fixed' | 'hourly',
+                    fixedBudgetMode: v === 'hourly' ? 'project' : p.fixedBudgetMode,
+                  }))
+                }
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="fixed">fixed</SelectItem>
-                  <SelectItem value="hourly">hourly</SelectItem>
+                  <SelectItem value="fixed">Fixed</SelectItem>
+                  <SelectItem value="hourly">Hourly</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label>Budget amount</Label>
-              <Input type="number" value={form.budgetAmount} onChange={(e) => setForm((p) => ({ ...p, budgetAmount: e.target.value }))} />
-            </div>
+            {form.budgetType === 'fixed' ? (
+              <div className="space-y-2 md:col-span-2">
+                <Label>Fixed contract</Label>
+                <Select
+                  value={form.fixedBudgetMode}
+                  onValueChange={(v) =>
+                    setForm((p) => ({
+                      ...p,
+                      fixedBudgetMode: v as 'project' | 'recurring',
+                      recurringCadence: v === 'recurring' && !p.recurringCadence ? 'weekly' : p.recurringCadence,
+                    }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="project">Single total for the project</SelectItem>
+                    <SelectItem value="recurring">Installment (weekly / bi-weekly / monthly, JST)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
+            {form.budgetType === 'fixed' && form.fixedBudgetMode === 'project' ? (
+              <div className="space-y-2 md:col-span-2">
+                <Label>Contract amount (total)</Label>
+                <Input type="number" value={form.budgetAmount} onChange={(e) => setForm((p) => ({ ...p, budgetAmount: e.target.value }))} />
+              </div>
+            ) : null}
+            {form.budgetType === 'fixed' && form.fixedBudgetMode === 'recurring' ? (
+              <>
+                <div className="space-y-2 md:col-span-2">
+                  <Label>Installment amount (per period)</Label>
+                  <Input type="number" value={form.budgetAmount} onChange={(e) => setForm((p) => ({ ...p, budgetAmount: e.target.value }))} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Cadence</Label>
+                  <Select
+                    value={form.recurringCadence || 'weekly'}
+                    onValueChange={(v) => setForm((p) => ({ ...p, recurringCadence: v as 'weekly' | 'biweekly' | 'monthly' }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="weekly">Weekly</SelectItem>
+                      <SelectItem value="biweekly">Bi-weekly</SelectItem>
+                      <SelectItem value="monthly">Monthly</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <Label>Next payment due (date in JST)</Label>
+                  <Input type="date" value={form.nextPaymentDueAt} onChange={(e) => setForm((p) => ({ ...p, nextPaymentDueAt: e.target.value }))} />
+                </div>
+              </>
+            ) : null}
+            {form.budgetType === 'hourly' ? (
+              <>
+                <div className="space-y-2">
+                  <Label>Hourly rate</Label>
+                  <Input type="number" value={form.hourlyRate} onChange={(e) => setForm((p) => ({ ...p, hourlyRate: e.target.value }))} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Weekly hour cap (Mon–Sun JST, default 40)</Label>
+                  <Input type="number" value={form.weeklyHoursCap} onChange={(e) => setForm((p) => ({ ...p, weeklyHoursCap: e.target.value }))} />
+                </div>
+                <p className="text-xs text-muted-foreground md:col-span-2">
+                  Billing weeks follow Monday–Sunday in Asia/Tokyo. Withdrawn increases when you confirm each week from the accrual prompt.
+                </p>
+              </>
+            ) : null}
             <div className="space-y-2">
               <Label>Upwork connection fee</Label>
               <Input type="number" value={form.upworkConnectionFee} onChange={(e) => setForm((p) => ({ ...p, upworkConnectionFee: e.target.value }))} />
@@ -1207,15 +1639,21 @@ export default function AdminTaskPool() {
               <Input value={form.currency} onChange={(e) => setForm((p) => ({ ...p, currency: e.target.value }))} />
             </div>
             <div className="space-y-2 md:col-span-2">
-              <Label>Withdrawn amount (auto)</Label>
+              <Label>Withdrawn amount (preview / saved)</Label>
               <Input value={`${form.currency || 'USD'} ${withdrawnPreview.toFixed(2)}`} readOnly />
               <p className="text-xs text-muted-foreground">
-                Withdrawn = real budget - (upwork connection fee + convert fee + transfer fee + upwork fee + withdraw fee)
+                {form.budgetType === 'fixed' && form.fixedBudgetMode === 'project'
+                  ? 'Project fixed: withdrawn stays unchanged until you confirm payment receipt.'
+                  : 'Accrual (recurring or hourly): total only goes up when you confirm each period; fees below apply to each accrual slice.'}
               </p>
             </div>
             <div className="space-y-2 md:col-span-2">
-              <Label>GitHub</Label>
-              <Input value={form.githubUrl} onChange={(e) => setForm((p) => ({ ...p, githubUrl: e.target.value }))} />
+              <Label>GitHub &amp; repo links</Label>
+              <LabeledLinksEditor
+                links={form.githubLinks}
+                onChange={(links) => setForm((p) => ({ ...p, githubLinks: links }))}
+                newRowLabel="GitHub"
+              />
             </div>
             <div className="space-y-2">
               <Label>Storage type</Label>
@@ -1224,20 +1662,54 @@ export default function AdminTaskPool() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="drive">drive</SelectItem>
-                  <SelectItem value="dropbox">dropbox</SelectItem>
-                  <SelectItem value="onedrive">onedrive</SelectItem>
-                  <SelectItem value="other">other</SelectItem>
+                  {SOURCE_STORAGE_PROVIDER_OPTIONS.map((provider) => (
+                    <SelectItem key={provider} value={provider}>
+                      {provider}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-2 md:col-span-2">
-              <Label>Source storage URL *</Label>
-              <Input value={form.sourceStorageUrl} onChange={(e) => setForm((p) => ({ ...p, sourceStorageUrl: e.target.value }))} placeholder="Drive folder" />
+              <Label>Source storage URLs *</Label>
+              <LabeledLinksEditor
+                links={form.sourceStorageLinks}
+                onChange={(links) => setForm((p) => ({ ...p, sourceStorageLinks: links }))}
+                newRowLabel="Storage"
+              />
             </div>
+            {(form.sourceStorageType === 'google_drive' || form.sourceStorageType === 'drive') && (
+              <div className="space-y-3 md:col-span-2">
+                <CloudGoogleDriveUpload
+                  title="Upload screenshots to Google Drive"
+                  accept="image/*"
+                  onUrlAdded={(url) => setForm((p) => ({ ...p, screenshotUrls: [...p.screenshotUrls, url] }))}
+                />
+                <CloudGoogleDriveUpload
+                  title="Upload source files to Google Drive"
+                  accept="*/*"
+                  onUrlAdded={(url) =>
+                    setForm((p) => {
+                      const withFile = { ...p, sourceFileUrls: [...p.sourceFileUrls, url] };
+                      if (serializeLabeledLinks(p.sourceStorageLinks).length === 0) {
+                        return {
+                          ...withFile,
+                          sourceStorageLinks: [...p.sourceStorageLinks.filter((l) => l.url.trim()), { label: 'Drive', url }],
+                        };
+                      }
+                      return withFile;
+                    })
+                  }
+                />
+              </div>
+            )}
             <div className="space-y-2 md:col-span-2">
-              <Label>Initial document URL</Label>
-              <Input value={form.initialDocumentUrl} onChange={(e) => setForm((p) => ({ ...p, initialDocumentUrl: e.target.value }))} />
+              <Label>Initial document URLs</Label>
+              <LabeledLinksEditor
+                links={form.initialDocLinks}
+                onChange={(links) => setForm((p) => ({ ...p, initialDocLinks: links }))}
+                newRowLabel="Document"
+              />
             </div>
             <div className="space-y-2 md:col-span-2">
               <Label>Legacy chat history</Label>
@@ -1326,6 +1798,73 @@ export default function AdminTaskPool() {
   );
 }
 
+function LabeledLinksEditor({
+  links,
+  onChange,
+  newRowLabel,
+}: {
+  links: LabeledLink[];
+  onChange: (v: LabeledLink[]) => void;
+  newRowLabel: string;
+}) {
+  return (
+    <div className="space-y-2">
+      {links.map((link, i) => (
+        <div key={i} className="flex flex-wrap gap-2 items-center">
+          <Input
+            className="max-w-[140px]"
+            placeholder="Label"
+            value={link.label}
+            onChange={(e) => {
+              const n = [...links];
+              n[i] = { ...n[i], label: e.target.value };
+              onChange(n);
+            }}
+          />
+          <Input
+            className="flex-1 min-w-[200px]"
+            placeholder="https://…"
+            value={link.url}
+            onChange={(e) => {
+              const n = [...links];
+              n[i] = { ...n[i], url: e.target.value };
+              onChange(n);
+            }}
+          />
+          <Button type="button" size="icon" variant="outline" onClick={() => onChange(links.filter((_, j) => j !== i))}>
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
+      ))}
+      <Button type="button" size="sm" variant="secondary" onClick={() => onChange([...links, { label: newRowLabel, url: '' }])}>
+        Add link
+      </Button>
+    </div>
+  );
+}
+
+function MultiLinkField({ title, links }: { title: string; links: LabeledLink[] }) {
+  return (
+    <div className="rounded border p-3 bg-muted/20">
+      <p className="text-xs text-muted-foreground mb-2">{title}</p>
+      {links.length === 0 ? (
+        <p className="text-sm text-muted-foreground">N/A</p>
+      ) : (
+        <ul className="space-y-2">
+          {links.map((l, i) => (
+            <li key={`${l.url}-${i}`}>
+              <span className="text-xs font-medium text-foreground">{l.label}: </span>
+              <a href={l.url} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline break-all">
+                {l.url}
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function InfoCard({ icon: Icon, title, value }: { icon: React.ElementType; title: string; value: string }) {
   return (
     <div className="rounded border p-3 bg-muted/20">
@@ -1355,17 +1894,3 @@ function AdminTaskStatCard({
   );
 }
 
-function LinkField({ label, url }: { label: string; url: string | null }) {
-  return (
-    <div className="rounded border p-3 bg-muted/20">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      {url ? (
-        <a href={url} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline break-all">
-          {url}
-        </a>
-      ) : (
-        <p className="text-sm text-muted-foreground">N/A</p>
-      )}
-    </div>
-  );
-}

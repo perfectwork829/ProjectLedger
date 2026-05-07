@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import type { ProjectPriority, ProjectStatus, SourceStorageType } from '@/lib/projects';
+import { addDaysToJstYmd, compareJstYmd, formatJstYmd, getJstMondayYmd } from '@/lib/jst';
 
 /** Parent lead / pool item — same lifecycle as projects (not Trello columns). */
 export type TaskPoolItemStatus = ProjectStatus;
@@ -88,7 +89,17 @@ export interface TaskPoolItemRecord {
   task_received_at: string | null;
   deadline: string | null;
   budget_type: 'fixed' | 'hourly';
+  /** When `fixed` + `recurring`, amount per installment; when `fixed` + `project`, total contract; when `hourly`, optional weekly cap in currency (informational). */
   budget_amount: number | null;
+  fixed_budget_mode: 'project' | 'recurring';
+  recurring_cadence: 'weekly' | 'biweekly' | 'monthly' | null;
+  next_payment_due_at: string | null;
+  hourly_rate: number | null;
+  weekly_hours_cap: number | null;
+  hourly_last_ack_week_monday: string | null;
+  github_links: unknown;
+  source_storage_urls: unknown;
+  initial_document_urls: unknown;
   upwork_connection_fee: number;
   convert_fee: number;
   transfer_fee: number;
@@ -148,6 +159,70 @@ export interface PoolChatMessage {
 export { loadProjectDependencies } from '@/lib/projects';
 export type { ClientRef, AccountRef, PersonnelRef } from '@/lib/projects';
 export { toCsv, parseCsv } from '@/lib/projects';
+
+export interface LabeledLink {
+  label: string;
+  url: string;
+}
+
+export function parseLabeledLinks(raw: unknown, legacyUrl: string | null | undefined, defaultLabel: string): LabeledLink[] {
+  if (!Array.isArray(raw)) {
+    return legacyUrl?.trim() ? [{ label: defaultLabel, url: legacyUrl.trim() }] : [];
+  }
+  const out: LabeledLink[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const rec = item as Record<string, unknown>;
+    const url = String(rec.url ?? '').trim();
+    if (!url) continue;
+    const label = String(rec.label ?? '').trim() || defaultLabel;
+    out.push({ label, url });
+  }
+  if (out.length === 0 && legacyUrl?.trim()) return [{ label: defaultLabel, url: legacyUrl.trim() }];
+  return out;
+}
+
+export function serializeLabeledLinks(links: LabeledLink[]): LabeledLink[] {
+  return links
+    .map((l) => ({ label: l.label.trim(), url: l.url.trim() }))
+    .filter((l) => l.url);
+}
+
+export function taskPoolFixedMode(row: TaskPoolItemRecord): 'project' | 'recurring' {
+  return row.fixed_budget_mode ?? 'project';
+}
+
+export function taskUsesAccrualPayments(row: TaskPoolItemRecord): boolean {
+  if (row.budget_type === 'hourly') return true;
+  return row.budget_type === 'fixed' && taskPoolFixedMode(row) === 'recurring';
+}
+
+export function needsRecurringPaymentAck(row: TaskPoolItemRecord, now = new Date()): boolean {
+  if (row.budget_type !== 'fixed' || taskPoolFixedMode(row) !== 'recurring') return false;
+  if (!row.recurring_cadence || !row.next_payment_due_at) return false;
+  if (['completed', 'cancelled'].includes(row.status)) return false;
+  const today = formatJstYmd(now);
+  return compareJstYmd(today, row.next_payment_due_at) >= 0;
+}
+
+export function needsHourlyWeekAck(row: TaskPoolItemRecord, now = new Date()): boolean {
+  if (row.budget_type !== 'hourly') return false;
+  if (['completed', 'cancelled'].includes(row.status)) return false;
+  const anchor = row.task_received_at || row.created_at;
+  if (!anchor) return false;
+  const startMonday = getJstMondayYmd(new Date(anchor));
+  const currentMonday = getJstMondayYmd(now);
+  const firstDueMonday = addDaysToJstYmd(startMonday, 7);
+  const lastAck = row.hourly_last_ack_week_monday;
+  if (!lastAck) {
+    return compareJstYmd(currentMonday, firstDueMonday) >= 0;
+  }
+  return compareJstYmd(currentMonday, addDaysToJstYmd(lastAck, 7)) > 0;
+}
+
+export function taskPoolNeedsAccrualAck(row: TaskPoolItemRecord, now = new Date()): boolean {
+  return needsRecurringPaymentAck(row, now) || needsHourlyWeekAck(row, now);
+}
 
 /** DB RPC (SECURITY DEFINER): copies into `projects` and links `promoted_project_id`. Safe if already promoted. */
 export async function promoteCompletedPoolItemToProject(poolItemId: string): Promise<{ projectId: string | null; error?: string }> {

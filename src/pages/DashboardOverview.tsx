@@ -40,6 +40,8 @@ type TaskOverviewRow = {
   task_received_at: string | null;
   created_at: string;
   status: string;
+  budget_type: 'fixed' | 'hourly';
+  fixed_budget_mode?: 'project' | 'recurring' | null;
   budget_amount: number | null;
   withdrawn_amount: number | null;
   upwork_connection_fee: number;
@@ -141,7 +143,7 @@ export default function DashboardOverview() {
           supabase
             .from('task_pool_items')
             .select(
-              'id,name,currency,task_received_at,created_at,status,budget_amount,withdrawn_amount,upwork_connection_fee,convert_fee,transfer_fee,upwork_fee,withdraw_fee,deadline',
+              'id,name,currency,task_received_at,created_at,status,budget_type,fixed_budget_mode,budget_amount,withdrawn_amount,upwork_connection_fee,convert_fee,transfer_fee,upwork_fee,withdraw_fee,deadline',
             )
             .order('created_at', { ascending: false }),
           supabase.from('payment_entries').select('*').order('occurred_at', { ascending: false }),
@@ -287,6 +289,8 @@ export default function DashboardOverview() {
       currency: t.currency || taskCurrency,
       task_received_at: t.task_received_at,
       created_at: t.created_at,
+      budget_type: t.budget_type ?? 'fixed',
+      fixed_budget_mode: t.fixed_budget_mode ?? 'project',
       withdrawn_amount: t.withdrawn_amount ?? 0,
       upwork_connection_fee: Number(t.upwork_connection_fee ?? 0),
       convert_fee: Number(t.convert_fee ?? 0),
@@ -337,6 +341,8 @@ export default function DashboardOverview() {
       currency: t.currency || taskCurrency,
       task_received_at: t.task_received_at,
       created_at: t.created_at,
+      budget_type: t.budget_type ?? 'fixed',
+      fixed_budget_mode: t.fixed_budget_mode ?? 'project',
       withdrawn_amount: t.withdrawn_amount ?? 0,
       upwork_connection_fee: Number(t.upwork_connection_fee ?? 0),
       convert_fee: Number(t.convert_fee ?? 0),

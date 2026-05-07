@@ -171,6 +171,12 @@ export default function Projects() {
     return a ? `${a.platform} @${a.username}` : 'N/A';
   };
 
+  const projectSourceFiles = (project: ProjectRecord): string[] => {
+    const raw = (project.metadata_json as { source_file_urls?: unknown } | null)?.source_file_urls;
+    if (!Array.isArray(raw)) return [];
+    return raw.map((x) => String(x || '').trim()).filter(Boolean);
+  };
+
   if (loading) {
     return <div className="flex items-center justify-center py-12"><div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" /></div>;
   }
@@ -287,6 +293,22 @@ export default function Projects() {
                   <InfoLink label="Source code storage" url={selectedProject.source_storage_url} />
                   <InfoLink label="GitHub link" url={selectedProject.github_url} />
                   <InfoLink label="Initial document" url={selectedProject.initial_document_url} />
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">Source files (from Task promotion)</p>
+                    {projectSourceFiles(selectedProject).length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No source files linked.</p>
+                    ) : (
+                      <ul className="space-y-1">
+                        {projectSourceFiles(selectedProject).map((url) => (
+                          <li key={url}>
+                            <a href={url} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline break-all">
+                              {url}
+                            </a>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
                 </TabsContent>
 
                 <TabsContent value="screenshots">

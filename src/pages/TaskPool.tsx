@@ -24,6 +24,7 @@ import {
   poolSubtaskBoardLabel,
   taskPoolItemStatusLabel,
   type PoolSubtaskStatus,
+  parseLabeledLinks,
   type TaskPoolItemRecord,
   type TaskPoolScreenshot,
   type TaskPoolSourceFile,
@@ -36,6 +37,7 @@ import {
   summarizeTaskPool,
   type TaskPoolListFilter,
 } from '@/lib/taskPoolFinance';
+import { formatJstYmdFromIso } from '@/lib/jst';
 import PoolSubtaskKanban from '@/components/PoolSubtaskKanban';
 import PoolSubtaskDetailDialog from '@/components/PoolSubtaskDetailDialog';
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from '@/components/ui/carousel';
@@ -403,7 +405,7 @@ export default function TaskPool() {
                       Withdrawn: {row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      Received: {row.task_received_at ? new Date(row.task_received_at).toLocaleDateString() : 'N/A'}
+                      Received: {formatJstYmdFromIso(row.task_received_at)}
                     </p>
                     <p className="mt-2 text-xs text-muted-foreground line-clamp-3">{row.description || 'No description'}</p>
                   </CardContent>
@@ -429,7 +431,7 @@ export default function TaskPool() {
                       <td className="px-3 py-2 font-medium">{row.name}</td>
                       <td className="px-3 py-2">{taskPoolItemStatusLabel(row.status)}</td>
                       <td className="px-3 py-2 capitalize">{(row.task_source || '-').replace('_', ' ')}</td>
-                      <td className="px-3 py-2">{row.task_received_at ? new Date(row.task_received_at).toLocaleDateString() : 'N/A'}</td>
+                      <td className="px-3 py-2">{formatJstYmdFromIso(row.task_received_at)}</td>
                       <td className="px-3 py-2">{row.currency} {Number(row.budget_amount ?? 0).toFixed(2)}</td>
                       <td className="px-3 py-2 text-emerald-600">{row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}</td>
                     </tr>
@@ -507,7 +509,12 @@ export default function TaskPool() {
                     <Badge>{taskPoolItemStatusLabel(selected.status)}</Badge>
                   )}
                 </div>
-                <p className="text-sm text-muted-foreground mt-1">{selected.description}</p>
+                <div
+                  className="prose prose-sm max-w-none text-muted-foreground mt-1 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5 [&_a]:text-primary"
+                  dangerouslySetInnerHTML={{
+                    __html: selected.description?.trim() ? selected.description : '<p>No description.</p>',
+                  }}
+                />
                 {selected.main_stack ? <Badge className="mt-2 capitalize">{selected.main_stack.replace('_', ' ')}</Badge> : null}
                 {selected.task_source ? (
                   <Badge variant="outline" className="mt-2 ml-2 capitalize">
@@ -525,7 +532,7 @@ export default function TaskPool() {
                   <span>Client: {clientLabel(selected)}</span>
                   <span>Account: {accountLabel(selected)}</span>
                   <span>Deadline: {selected.deadline ? new Date(selected.deadline).toLocaleDateString() : 'N/A'}</span>
-                  <span>Received: {selected.task_received_at ? new Date(selected.task_received_at).toLocaleDateString() : 'N/A'}</span>
+                  <span>Received: {formatJstYmdFromIso(selected.task_received_at)}</span>
                   <span>Real budget: {selected.currency} {Number(selected.budget_amount ?? 0).toFixed(2)}</span>
                   <span>Withdrawn: {selected.currency} {Number(selected.withdrawn_amount ?? 0).toFixed(2)}</span>
                 </div>
@@ -568,9 +575,9 @@ export default function TaskPool() {
                         </Badge>
                       ))}
                   </div>
-                  <InfoLink label="Source storage" url={selected.source_storage_url} />
-                  <InfoLink label="GitHub" url={selected.github_url} />
-                  <InfoLink label="Initial document" url={selected.initial_document_url} />
+                  <TaskPoolMultiLinks title="Source storage" links={parseLabeledLinks(selected.source_storage_urls, selected.source_storage_url, 'Storage')} />
+                  <TaskPoolMultiLinks title="GitHub" links={parseLabeledLinks(selected.github_links, selected.github_url, 'GitHub')} />
+                  <TaskPoolMultiLinks title="Initial documents" links={parseLabeledLinks(selected.initial_document_urls, selected.initial_document_url, 'Document')} />
                 </TabsContent>
 
                 <TabsContent value="screenshots">
@@ -713,16 +720,23 @@ export default function TaskPool() {
   );
 }
 
-function InfoLink({ label, url }: { label: string; url: string | null }) {
+function TaskPoolMultiLinks({ title, links }: { title: string; links: { label: string; url: string }[] }) {
   return (
     <div className="rounded border p-3 bg-muted/20">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      {url ? (
-        <a href={url} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline break-all">
-          {url}
-        </a>
-      ) : (
+      <p className="text-xs text-muted-foreground mb-2">{title}</p>
+      {links.length === 0 ? (
         <p className="text-sm text-muted-foreground">N/A</p>
+      ) : (
+        <ul className="space-y-2">
+          {links.map((l, i) => (
+            <li key={`${l.url}-${i}`}>
+              <span className="text-xs font-medium">{l.label}: </span>
+              <a href={l.url} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline break-all">
+                {l.url}
+              </a>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );

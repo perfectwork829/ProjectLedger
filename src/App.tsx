@@ -28,6 +28,7 @@ import UsefulLinks from "@/pages/UsefulLinks";
 import AdminPayments from "@/pages/AdminPayments";
 import Payments from "@/pages/Payments";
 import NotFound from "./pages/NotFound";
+import OAuthGoogleDriveCallback from "@/pages/OAuthGoogleDriveCallback";
 
 const queryClient = new QueryClient();
 
@@ -44,6 +45,14 @@ const App = () => (
             <Route path="/signup" element={<Signup />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
+            <Route
+              path="/oauth/google-drive/callback"
+              element={
+                <ProtectedRoute requiredRole="admin">
+                  <OAuthGoogleDriveCallback />
+                </ProtectedRoute>
+              }
+            />
 
             {/* Frontend — logged-in user read-only views */}
             <Route
@@ -73,7 +82,7 @@ const App = () => (
                 </ProtectedRoute>
               }
             >
-              <Route index element={<Navigate to="/admin/accounts" replace />} />
+              <Route index element={<Navigate to="/admin/tasks" replace />} />
               <Route path="roles" element={<AdminRoles />} />
               <Route path="accounts" element={<AdminAccounts />} />
               <Route path="projects" element={<AdminProjects />} />
