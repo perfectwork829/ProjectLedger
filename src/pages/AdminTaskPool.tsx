@@ -26,6 +26,8 @@ import ModuleSearchBar from '@/components/ModuleSearchBar';
 import { CloudGoogleDriveUpload } from '@/components/CloudGoogleDriveUpload';
 import { CountrySelect } from '@/components/CountrySelect';
 import { canonicalCountryNameOrLegacy } from '@/lib/countries';
+import { TimezoneSelect } from '@/components/TimezoneSelect';
+import { canonicalTimezoneOrLegacy } from '@/lib/timezones';
 import {
   AccountRef,
   ClientRef,
@@ -39,6 +41,11 @@ import {
   serializeLabeledLinks,
   taskPoolNeedsAccrualAck,
   taskUsesAccrualPayments,
+  parseMilestones,
+  sumMilestoneGross,
+  hasPendingMilestonePayment,
+  firstPendingMilestone,
+  taskPoolContractGross,
   TASK_POOL_ITEM_STATUS_OPTIONS,
   TASK_POOL_SUBTASK_BOARD_STATUSES,
   poolSubtaskBoardLabel,
@@ -111,7 +118,8 @@ const emptyForm = {
   taskReceivedAt: '',
   deadline: '',
   budgetType: 'fixed' as 'fixed' | 'hourly',
-  fixedBudgetMode: 'project' as 'project' | 'recurring',
+  fixedBudgetMode: 'project' as 'project' | 'recurring' | 'milestone',
+  milestones: [] as { id: string; title: string; amount: string; confirmedAt: string | null }[],
   recurringCadence: '' as '' | 'weekly' | 'biweekly' | 'monthly',
   nextPaymentDueAt: '',
   hourlyRate: '',
@@ -146,7 +154,7 @@ export default function AdminTaskPool() {
   const [listFilter, setListFilter] = useState<TaskPoolListFilter>('working');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
-  const [viewMode, setViewMode] = useState<'card' | 'list' | 'line' | 'table'>('card');
+  const [viewMode, setViewMode] = useState<'card' | 'list' | 'line' | 'table'>('table');
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -160,11 +168,15 @@ export default function AdminTaskPool() {
   const [newChat, setNewChat] = useState('');
   const [pendingDelete, setPendingDelete] = useState<PendingDel | null>(null);
   const [subtaskDetailId, setSubtaskDetailId] = useState<string | null>(null);
-  const [accrualDialog, setAccrualDialog] = useState<null | { row: TaskPoolItemRecord; kind: 'project' | 'recurring' | 'hourly' }>(null);
+  const [accrualDialog, setAccrualDialog] = useState<null | {
+    row: TaskPoolItemRecord;
+    kind: 'project' | 'recurring' | 'hourly' | 'milestone';
+    milestoneId?: string;
+  }>(null);
   const [accrualHours, setAccrualHours] = useState('');
 
   const withdrawnPreview = useMemo(() => {
-    if (form.budgetType === 'fixed' && form.fixedBudgetMode === 'project') {
+    if (form.budgetType === 'fixed' && (form.fixedBudgetMode === 'project' || form.fixedBudgetMode === 'milestone')) {
       if (!editingId) return 0;
       const row = items.find((i) => i.id === editingId);
       return Number(row?.withdrawn_amount ?? 0);
@@ -193,7 +205,7 @@ export default function AdminTaskPool() {
   };
 
   const accrualDueItems = useMemo(
-    () => items.filter((t) => taskPoolNeedsAccrualAck(t) || hasPendingProjectPayment(t)),
+    () => items.filter((t) => taskPoolNeedsAccrualAck(t) || hasPendingProjectPayment(t) || hasPendingMilestonePayment(t)),
     [items],
   );
 
@@ -379,7 +391,7 @@ export default function AdminTaskPool() {
       clientId: row.client_id || '',
       clientNameOverride: row.client_name_override || '',
       clientCountry: canonicalCountryNameOrLegacy(row.client_country || ''),
-      clientTimezone: row.client_timezone || '',
+      clientTimezone: canonicalTimezoneOrLegacy(row.client_timezone || ''),
       accountId: row.account_id || '',
       chatHistory: row.chat_history || '',
       metadataJson: row.metadata_json ? JSON.stringify(row.metadata_json, null, 2) : '{}',
@@ -398,6 +410,12 @@ export default function AdminTaskPool() {
       hourlyRate: row.hourly_rate != null ? String(row.hourly_rate) : '',
       weeklyHoursCap: row.weekly_hours_cap != null ? String(row.weekly_hours_cap) : '40',
       budgetAmount: row.budget_amount?.toString() || '',
+      milestones: parseMilestones(row.milestones_json).map((m) => ({
+        id: m.id,
+        title: m.title,
+        amount: String(m.amount),
+        confirmedAt: m.confirmed_at,
+      })),
       upworkConnectionFee: Number(row.upwork_connection_fee ?? 0).toString(),
       convertFee: Number(row.convert_fee ?? 0).toString(),
       transferFee: Number(row.transfer_fee ?? 0).toString(),
@@ -455,6 +473,30 @@ export default function AdminTaskPool() {
     const upworkFee = form.upworkFee ? Number(form.upworkFee) : 0;
     const withdrawFee = form.withdrawFee ? Number(form.withdrawFee) : 0;
 
+    let milestoneRowsForSave: Array<{ id: string; title: string; amount: number; confirmed_at: string | null }> = [];
+    if (form.budgetType === 'fixed' && form.fixedBudgetMode === 'milestone') {
+      const prev = existing ? parseMilestones(existing.milestones_json) : [];
+      milestoneRowsForSave = form.milestones
+        .filter((m) => m.title.trim() || Number(m.amount) > 0)
+        .map((m) => {
+          const p = prev.find((x) => x.id === m.id);
+          return {
+            id: m.id,
+            title: m.title.trim() || 'Milestone',
+            amount: Math.max(0, Number(m.amount) || 0),
+            confirmed_at: p?.confirmed_at ?? null,
+          };
+        });
+      if (milestoneRowsForSave.length === 0 || sumMilestoneGross(milestoneRowsForSave) <= 0) {
+        toast({
+          title: 'Invalid milestones',
+          description: 'Add at least one milestone with an amount greater than 0.',
+          variant: 'destructive',
+        });
+        return;
+      }
+    }
+
     const isAccrualForm =
       form.budgetType === 'hourly' || (form.budgetType === 'fixed' && form.fixedBudgetMode === 'recurring');
 
@@ -462,6 +504,11 @@ export default function AdminTaskPool() {
     if (form.budgetType === 'fixed' && form.fixedBudgetMode === 'project') {
       const wasProjectFixed = existing?.budget_type === 'fixed' && taskPoolFixedMode(existing) === 'project';
       withdrawn_amount = wasProjectFixed ? Number(existing?.withdrawn_amount ?? 0) : 0;
+    } else if (form.budgetType === 'fixed' && form.fixedBudgetMode === 'milestone') {
+      const wasMilestone = existing?.budget_type === 'fixed' && taskPoolFixedMode(existing) === 'milestone';
+      if (!existing) withdrawn_amount = 0;
+      else if (!wasMilestone) withdrawn_amount = 0;
+      else withdrawn_amount = Number(existing.withdrawn_amount ?? 0);
     } else if (isAccrualForm) {
       const wasAccrual = existing ? taskUsesAccrualPayments(existing) : false;
       if (!existing) {
@@ -475,6 +522,13 @@ export default function AdminTaskPool() {
     } else if (existing) {
       withdrawn_amount = Number(existing.withdrawn_amount ?? 0);
     }
+
+    const resolvedBudgetAmount =
+      form.budgetType === 'fixed' && form.fixedBudgetMode === 'milestone'
+        ? sumMilestoneGross(milestoneRowsForSave)
+        : form.budgetAmount
+          ? Number(form.budgetAmount)
+          : null;
 
     const fixedMode = form.budgetType === 'hourly' ? 'project' : form.fixedBudgetMode;
     const recurringCadence =
@@ -518,7 +572,8 @@ export default function AdminTaskPool() {
       next_payment_due_at,
       hourly_rate: form.budgetType === 'hourly' && form.hourlyRate ? Number(form.hourlyRate) : null,
       weekly_hours_cap: form.budgetType === 'hourly' ? Number(form.weeklyHoursCap || 40) : null,
-      budget_amount: form.budgetAmount ? Number(form.budgetAmount) : null,
+      budget_amount: resolvedBudgetAmount,
+      milestones_json: form.budgetType === 'fixed' && form.fixedBudgetMode === 'milestone' ? milestoneRowsForSave : [],
       upwork_connection_fee: upworkConnectionFee,
       convert_fee: convertFee,
       transfer_fee: transferFee,
@@ -585,6 +640,7 @@ export default function AdminTaskPool() {
     let noteExtra = '';
     let nextDue: string | null = row.next_payment_due_at;
     let hourlyAck: string | null = row.hourly_last_ack_week_monday;
+    let milestonesJsonPatch: ReturnType<typeof parseMilestones> | null = null;
 
     if (accrualDialog.kind === 'project') {
       const full = Number(row.budget_amount ?? 0);
@@ -601,6 +657,26 @@ export default function AdminTaskPool() {
       }
       nextDue = advanceRecurringDueJstYmd(row.next_payment_due_at, row.recurring_cadence);
       noteExtra = `Fixed ${row.recurring_cadence} · due ${row.next_payment_due_at} (JST)`;
+    } else if (accrualDialog.kind === 'milestone') {
+      const mid = accrualDialog.milestoneId;
+      if (!mid) {
+        toast({ title: 'Missing milestone', variant: 'destructive' });
+        return;
+      }
+      const ms = parseMilestones(row.milestones_json);
+      const m = ms.find((x) => x.id === mid);
+      if (!m || m.confirmed_at) {
+        toast({ title: 'Milestone unavailable', description: 'Already confirmed or removed.', variant: 'destructive' });
+        return;
+      }
+      const slice = Number(m.amount ?? 0);
+      if (slice <= 0) {
+        toast({ title: 'Milestone amount must be positive', variant: 'destructive' });
+        return;
+      }
+      net = calcWithdrawnAmount({ budgetAmount: slice, ...fees });
+      noteExtra = `Fixed milestone · ${m.title}`;
+      milestonesJsonPatch = ms.map((x) => (x.id === mid ? { ...x, confirmed_at: new Date().toISOString() } : x));
     } else {
       const cap = Number(row.weekly_hours_cap ?? 40);
       const hours = Math.min(Math.max(Number(accrualHours || 0), 0), cap);
@@ -625,7 +701,9 @@ export default function AdminTaskPool() {
           ? 'Task pool (fixed project)'
           : accrualDialog.kind === 'recurring'
             ? 'Task pool (fixed installment)'
-            : 'Task pool (hourly)',
+            : accrualDialog.kind === 'milestone'
+              ? 'Task pool (fixed milestone)'
+              : 'Task pool (hourly)',
       amount: net,
       currency: row.currency || 'USD',
       occurred_at: new Date().toISOString(),
@@ -645,6 +723,7 @@ export default function AdminTaskPool() {
         withdrawn_amount: newWithdrawn,
         next_payment_due_at: accrualDialog.kind === 'recurring' ? nextDue : row.next_payment_due_at,
         hourly_last_ack_week_monday: accrualDialog.kind === 'hourly' ? hourlyAck : row.hourly_last_ack_week_monday,
+        ...(milestonesJsonPatch ? { milestones_json: milestonesJsonPatch } : {}),
         updated_at: new Date().toISOString(),
       })
       .eq('id', row.id)
@@ -823,7 +902,7 @@ export default function AdminTaskPool() {
           <AlertTitle>Confirm accrual (JST)</AlertTitle>
           <AlertDescription>
             <p className="text-sm text-muted-foreground mb-2">
-              One or more tasks need confirmation that the last weekly / bi-weekly / monthly / hourly (Mon–Sun) payment was received. This updates withdrawn and adds an incoming payment row.
+              Confirm installments, milestones, one-off fixed payouts, or hourly weeks (Mon–Sun JST). Each confirmation increases <strong className="text-foreground">withdrawn</strong> on the task and adds an <strong className="text-foreground">incoming</strong> row in Payments.
             </p>
             <div className="flex flex-wrap gap-2">
               {accrualDueItems.map((t) => (
@@ -839,6 +918,9 @@ export default function AdminTaskPool() {
                       setAccrualDialog({ row: t, kind: 'hourly' });
                     } else if (t.budget_type === 'fixed' && taskPoolFixedMode(t) === 'project') {
                       setAccrualDialog({ row: t, kind: 'project' });
+                    } else if (t.budget_type === 'fixed' && taskPoolFixedMode(t) === 'milestone') {
+                      const m = firstPendingMilestone(t);
+                      if (m) setAccrualDialog({ row: t, kind: 'milestone', milestoneId: m.id });
                     } else {
                       setAccrualDialog({ row: t, kind: 'recurring' });
                     }
@@ -850,7 +932,9 @@ export default function AdminTaskPool() {
                       ? 'hourly'
                       : taskPoolFixedMode(t) === 'project'
                         ? 'project'
-                        : t.recurring_cadence}
+                        : taskPoolFixedMode(t) === 'milestone'
+                          ? 'milestone'
+                          : t.recurring_cadence}
                   </Badge>
                 </Button>
               ))}
@@ -936,7 +1020,7 @@ export default function AdminTaskPool() {
                       <p className="font-medium text-foreground line-clamp-2">{row.name}</p>
                       <div className="flex flex-col items-end gap-1 shrink-0">
                         <Badge variant="secondary">{taskPoolItemStatusLabel(row.status)}</Badge>
-                        {taskPoolNeedsAccrualAck(row) ? (
+                        {taskPoolNeedsAccrualAck(row) || hasPendingProjectPayment(row) || hasPendingMilestonePayment(row) ? (
                           <Badge variant="destructive" className="text-[10px]">
                             Accrual due
                           </Badge>
@@ -955,7 +1039,7 @@ export default function AdminTaskPool() {
                       <p className="mt-1 text-xs text-primary/90 capitalize">Stack: {row.main_stack.replace('_', ' ')}</p>
                     ) : null}
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Real: {row.currency} {Number(row.budget_amount ?? 0).toFixed(2)}
+                      Real: {row.currency} {taskPoolContractGross(row).toFixed(2)}
                     </p>
                     <p className="text-xs text-emerald-600">
                       Withdrawn: {row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}
@@ -963,7 +1047,7 @@ export default function AdminTaskPool() {
                     <p className="text-xs text-muted-foreground">
                       Received: {formatIsoInJst(row.task_received_at)}
                     </p>
-                    <p className="mt-2 text-xs text-muted-foreground line-clamp-3">
+                    <p className="mt-2 text-xs text-muted-foreground line-clamp-3 break-words [overflow-wrap:anywhere]">
                       {row.description?.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() || 'No description'}
                     </p>
                   </CardContent>
@@ -988,7 +1072,7 @@ export default function AdminTaskPool() {
                       <td className="px-3 py-2 font-medium">{row.name}</td>
                       <td className="px-3 py-2">{taskPoolItemStatusLabel(row.status)}</td>
                       <td className="px-3 py-2 capitalize">{(row.task_source || '-').replace('_', ' ')}</td>
-                      <td className="px-3 py-2">{row.currency} {Number(row.budget_amount ?? 0).toFixed(2)}</td>
+                      <td className="px-3 py-2">{row.currency} {taskPoolContractGross(row).toFixed(2)}</td>
                       <td className="px-3 py-2 text-emerald-600">{row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}</td>
                     </tr>
                   ))}
@@ -1023,7 +1107,7 @@ export default function AdminTaskPool() {
                     <div className="min-w-0">
                       <p className="truncate font-medium">{row.name}</p>
                       <p className="text-xs text-muted-foreground">
-                        {taskPoolItemStatusLabel(row.status)} · {row.currency} {Number(row.budget_amount ?? 0).toFixed(2)}
+                        {taskPoolItemStatusLabel(row.status)} · {row.currency} {taskPoolContractGross(row).toFixed(2)}
                       </p>
                     </div>
                     <Badge variant="outline" className="shrink-0">{row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}</Badge>
@@ -1050,7 +1134,7 @@ export default function AdminTaskPool() {
                   <div className="min-w-0 flex-1">
                 <CardTitle className="text-xl">{selected.name}</CardTitle>
                 <div
-                  className="prose prose-sm max-w-none text-muted-foreground mt-1 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5 [&_a]:text-primary"
+                  className="prose prose-sm max-w-none text-muted-foreground mt-1 break-words [overflow-wrap:anywhere] [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5 [&_a]:text-primary [&_a]:break-all"
                   dangerouslySetInnerHTML={{ __html: selected.description?.trim() ? selected.description : '<p>No description.</p>' }}
                 />
                     <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -1090,7 +1174,7 @@ export default function AdminTaskPool() {
                     ) : null}
                   </div>
                   <div className="flex flex-wrap gap-2 shrink-0">
-                    {taskPoolNeedsAccrualAck(selected) || hasPendingProjectPayment(selected) ? (
+                    {taskPoolNeedsAccrualAck(selected) || hasPendingProjectPayment(selected) || hasPendingMilestonePayment(selected) ? (
                       <Button
                         size="sm"
                         className="gap-1"
@@ -1100,13 +1184,16 @@ export default function AdminTaskPool() {
                             setAccrualDialog({ row: selected, kind: 'hourly' });
                           } else if (selected.budget_type === 'fixed' && taskPoolFixedMode(selected) === 'project') {
                             setAccrualDialog({ row: selected, kind: 'project' });
+                          } else if (selected.budget_type === 'fixed' && taskPoolFixedMode(selected) === 'milestone') {
+                            const m = firstPendingMilestone(selected);
+                            if (m) setAccrualDialog({ row: selected, kind: 'milestone', milestoneId: m.id });
                           } else {
                             setAccrualDialog({ row: selected, kind: 'recurring' });
                           }
                         }}
                       >
                         <AlertTriangle className="h-3.5 w-3.5" />
-                        Confirm accrual
+                        {taskPoolFixedMode(selected) === 'milestone' ? 'Confirm next milestone' : 'Confirm accrual'}
                       </Button>
                     ) : null}
                     <Button size="sm" variant="outline" className="gap-1" onClick={() => openEdit(selected)}>
@@ -1151,11 +1238,13 @@ export default function AdminTaskPool() {
                         value={
                           selected.budget_type === 'hourly'
                             ? `${selected.currency} ${Number(selected.hourly_rate ?? 0).toFixed(2)}/hr · cap ${Number(selected.weekly_hours_cap ?? 40)}h/wk (JST)`
-                            : `${selected.currency} ${Number(selected.budget_amount ?? 0).toFixed(2)} · fixed ${taskPoolFixedMode(selected)}${
-                                taskPoolFixedMode(selected) === 'recurring' && selected.recurring_cadence
-                                  ? ` · ${selected.recurring_cadence}`
-                                  : ''
-                              }`
+                            : taskPoolFixedMode(selected) === 'milestone'
+                              ? `${selected.currency} ${taskPoolContractGross(selected).toFixed(2)} · fixed milestone (${parseMilestones(selected.milestones_json).length} steps)`
+                              : `${selected.currency} ${Number(selected.budget_amount ?? 0).toFixed(2)} · fixed ${taskPoolFixedMode(selected)}${
+                                  taskPoolFixedMode(selected) === 'recurring' && selected.recurring_cadence
+                                    ? ` · ${selected.recurring_cadence}`
+                                    : ''
+                                }`
                         }
                       />
                       {taskPoolFixedMode(selected) === 'recurring' && selected.next_payment_due_at ? (
@@ -1167,6 +1256,50 @@ export default function AdminTaskPool() {
                         value={`${selected.currency} ${Number(selected.withdrawn_amount ?? 0).toFixed(2)}`}
                       />
                     </div>
+                    {taskPoolFixedMode(selected) === 'milestone' ? (
+                      <div className="rounded-lg border p-3 space-y-2 md:col-span-2">
+                        <p className="text-sm font-medium">Milestones</p>
+                        {parseMilestones(selected.milestones_json).length === 0 ? (
+                          <p className="text-xs text-muted-foreground">No milestones defined.</p>
+                        ) : (
+                          <ul className="space-y-2 text-sm">
+                            {parseMilestones(selected.milestones_json).map((m) => (
+                              <li
+                                key={m.id}
+                                className="flex flex-wrap items-center justify-between gap-2 border-b border-dashed border-border/60 pb-2 last:border-0"
+                              >
+                                <div className="min-w-0">
+                                  <span className="font-medium">{m.title}</span>
+                                  <span className="text-muted-foreground">
+                                    {' '}
+                                    · {selected.currency} {Number(m.amount).toFixed(2)}
+                                  </span>
+                                  {m.confirmed_at ? (
+                                    <Badge variant="secondary" className="ml-2 text-[10px]">
+                                      Confirmed
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant="outline" className="ml-2 text-[10px]">
+                                      Pending
+                                    </Badge>
+                                  )}
+                                </div>
+                                {!m.confirmed_at && Number(m.amount) > 0 ? (
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => setAccrualDialog({ row: selected, kind: 'milestone', milestoneId: m.id })}
+                                  >
+                                    Confirm paid
+                                  </Button>
+                                ) : null}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    ) : null}
                     <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                       <InfoCard icon={Clock} title="Upwork connection fee" value={`${selected.currency} ${Number(selected.upwork_connection_fee ?? 0).toFixed(2)}`} />
                       <InfoCard icon={Clock} title="Convert fee" value={`${selected.currency} ${Number(selected.convert_fee ?? 0).toFixed(2)}`} />
@@ -1350,10 +1483,38 @@ export default function AdminTaskPool() {
             <AlertDialogDescription asChild>
               <div className="space-y-3 text-sm text-muted-foreground">
                 <p>
-                  Only confirm if the last <strong className="text-foreground">weekly / bi-weekly / monthly / hourly (Mon–Sun JST)</strong> amount was
-                  actually received. This will increase <strong className="text-foreground">withdrawn</strong> on the task and add a matching{' '}
-                  <strong className="text-foreground">incoming</strong> row in Payments.
+                  {accrualDialog?.kind === 'milestone' ? (
+                    <>
+                      Confirm that the client paid this <strong className="text-foreground">milestone</strong> (gross). Net after your fee fields is
+                      added to <strong className="text-foreground">withdrawn</strong> and recorded as <strong className="text-foreground">incoming</strong>{' '}
+                      in Payments.
+                    </>
+                  ) : (
+                    <>
+                      Only confirm if the last <strong className="text-foreground">weekly / bi-weekly / monthly / hourly (Mon–Sun JST)</strong> amount
+                      or <strong className="text-foreground">one-off fixed</strong> payment was actually received. This will increase{' '}
+                      <strong className="text-foreground">withdrawn</strong> on the task and add a matching <strong className="text-foreground">incoming</strong>{' '}
+                      row in Payments.
+                    </>
+                  )}
                 </p>
+                {accrualDialog?.kind === 'milestone' && accrualDialog.milestoneId ? (
+                  <p className="text-foreground font-medium">
+                    {(() => {
+                      const m = parseMilestones(accrualDialog.row.milestones_json).find((x) => x.id === accrualDialog.milestoneId);
+                      if (!m) return 'Milestone';
+                      const net = calcWithdrawnAmount({
+                        budgetAmount: Number(m.amount),
+                        upworkConnectionFee: Number(accrualDialog.row.upwork_connection_fee ?? 0),
+                        convertFee: Number(accrualDialog.row.convert_fee ?? 0),
+                        transferFee: Number(accrualDialog.row.transfer_fee ?? 0),
+                        upworkFee: Number(accrualDialog.row.upwork_fee ?? 0),
+                        withdrawFee: Number(accrualDialog.row.withdraw_fee ?? 0),
+                      });
+                      return `${m.title}: ${accrualDialog.row.currency} ${Number(m.amount).toFixed(2)} gross → ${net.toFixed(2)} net to withdrawn`;
+                    })()}
+                  </p>
+                ) : null}
                 {accrualDialog?.kind === 'hourly' ? (
                   <div className="space-y-2">
                     <Label>Billable hours this week (max {accrualDialog.row.weekly_hours_cap ?? 40})</Label>
@@ -1465,7 +1626,10 @@ export default function AdminTaskPool() {
                       v === 'none'
                         ? p.clientCountry
                         : canonicalCountryNameOrLegacy(c?.country || '') || p.clientCountry,
-                    clientTimezone: v === 'none' ? p.clientTimezone : c?.timezone || p.clientTimezone,
+                    clientTimezone:
+                      v === 'none'
+                        ? p.clientTimezone
+                        : canonicalTimezoneOrLegacy(c?.timezone || '') || p.clientTimezone,
                   }));
                 }}
               >
@@ -1492,10 +1656,11 @@ export default function AdminTaskPool() {
               value={form.clientCountry}
               onChange={(clientCountry) => setForm((p) => ({ ...p, clientCountry }))}
             />
-            <div className="space-y-2">
-              <Label>Client timezone</Label>
-              <Input value={form.clientTimezone} onChange={(e) => setForm((p) => ({ ...p, clientTimezone: e.target.value }))} />
-            </div>
+            <TimezoneSelect
+              label="Client timezone"
+              value={form.clientTimezone}
+              onChange={(clientTimezone) => setForm((p) => ({ ...p, clientTimezone }))}
+            />
             <div className="space-y-2 md:col-span-2">
               <Label>Account</Label>
               <Select value={form.accountId || 'none'} onValueChange={(v) => setForm((p) => ({ ...p, accountId: v === 'none' ? '' : v }))}>
@@ -1548,18 +1713,27 @@ export default function AdminTaskPool() {
                 <Select
                   value={form.fixedBudgetMode}
                   onValueChange={(v) =>
-                    setForm((p) => ({
-                      ...p,
-                      fixedBudgetMode: v as 'project' | 'recurring',
-                      recurringCadence: v === 'recurring' && !p.recurringCadence ? 'weekly' : p.recurringCadence,
-                    }))
+                    setForm((p) => {
+                      const mode = v as 'project' | 'recurring' | 'milestone';
+                      return {
+                        ...p,
+                        fixedBudgetMode: mode,
+                        recurringCadence:
+                          mode === 'recurring' && !p.recurringCadence ? 'weekly' : mode === 'recurring' ? p.recurringCadence : '',
+                        milestones:
+                          mode === 'milestone' && p.milestones.length === 0
+                            ? [{ id: crypto.randomUUID(), title: '', amount: '', confirmedAt: null }]
+                            : p.milestones,
+                      };
+                    })
                   }
                 >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="project">Single total for the project</SelectItem>
+                    <SelectItem value="project">Contract amount (single total)</SelectItem>
+                    <SelectItem value="milestone">By milestone (total = sum of milestones)</SelectItem>
                     <SelectItem value="recurring">Installment (weekly / bi-weekly / monthly, JST)</SelectItem>
                   </SelectContent>
                 </Select>
@@ -1569,6 +1743,106 @@ export default function AdminTaskPool() {
               <div className="space-y-2 md:col-span-2">
                 <Label>Contract amount (total)</Label>
                 <Input type="number" value={form.budgetAmount} onChange={(e) => setForm((p) => ({ ...p, budgetAmount: e.target.value }))} />
+              </div>
+            ) : null}
+            {form.budgetType === 'fixed' && form.fixedBudgetMode === 'milestone' ? (
+              <div className="space-y-3 md:col-span-2">
+                <div className="space-y-2">
+                  <Label>Contract amount (total)</Label>
+                  <Input
+                    readOnly
+                    className="bg-muted/40"
+                    value={`${form.currency || 'USD'} ${sumMilestoneGross(
+                      form.milestones
+                        .filter((m) => m.title.trim() || Number(m.amount) > 0)
+                        .map((m) => ({
+                          id: m.id,
+                          title: m.title.trim() || 'Milestone',
+                          amount: Math.max(0, Number(m.amount) || 0),
+                          confirmed_at: m.confirmedAt,
+                        })),
+                    ).toFixed(2)} (sum of milestones)`}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <Label>Milestones</Label>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      onClick={() =>
+                        setForm((p) => ({
+                          ...p,
+                          milestones: [...p.milestones, { id: crypto.randomUUID(), title: '', amount: '', confirmedAt: null }],
+                        }))
+                      }
+                    >
+                      Add milestone
+                    </Button>
+                  </div>
+                  <div className="space-y-2 rounded-md border p-3">
+                    {form.milestones.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">No milestones yet — add one.</p>
+                    ) : (
+                      form.milestones.map((m, idx) => (
+                        <div key={m.id} className="flex flex-wrap items-end gap-2 border-b border-dashed pb-2 last:border-b-0">
+                          <div className="space-y-1 flex-1 min-w-[140px]">
+                            <span className="text-[11px] text-muted-foreground">Title</span>
+                            <Input
+                              value={m.title}
+                              disabled={!!m.confirmedAt}
+                              onChange={(e) =>
+                                setForm((p) => {
+                                  const next = [...p.milestones];
+                                  next[idx] = { ...next[idx], title: e.target.value };
+                                  return { ...p, milestones: next };
+                                })
+                              }
+                              placeholder={`Milestone ${idx + 1}`}
+                            />
+                          </div>
+                          <div className="space-y-1 w-[120px]">
+                            <span className="text-[11px] text-muted-foreground">Amount</span>
+                            <Input
+                              type="number"
+                              value={m.amount}
+                              disabled={!!m.confirmedAt}
+                              onChange={(e) =>
+                                setForm((p) => {
+                                  const next = [...p.milestones];
+                                  next[idx] = { ...next[idx], amount: e.target.value };
+                                  return { ...p, milestones: next };
+                                })
+                              }
+                            />
+                          </div>
+                          <div className="flex items-center gap-2 pb-1">
+                            {m.confirmedAt ? (
+                              <Badge variant="secondary" className="text-[10px] shrink-0">
+                                Paid
+                              </Badge>
+                            ) : (
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="ghost"
+                                className="shrink-0 text-destructive"
+                                onClick={() => setForm((p) => ({ ...p, milestones: p.milestones.filter((_, j) => j !== idx) }))}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Saved <strong className="text-foreground">budget_amount</strong> matches this total. Confirm each milestone on the task detail page to
+                    update withdrawn and add incoming rows in Payments.
+                  </p>
+                </div>
               </div>
             ) : null}
             {form.budgetType === 'fixed' && form.fixedBudgetMode === 'recurring' ? (
@@ -1644,7 +1918,9 @@ export default function AdminTaskPool() {
               <p className="text-xs text-muted-foreground">
                 {form.budgetType === 'fixed' && form.fixedBudgetMode === 'project'
                   ? 'Project fixed: withdrawn stays unchanged until you confirm payment receipt.'
-                  : 'Accrual (recurring or hourly): total only goes up when you confirm each period; fees below apply to each accrual slice.'}
+                  : form.budgetType === 'fixed' && form.fixedBudgetMode === 'milestone'
+                    ? 'Milestone fixed: withdrawn increases when you confirm each milestone; fees apply per milestone payment.'
+                    : 'Accrual (recurring or hourly): total only goes up when you confirm each period; fees below apply to each accrual slice.'}
               </p>
             </div>
             <div className="space-y-2 md:col-span-2">

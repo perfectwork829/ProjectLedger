@@ -9,13 +9,14 @@ type RichTextEditorProps = {
   className?: string;
 };
 
+const ReactQuill = React.lazy(() => import('react-quill-new'));
+
 export function RichTextEditor({ value, onChange, placeholder, className }: RichTextEditorProps) {
-  const ReactQuill = React.lazy(() => import('react-quill-new'));
   return (
     <React.Suspense
       fallback={
         <div className={cn('h-[200px] border rounded-md flex items-center justify-center text-sm text-muted-foreground', className)}>
-          Loading editorâ€¦
+          Loading editor…
         </div>
       }
     >
@@ -33,7 +34,7 @@ export function RichTextEditor({ value, onChange, placeholder, className }: Rich
               ['clean'],
             ],
           }}
-          placeholder={placeholder || 'Write hereâ€¦'}
+          placeholder={placeholder || 'Write here…'}
         />
       </div>
     </React.Suspense>

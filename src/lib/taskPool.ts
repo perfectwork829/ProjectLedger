@@ -89,9 +89,11 @@ export interface TaskPoolItemRecord {
   task_received_at: string | null;
   deadline: string | null;
   budget_type: 'fixed' | 'hourly';
-  /** When `fixed` + `recurring`, amount per installment; when `fixed` + `project`, total contract; when `hourly`, optional weekly cap in currency (informational). */
+  /** When `fixed` + `recurring`, amount per installment; when `fixed` + `project`, total contract; when `fixed` + `milestone`, sum of milestone amounts; when `hourly`, optional weekly cap in currency (informational). */
   budget_amount: number | null;
-  fixed_budget_mode: 'project' | 'recurring';
+  fixed_budget_mode: 'project' | 'recurring' | 'milestone';
+  /** When `fixed_budget_mode` is `milestone`, line items with optional `confirmed_at` (ISO) after payment ack. */
+  milestones_json: unknown;
   recurring_cadence: 'weekly' | 'biweekly' | 'monthly' | null;
   next_payment_due_at: string | null;
   hourly_rate: number | null;
@@ -188,8 +190,62 @@ export function serializeLabeledLinks(links: LabeledLink[]): LabeledLink[] {
     .filter((l) => l.url);
 }
 
-export function taskPoolFixedMode(row: TaskPoolItemRecord): 'project' | 'recurring' {
-  return row.fixed_budget_mode ?? 'project';
+export interface TaskMilestone {
+  id: string;
+  title: string;
+  amount: number;
+  confirmed_at: string | null;
+}
+
+export function parseMilestones(raw: unknown): TaskMilestone[] {
+  if (!Array.isArray(raw)) return [];
+  const out: TaskMilestone[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const rec = item as Record<string, unknown>;
+    const title = String(rec.title ?? '').trim() || 'Milestone';
+    const amount = Number(rec.amount ?? 0);
+    const confirmed = rec.confirmed_at;
+    const confirmed_at = typeof confirmed === 'string' && confirmed.trim() ? confirmed.trim() : null;
+    let id = String(rec.id ?? '').trim();
+    if (!id) {
+      id =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `m-${out.length}-${Date.now()}`;
+    }
+    out.push({ id, title, amount, confirmed_at });
+  }
+  return out;
+}
+
+export function sumMilestoneGross(milestones: TaskMilestone[]): number {
+  return milestones.reduce((s, m) => s + Math.max(0, Number(m.amount) || 0), 0);
+}
+
+export function taskPoolFixedMode(row: TaskPoolItemRecord): 'project' | 'recurring' | 'milestone' {
+  const m = row.fixed_budget_mode ?? 'project';
+  if (m === 'recurring' || m === 'milestone') return m;
+  return 'project';
+}
+
+/** Gross contract amount for display and summaries (milestone = sum of milestones). */
+export function taskPoolContractGross(row: TaskPoolItemRecord): number {
+  if (row.budget_type === 'fixed' && taskPoolFixedMode(row) === 'milestone') {
+    return sumMilestoneGross(parseMilestones(row.milestones_json));
+  }
+  return Number(row.budget_amount ?? 0);
+}
+
+export function firstPendingMilestone(row: TaskPoolItemRecord): TaskMilestone | null {
+  if (row.budget_type !== 'fixed' || taskPoolFixedMode(row) !== 'milestone') return null;
+  return (
+    parseMilestones(row.milestones_json).find((m) => !m.confirmed_at && Number(m.amount) > 0) ?? null
+  );
+}
+
+export function hasPendingMilestonePayment(row: TaskPoolItemRecord): boolean {
+  return firstPendingMilestone(row) !== null && !['completed', 'cancelled'].includes(row.status);
 }
 
 export function taskUsesAccrualPayments(row: TaskPoolItemRecord): boolean {

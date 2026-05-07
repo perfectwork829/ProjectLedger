@@ -24,6 +24,10 @@ import {
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import ModuleSearchBar from '@/components/ModuleSearchBar';
 import { CloudGoogleDriveUpload } from '@/components/CloudGoogleDriveUpload';
+import { CountrySelect } from '@/components/CountrySelect';
+import { TimezoneSelect } from '@/components/TimezoneSelect';
+import { canonicalCountryNameOrLegacy } from '@/lib/countries';
+import { canonicalTimezoneOrLegacy } from '@/lib/timezones';
 import {
   AccountRef,
   ClientRef,
@@ -203,8 +207,8 @@ export default function AdminProjects() {
       priority: project.priority,
       clientId: project.client_id || '',
       clientNameOverride: project.client_name_override || '',
-      clientCountry: project.client_country || '',
-      clientTimezone: project.client_timezone || '',
+      clientCountry: canonicalCountryNameOrLegacy(project.client_country || ''),
+      clientTimezone: canonicalTimezoneOrLegacy(project.client_timezone || ''),
       accountId: project.account_id || '',
       chatHistory: project.chat_history || '',
       metadataJson: project.metadata_json ? JSON.stringify(project.metadata_json, null, 2) : '{}',
@@ -737,13 +741,19 @@ export default function AdminProjects() {
               setForm((p) => ({
                 ...p,
                 clientId: v === 'none' ? '' : v,
-                clientCountry: selected?.country || p.clientCountry,
-                clientTimezone: selected?.timezone || p.clientTimezone,
+                clientCountry:
+                  v === 'none'
+                    ? p.clientCountry
+                    : canonicalCountryNameOrLegacy(selected?.country || '') || p.clientCountry,
+                clientTimezone:
+                  v === 'none'
+                    ? p.clientTimezone
+                    : canonicalTimezoneOrLegacy(selected?.timezone || '') || p.clientTimezone,
               }));
             }}><SelectTrigger><SelectValue placeholder="Select client" /></SelectTrigger><SelectContent><SelectItem value="none">None</SelectItem>{clients.map((c) => <SelectItem key={c.id} value={c.id}>{c.first_name} {c.last_name}{c.company_name ? ` (${c.company_name})` : ''}</SelectItem>)}</SelectContent></Select></div>
             <div className="space-y-2"><Label>Client name (manual)</Label><Input value={form.clientNameOverride} onChange={(e) => setForm((p) => ({ ...p, clientNameOverride: e.target.value }))} placeholder="Use when not in client module" /></div>
-            <div className="space-y-2"><Label>Client country</Label><Input value={form.clientCountry} onChange={(e) => setForm((p) => ({ ...p, clientCountry: e.target.value }))} /></div>
-            <div className="space-y-2"><Label>Client timezone</Label><Input value={form.clientTimezone} onChange={(e) => setForm((p) => ({ ...p, clientTimezone: e.target.value }))} /></div>
+            <CountrySelect label="Client country" value={form.clientCountry} onChange={(clientCountry) => setForm((p) => ({ ...p, clientCountry }))} />
+            <TimezoneSelect label="Client timezone" value={form.clientTimezone} onChange={(clientTimezone) => setForm((p) => ({ ...p, clientTimezone }))} />
 
             <div className="space-y-2"><Label>Account linkage</Label><Select value={form.accountId} onValueChange={(v) => setForm((p) => ({ ...p, accountId: v === 'none' ? '' : v }))}><SelectTrigger><SelectValue placeholder="Select account" /></SelectTrigger><SelectContent><SelectItem value="none">None</SelectItem>{accounts.map((a) => <SelectItem key={a.id} value={a.id}>{a.platform} @{a.username}</SelectItem>)}</SelectContent></Select></div>
             <div className="space-y-2"><Label>Deadline</Label><Input type="datetime-local" value={form.deadline} onChange={(e) => setForm((p) => ({ ...p, deadline: e.target.value }))} /></div>

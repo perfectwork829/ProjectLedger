@@ -26,7 +26,7 @@ export interface TaskFinanceRow {
   task_received_at: string | null;
   created_at: string;
   budget_type: 'fixed' | 'hourly';
-  fixed_budget_mode?: 'project' | 'recurring' | null;
+  fixed_budget_mode?: 'project' | 'recurring' | 'milestone' | null;
   withdrawn_amount: number | null;
   upwork_connection_fee: number;
   convert_fee: number;

@@ -31,7 +31,7 @@ import {
 import {
   isWithinRange,
 } from '@/lib/taskPoolFinance';
-import { taskPoolItemStatusLabel, TASK_POOL_ITEM_STATUS_OPTIONS } from '@/lib/taskPool';
+import { taskPoolItemStatusLabel, TASK_POOL_ITEM_STATUS_OPTIONS, taskPoolContractGross, type TaskPoolItemRecord } from '@/lib/taskPool';
 
 type TaskOverviewRow = {
   id: string;
@@ -41,8 +41,9 @@ type TaskOverviewRow = {
   created_at: string;
   status: string;
   budget_type: 'fixed' | 'hourly';
-  fixed_budget_mode?: 'project' | 'recurring' | null;
+  fixed_budget_mode?: 'project' | 'recurring' | 'milestone' | null;
   budget_amount: number | null;
+  milestones_json?: unknown;
   withdrawn_amount: number | null;
   upwork_connection_fee: number;
   convert_fee: number;
@@ -143,7 +144,7 @@ export default function DashboardOverview() {
           supabase
             .from('task_pool_items')
             .select(
-              'id,name,currency,task_received_at,created_at,status,budget_type,fixed_budget_mode,budget_amount,withdrawn_amount,upwork_connection_fee,convert_fee,transfer_fee,upwork_fee,withdraw_fee,deadline',
+              'id,name,currency,task_received_at,created_at,status,budget_type,fixed_budget_mode,budget_amount,milestones_json,withdrawn_amount,upwork_connection_fee,convert_fee,transfer_fee,upwork_fee,withdraw_fee,deadline',
             )
             .order('created_at', { ascending: false }),
           supabase.from('payment_entries').select('*').order('occurred_at', { ascending: false }),
@@ -208,7 +209,14 @@ export default function DashboardOverview() {
 
   const tasksCompletedThisMonthCount = useMemo(() => tasksThisMonth.filter((t) => t.status === 'completed').length, [tasksThisMonth]);
 
-  const tasksRealBudgetThisMonth = useMemo(() => tasksThisMonth.reduce((sum, t) => sum + Number(t.budget_amount ?? 0), 0), [tasksThisMonth]);
+  const tasksRealBudgetThisMonth = useMemo(
+    () =>
+      tasksThisMonth.reduce(
+        (sum, t) => sum + taskPoolContractGross(t as unknown as TaskPoolItemRecord),
+        0,
+      ),
+    [tasksThisMonth],
+  );
   const tasksWithdrawnBudgetThisMonth = useMemo(() => tasksThisMonth.reduce((sum, t) => sum + Number(t.withdrawn_amount ?? 0), 0), [tasksThisMonth]);
 
   const taskStatusCounts = useMemo(() => {

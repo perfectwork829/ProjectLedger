@@ -1,4 +1,5 @@
 import type { TaskPoolItemRecord } from '@/lib/taskPool';
+import { taskPoolContractGross } from '@/lib/taskPool';
 
 export type TaskPoolListFilter =
   | 'all'
@@ -69,7 +70,7 @@ export function summarizeTaskPool(items: TaskPoolItemRecord[]): { count: number;
   return items.reduce(
     (acc, item) => {
       acc.count += 1;
-      acc.realBudget += Number(item.budget_amount ?? 0);
+      acc.realBudget += taskPoolContractGross(item);
       acc.withdrawnBudget += Number(item.withdrawn_amount ?? 0);
       return acc;
     },

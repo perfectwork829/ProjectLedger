@@ -28,6 +28,7 @@ import {
   type TaskPoolItemRecord,
   type TaskPoolScreenshot,
   type TaskPoolSourceFile,
+  taskPoolContractGross,
 } from '@/lib/taskPool';
 import {
   getLastPeriodBounds,
@@ -69,7 +70,7 @@ export default function TaskPool() {
 
   const [searchInput, setSearchInput] = useState('');
   const [listFilter, setListFilter] = useState<TaskPoolListFilter>('working');
-  const [viewMode, setViewMode] = useState<'card' | 'list' | 'line' | 'table'>('table');
+  const [viewMode, setViewMode] = useState<'card' | 'list' | 'line' | 'table'>('line');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -399,7 +400,7 @@ export default function TaskPool() {
                       <p className="mt-1 text-xs text-primary/90 capitalize">Stack: {row.main_stack.replace('_', ' ')}</p>
                     ) : null}
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Real: {row.currency} {Number(row.budget_amount ?? 0).toFixed(2)}
+                      Real: {row.currency} {taskPoolContractGross(row).toFixed(2)}
                     </p>
                     <p className="text-xs text-emerald-600">
                       Withdrawn: {row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}
@@ -407,7 +408,7 @@ export default function TaskPool() {
                     <p className="text-xs text-muted-foreground">
                       Received: {formatJstYmdFromIso(row.task_received_at)}
                     </p>
-                    <p className="mt-2 text-xs text-muted-foreground line-clamp-3">{row.description || 'No description'}</p>
+                    <p className="mt-2 text-xs text-muted-foreground line-clamp-3 break-words [overflow-wrap:anywhere]">{row.description || 'No description'}</p>
                   </CardContent>
                 </Card>
               ))}
@@ -432,7 +433,7 @@ export default function TaskPool() {
                       <td className="px-3 py-2">{taskPoolItemStatusLabel(row.status)}</td>
                       <td className="px-3 py-2 capitalize">{(row.task_source || '-').replace('_', ' ')}</td>
                       <td className="px-3 py-2">{formatJstYmdFromIso(row.task_received_at)}</td>
-                      <td className="px-3 py-2">{row.currency} {Number(row.budget_amount ?? 0).toFixed(2)}</td>
+                      <td className="px-3 py-2">{row.currency} {taskPoolContractGross(row).toFixed(2)}</td>
                       <td className="px-3 py-2 text-emerald-600">{row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}</td>
                     </tr>
                   ))}
@@ -467,7 +468,7 @@ export default function TaskPool() {
                     <div className="min-w-0">
                       <p className="truncate font-medium">{row.name}</p>
                       <p className="text-xs text-muted-foreground">
-                        {taskPoolItemStatusLabel(row.status)} · {row.currency} {Number(row.budget_amount ?? 0).toFixed(2)}
+                        {taskPoolItemStatusLabel(row.status)} · {row.currency} {taskPoolContractGross(row).toFixed(2)}
                       </p>
                     </div>
                     <Badge variant="outline" className="shrink-0">{row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}</Badge>
@@ -510,7 +511,7 @@ export default function TaskPool() {
                   )}
                 </div>
                 <div
-                  className="prose prose-sm max-w-none text-muted-foreground mt-1 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5 [&_a]:text-primary"
+                  className="prose prose-sm max-w-none text-muted-foreground mt-1 break-words [overflow-wrap:anywhere] [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5 [&_a]:text-primary [&_a]:break-all"
                   dangerouslySetInnerHTML={{
                     __html: selected.description?.trim() ? selected.description : '<p>No description.</p>',
                   }}
@@ -533,7 +534,7 @@ export default function TaskPool() {
                   <span>Account: {accountLabel(selected)}</span>
                   <span>Deadline: {selected.deadline ? new Date(selected.deadline).toLocaleDateString() : 'N/A'}</span>
                   <span>Received: {formatJstYmdFromIso(selected.task_received_at)}</span>
-                  <span>Real budget: {selected.currency} {Number(selected.budget_amount ?? 0).toFixed(2)}</span>
+                  <span>Real budget: {selected.currency} {taskPoolContractGross(selected).toFixed(2)}</span>
                   <span>Withdrawn: {selected.currency} {Number(selected.withdrawn_amount ?? 0).toFixed(2)}</span>
                 </div>
                 <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
