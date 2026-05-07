@@ -1,5 +1,4 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
-import 'react-quill-new/dist/quill.snow.css';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -28,6 +27,8 @@ import { useToast } from '@/hooks/use-toast';
 import type { IdentityDocuments } from '@/lib/identityDocuments';
 import { identityDocumentsForDb, formatBirthday, normalizeIdentityDocuments } from '@/lib/identityDocuments';
 import { cn } from '@/lib/utils';
+import { RichTextEditor } from '@/components/RichTextEditor';
+import { CloudGoogleDriveUpload } from '@/components/CloudGoogleDriveUpload';
 
 interface Personnel {
   id: string;
@@ -90,6 +91,11 @@ interface Personnel {
   preferred_payments: string | null;
   working_type: string | null;
   good_fit: boolean | null;
+  profile_titles_json?: unknown;
+  profile_overviews_json?: unknown;
+  profile_skills_json?: unknown;
+  profile_achievements_json?: unknown;
+  profile_blocks_json?: unknown;
   created_at: string;
 }
 
@@ -100,6 +106,42 @@ const SEX_OPTIONS = [
 ];
 
 interface UniEntry { name: string; course: string; start_date: string; end_date: string }
+interface WorkHistoryEntry { title: string; overview: string; start_date: string; end_date: string }
+interface ProfileBlock {
+  title: string;
+  overview: string;
+  skills: string[];
+  achievements: string[];
+  experience: WorkHistoryEntry[];
+}
+
+function parseTextItems(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((x) => String(x || '').trim()).filter(Boolean);
+}
+
+function parseProfileBlocks(raw: unknown): ProfileBlock[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((x) => {
+    const obj = (x || {}) as Record<string, unknown>;
+    const expRaw = Array.isArray(obj.experience) ? obj.experience : [];
+    return {
+      title: String(obj.title || ''),
+      overview: String(obj.overview || ''),
+      skills: parseTextItems(obj.skills),
+      achievements: parseTextItems(obj.achievements),
+      experience: expRaw.map((e) => {
+        const eo = (e || {}) as Record<string, unknown>;
+        return {
+          title: String(eo.title || ''),
+          overview: String(eo.overview || ''),
+          start_date: String(eo.start_date || ''),
+          end_date: String(eo.end_date || ''),
+        };
+      }),
+    };
+  });
+}
 
 function UniversityEditor({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const entries: UniEntry[] = value ? (() => { try { return JSON.parse(value); } catch { return []; } })() : [];
@@ -133,6 +175,7 @@ function UniversityEditor({ value, onChange }: { value: string; onChange: (v: st
 
 const ROLES = [
   { value: 'caller', label: 'Caller', icon: '📞', color: 'bg-blue-500' },
+  { value: 'developer_for_job', label: 'Developer For Job', icon: '🧑‍💼', color: 'bg-cyan-500' },
   { value: 'developer', label: 'Developer', icon: '💻', color: 'bg-emerald-500' },
   { value: 'broker', label: 'Broker', icon: '🤝', color: 'bg-amber-500' },
   { value: 'recruiter', label: 'Recruiter', icon: '🎯', color: 'bg-rose-500' },
@@ -253,6 +296,11 @@ const emptyForm = {
   activity_notes: '', working_project_name: '', working_history: '' as string,
   main_skill_list: '' as string, met_place: '', notes: '',
   overview: '', languages: '' as string,
+  profile_titles_json: '[]',
+  profile_overviews_json: '[]',
+  profile_skills_json: '[]',
+  profile_achievements_json: '[]',
+  profile_blocks_json: '[]',
   hourly_rate_main: '', hourly_rate_discussed: '', expected_monthly_salary: '',
   preferred_payments: [] as string[],
   working_type: 'individual', good_fit: false as boolean,
@@ -299,28 +347,182 @@ function DetailSection({ icon: Icon, title, children }: { icon: React.ElementTyp
   );
 }
 
-function RichTextEditor({ value, onChange, placeholder }: { value: string; onChange: (val: string) => void; placeholder?: string }) {
-  const ReactQuill = React.lazy(() => import('react-quill-new'));
+function parseWorkHistoryEntries(raw: string): WorkHistoryEntry[] {
+  if (!raw) return [];
+  try {
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return [];
+    return arr.map((x) => ({
+      title: String((x as { title?: unknown })?.title || ''),
+      overview: String((x as { overview?: unknown })?.overview || ''),
+      start_date: String((x as { start_date?: unknown })?.start_date || ''),
+      end_date: String((x as { end_date?: unknown })?.end_date || ''),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function WorkHistoryEditor({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const entries = parseWorkHistoryEntries(value);
+  const update = (next: WorkHistoryEntry[]) => onChange(JSON.stringify(next));
+  const add = () => update([...entries, { title: '', overview: '', start_date: '', end_date: '' }]);
+  const remove = (idx: number) => update(entries.filter((_, i) => i !== idx));
+  const patch = (idx: number, key: keyof WorkHistoryEntry, nextVal: string) => {
+    const next = [...entries];
+    next[idx] = { ...next[idx], [key]: nextVal };
+    update(next);
+  };
   return (
-    <React.Suspense fallback={<div className="h-[200px] border rounded-md flex items-center justify-center text-sm text-muted-foreground">Loading editor...</div>}>
-      <div className="rich-editor [&_.ql-editor]:min-h-[180px]">
-        <ReactQuill
-          theme="snow"
-          value={value}
-          onChange={onChange}
-          modules={{
-            toolbar: [
-              [{ header: [1, 2, 3, false] }],
-              ['bold', 'italic', 'underline', 'strike'],
-              [{ list: 'ordered' }, { list: 'bullet' }],
-              ['link'],
-              ['clean'],
-            ],
-          }}
-          placeholder={placeholder || "Write here..."}
-        />
+    <div className="space-y-3">
+      {entries.map((entry, i) => (
+        <div key={i} className="rounded-md border p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium">History #{i + 1}</p>
+            <Button size="icon" variant="ghost" onClick={() => remove(i)} className="h-6 w-6 text-destructive">
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+          <Input value={entry.title} onChange={(e) => patch(i, 'title', e.target.value)} placeholder="Title (e.g. Fullstack Developer)" />
+          <Textarea value={entry.overview} onChange={(e) => patch(i, 'overview', e.target.value)} rows={3} placeholder="Overview of responsibilities and results..." />
+          <div className="grid grid-cols-2 gap-2">
+            <Input type="date" value={entry.start_date} onChange={(e) => patch(i, 'start_date', e.target.value)} />
+            <Input type="date" value={entry.end_date} onChange={(e) => patch(i, 'end_date', e.target.value)} />
+          </div>
+        </div>
+      ))}
+      <Button type="button" variant="outline" size="sm" className="gap-1" onClick={add}>
+        <Plus className="h-3.5 w-3.5" />
+        Add Working History
+      </Button>
+    </div>
+  );
+}
+
+function ProfileBlocksEditor({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [active, setActive] = useState(0);
+  const blocks = useMemo(() => {
+    try {
+      return parseProfileBlocks(JSON.parse(value || '[]'));
+    } catch {
+      return [] as ProfileBlock[];
+    }
+  }, [value]);
+  const safeBlocks = blocks.length > 0 ? blocks : [{ title: '', overview: '', skills: [], achievements: [], experience: [] }];
+  const activeIndex = Math.min(active, safeBlocks.length - 1);
+  const current = safeBlocks[activeIndex];
+  const save = (next: ProfileBlock[]) => onChange(JSON.stringify(next));
+  const patchBlock = (idx: number, patch: Partial<ProfileBlock>) => {
+    const next = [...safeBlocks];
+    next[idx] = { ...next[idx], ...patch };
+    save(next);
+  };
+  const addBlock = () => {
+    const next = [...safeBlocks, { title: '', overview: '', skills: [], achievements: [], experience: [] }];
+    save(next);
+    setActive(next.length - 1);
+  };
+  const removeBlock = (idx: number) => {
+    const next = safeBlocks.filter((_, i) => i !== idx);
+    save(next.length ? next : [{ title: '', overview: '', skills: [], achievements: [], experience: [] }]);
+    setActive(Math.max(0, idx - 1));
+  };
+  const setSkillsText = (txt: string) => patchBlock(activeIndex, { skills: txt.split(',').map((s) => s.trim()).filter(Boolean) });
+  const setAchievementsText = (txt: string) => patchBlock(activeIndex, { achievements: txt.split('\n').map((s) => s.trim()).filter(Boolean) });
+  const addExp = () => patchBlock(activeIndex, { experience: [...current.experience, { title: '', overview: '', start_date: '', end_date: '' }] });
+  const patchExp = (idx: number, patch: Partial<WorkHistoryEntry>) => {
+    const exp = [...current.experience];
+    exp[idx] = { ...exp[idx], ...patch };
+    patchBlock(activeIndex, { experience: exp });
+  };
+  const removeExp = (idx: number) => patchBlock(activeIndex, { experience: current.experience.filter((_, i) => i !== idx) });
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-2">
+        {safeBlocks.map((_, i) => (
+          <Button key={i} type="button" size="sm" variant={i === activeIndex ? 'default' : 'outline'} onClick={() => setActive(i)}>
+            Profile Tab {i + 1}
+          </Button>
+        ))}
+        <Button type="button" size="sm" variant="outline" className="gap-1" onClick={addBlock}><Plus className="h-3.5 w-3.5" />Add Tab</Button>
+        {safeBlocks.length > 1 ? (
+          <Button type="button" size="sm" variant="ghost" className="text-destructive" onClick={() => removeBlock(activeIndex)}>
+            Remove Current
+          </Button>
+        ) : null}
       </div>
-    </React.Suspense>
+      <div className="rounded-md border p-3 space-y-3">
+        <div className="space-y-2"><Label>Title</Label><Input value={current.title} onChange={(e) => patchBlock(activeIndex, { title: e.target.value })} /></div>
+        <div className="space-y-2"><Label>Overview</Label><Textarea rows={3} value={current.overview} onChange={(e) => patchBlock(activeIndex, { overview: e.target.value })} /></div>
+        <div className="space-y-2"><Label>Skills (comma separated)</Label><Input value={current.skills.join(', ')} onChange={(e) => setSkillsText(e.target.value)} /></div>
+        <div className="space-y-2"><Label>Achievements (one per line)</Label><Textarea rows={3} value={current.achievements.join('\n')} onChange={(e) => setAchievementsText(e.target.value)} /></div>
+        <div className="space-y-2">
+          <Label>Experience</Label>
+          {current.experience.map((ex, i) => (
+            <div key={i} className="rounded border p-2 space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-muted-foreground">Experience #{i + 1}</p>
+                <Button type="button" size="icon" variant="ghost" className="h-6 w-6 text-destructive" onClick={() => removeExp(i)}><X className="h-3.5 w-3.5" /></Button>
+              </div>
+              <Input placeholder="Title" value={ex.title} onChange={(e) => patchExp(i, { title: e.target.value })} />
+              <Textarea rows={2} placeholder="Overview" value={ex.overview} onChange={(e) => patchExp(i, { overview: e.target.value })} />
+              <div className="grid grid-cols-2 gap-2">
+                <Input type="date" value={ex.start_date} onChange={(e) => patchExp(i, { start_date: e.target.value })} />
+                <Input type="date" value={ex.end_date} onChange={(e) => patchExp(i, { end_date: e.target.value })} />
+              </div>
+            </div>
+          ))}
+          <Button type="button" variant="outline" size="sm" className="gap-1" onClick={addExp}><Plus className="h-3.5 w-3.5" />Add Experience</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TextItemsEditor({
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+}) {
+  const items = (() => {
+    try {
+      const parsed = JSON.parse(value || '[]');
+      if (!Array.isArray(parsed)) return [] as string[];
+      return parsed.map((x) => String(x || '')).filter(Boolean);
+    } catch {
+      return [] as string[];
+    }
+  })();
+  const update = (next: string[]) => onChange(JSON.stringify(next));
+  const add = () => update([...(items || []), '']);
+  const patch = (idx: number, nextVal: string) => {
+    const next = [...(items || [])];
+    next[idx] = nextVal;
+    update(next);
+  };
+  const remove = (idx: number) => update((items || []).filter((_, i) => i !== idx));
+  return (
+    <div className="space-y-2">
+      <Label>{label}</Label>
+      {(items || []).map((item, i) => (
+        <div key={i} className="flex items-start gap-2">
+          <Textarea value={item} onChange={(e) => patch(i, e.target.value)} rows={2} placeholder={placeholder} />
+          <Button size="icon" variant="ghost" onClick={() => remove(i)} className="h-8 w-8 text-destructive">
+            <X className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      ))}
+      <Button type="button" variant="outline" size="sm" className="gap-1" onClick={add}>
+        <Plus className="h-3.5 w-3.5" />
+        Add item
+      </Button>
+    </div>
   );
 }
 
@@ -523,6 +725,11 @@ export default function AdminPersonnel() {
       working_history: p.working_history || '', main_skill_list: p.main_skill_list || '',
       met_place: p.met_place || '', notes: p.notes || '',
       overview: p.overview || '', languages: p.languages || '',
+      profile_titles_json: JSON.stringify(parseTextItems(p.profile_titles_json)),
+      profile_overviews_json: JSON.stringify(parseTextItems(p.profile_overviews_json)),
+      profile_skills_json: JSON.stringify(parseTextItems(p.profile_skills_json)),
+      profile_achievements_json: JSON.stringify(parseTextItems(p.profile_achievements_json)),
+      profile_blocks_json: JSON.stringify(parseProfileBlocks(p.profile_blocks_json)),
       hourly_rate_main: p.hourly_rate_main?.toString() || '',
       hourly_rate_discussed: p.hourly_rate_discussed?.toString() || '',
       expected_monthly_salary: p.expected_monthly_salary?.toString() || '',
@@ -541,8 +748,29 @@ export default function AdminPersonnel() {
       return;
     }
     setSaving(true);
+    const parseFormTextItems = (raw: string): string[] => {
+      try {
+        const arr = JSON.parse(raw || '[]');
+        if (!Array.isArray(arr)) return [];
+        return arr.map((x) => String(x || '').trim()).filter(Boolean);
+      } catch {
+        return [];
+      }
+    };
+    const profileTitles = parseFormTextItems(form.profile_titles_json as string);
+    const profileOverviews = parseFormTextItems(form.profile_overviews_json as string);
+    const profileSkills = parseFormTextItems(form.profile_skills_json as string);
+    const profileAchievements = parseFormTextItems(form.profile_achievements_json as string);
+    const profileBlocks = (() => {
+      try {
+        return parseProfileBlocks(JSON.parse((form.profile_blocks_json as string) || '[]'));
+      } catch {
+        return [] as ProfileBlock[];
+      }
+    })();
+    const roleIsForJob = form.role === 'developer_for_job';
     const payload = {
-      role: form.role, title: form.title || null, first_name: form.first_name,
+      role: form.role, title: (roleIsForJob ? (profileBlocks[0]?.title || profileTitles[0] || form.title) : form.title) || null, first_name: form.first_name,
       middle_name: form.middle_name || null, last_name: form.last_name,
       sex: form.sex || null, profile_photo_url: form.profile_photo_url || null,
       country: form.country || null, address: form.address || null,
@@ -563,15 +791,24 @@ export default function AdminPersonnel() {
       religion: form.religion || null,
       marriage_status: form.marriage_status || null,
       children_status: form.children_status || null,
-      skills: form.skills || null, achievements: form.achievements || null,
+      skills: (roleIsForJob ? (profileBlocks.flatMap((b) => b.skills).join(', ') || profileSkills.join(', ') || form.skills) : form.skills) || null,
+      achievements: (roleIsForJob ? (profileBlocks.flatMap((b) => b.achievements).join('\n') || profileAchievements.join('\n') || form.achievements) : form.achievements) || null,
       availability_status: form.availability_status,
       employment_status: form.employment_status,
       activity_notes: form.activity_notes || null,
       working_project_name: form.working_project_name || null,
-      working_history: form.working_history || null,
+      working_history: (roleIsForJob ? (() => {
+        const joined = profileBlocks.flatMap((b) => b.experience);
+        return joined.length ? JSON.stringify(joined) : form.working_history;
+      })() : form.working_history) || null,
       main_skill_list: form.main_skill_list || null,
       met_place: form.met_place || null, notes: form.notes || null,
-      overview: form.overview || null, languages: form.languages || null,
+      overview: (roleIsForJob ? (profileBlocks[0]?.overview || profileOverviews[0] || form.overview) : form.overview) || null, languages: form.languages || null,
+      profile_titles_json: profileTitles,
+      profile_overviews_json: profileOverviews,
+      profile_skills_json: profileSkills,
+      profile_achievements_json: profileAchievements,
+      profile_blocks_json: profileBlocks,
       hourly_rate_main: form.hourly_rate_main ? parseFloat(form.hourly_rate_main) : null,
       hourly_rate_discussed: form.hourly_rate_discussed ? parseFloat(form.hourly_rate_discussed) : null,
       expected_monthly_salary: form.expected_monthly_salary ? parseFloat(form.expected_monthly_salary) : null,
@@ -671,6 +908,12 @@ export default function AdminPersonnel() {
     const p = selectedPerson;
     const fullName = [p.first_name, p.middle_name, p.last_name].filter(Boolean).join(' ');
     const langs = parseLanguages(p.languages);
+    const profileTitles = parseTextItems(p.profile_titles_json);
+    const profileOverviews = parseTextItems(p.profile_overviews_json);
+    const profileSkills = parseTextItems(p.profile_skills_json);
+    const profileAchievements = parseTextItems(p.profile_achievements_json);
+    const profileBlocks = parseProfileBlocks(p.profile_blocks_json);
+    const isDeveloperForJob = p.role === 'developer_for_job';
 
     return (
       <div className="space-y-8">
@@ -682,7 +925,23 @@ export default function AdminPersonnel() {
                 <h2 className="text-3xl font-bold text-foreground">{fullName}</h2>
                 {p.good_fit && <span title="Good Fit"><ThumbsUp className="h-5 w-5 text-emerald-500" /></span>}
               </div>
-              {p.title && <p className="text-lg text-muted-foreground">{p.title}</p>}
+            {isDeveloperForJob ? (
+              profileBlocks.length > 0 ? (
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {profileBlocks.map((b, i) => (
+                    <Badge key={`${b.title}-${i}`} variant="outline">{b.title || `Profile ${i + 1}`}</Badge>
+                  ))}
+                </div>
+              ) : profileTitles.length > 0 ? (
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {profileTitles.map((t, i) => (
+                    <Badge key={`${t}-${i}`} variant="outline">{t}</Badge>
+                  ))}
+                </div>
+              ) : p.title ? <p className="text-lg text-muted-foreground">{p.title}</p> : null
+            ) : (
+              p.title ? <p className="text-lg text-muted-foreground">{p.title}</p> : null
+            )}
               <div className="flex items-center gap-2 mt-1 flex-wrap">
                 <Badge variant="secondary">{ROLES_MAP[p.role]?.label || p.role}</Badge>
                 <Badge variant="secondary" className={availColor[p.availability_status || ''] || ''}>{p.availability_status || 'N/A'}</Badge>
@@ -698,7 +957,26 @@ export default function AdminPersonnel() {
           </div>
         </div>
 
-        {p.overview && (<div className="bg-muted/50 rounded-lg p-4"><p className="text-sm text-foreground/80 whitespace-pre-line">{p.overview}</p></div>)}
+        {isDeveloperForJob ? (
+          profileBlocks.length > 0 ? (
+            <div className="space-y-2">
+              {profileBlocks.map((b, i) => (
+                <div key={`ov-${i}`} className="bg-muted/50 rounded-lg p-4 space-y-1">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{b.title || `Profile ${i + 1}`}</p>
+                  {b.overview ? <p className="text-sm text-foreground/80 whitespace-pre-line">{b.overview}</p> : null}
+                </div>
+              ))}
+            </div>
+          ) : profileOverviews.length > 0 ? (
+            <div className="bg-muted/50 rounded-lg p-4 space-y-2">
+              {profileOverviews.map((o, i) => (
+                <p key={`${o}-${i}`} className="text-sm text-foreground/80 whitespace-pre-line">- {o}</p>
+              ))}
+            </div>
+          ) : p.overview ? <div className="bg-muted/50 rounded-lg p-4"><p className="text-sm text-foreground/80 whitespace-pre-line">{p.overview}</p></div> : null
+        ) : (
+          p.overview ? <div className="bg-muted/50 rounded-lg p-4"><p className="text-sm text-foreground/80 whitespace-pre-line">{p.overview}</p></div> : null
+        )}
 
         <Separator />
 
@@ -788,15 +1066,109 @@ export default function AdminPersonnel() {
           <InfoRow label="Children" value={p.children_status} />
         </DetailSection>
 
-        {p.skills && <DetailSection icon={Star} title="Skills"><div className="flex flex-wrap gap-2">{p.skills.split(',').map((s, i) => <Badge key={i} variant="secondary" className="text-sm font-normal">{s.trim()}</Badge>)}</div></DetailSection>}
-        {p.achievements && <DetailSection icon={Star} title="Achievements"><div className="prose prose-sm max-w-none text-foreground/80 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5" dangerouslySetInnerHTML={{ __html: p.achievements }} /></DetailSection>}
+        {isDeveloperForJob ? (
+          profileBlocks.length > 0 ? (
+            <DetailSection icon={Star} title="Skills">
+              <div className="space-y-2">
+                {profileBlocks.map((b, i) => (
+                  <div key={`sk-${i}`} className="rounded border bg-muted/20 p-2">
+                    <p className="text-xs font-semibold text-muted-foreground mb-1">{b.title || `Profile ${i + 1}`}</p>
+                    <div className="flex flex-wrap gap-2">
+                      {b.skills.map((s, j) => <Badge key={`${s}-${j}`} variant="secondary" className="text-sm font-normal">{s}</Badge>)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </DetailSection>
+          ) : profileSkills.length > 0 ? (
+            <DetailSection icon={Star} title="Skills">
+              <div className="flex flex-wrap gap-2">{profileSkills.map((s, i) => <Badge key={i} variant="secondary" className="text-sm font-normal">{s}</Badge>)}</div>
+            </DetailSection>
+          ) : null
+        ) : (
+          p.skills ? <DetailSection icon={Star} title="Skills"><div className="flex flex-wrap gap-2">{p.skills.split(',').map((s, i) => <Badge key={i} variant="secondary" className="text-sm font-normal">{s.trim()}</Badge>)}</div></DetailSection> : null
+        )}
+        {isDeveloperForJob ? (
+          profileBlocks.length > 0 ? (
+            <DetailSection icon={Star} title="Achievements">
+              <div className="space-y-2">
+                {profileBlocks.map((b, i) => (
+                  <div key={`ac-${i}`} className="rounded border bg-muted/20 p-2">
+                    <p className="text-xs font-semibold text-muted-foreground mb-1">{b.title || `Profile ${i + 1}`}</p>
+                    <ul className="list-disc pl-5 space-y-1 text-sm text-foreground/80">
+                      {b.achievements.map((a, j) => <li key={`${a}-${j}`}>{a}</li>)}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            </DetailSection>
+          ) : profileAchievements.length > 0 ? (
+            <DetailSection icon={Star} title="Achievements">
+              <ul className="list-disc pl-5 space-y-1 text-sm text-foreground/80">
+                {profileAchievements.map((a, i) => <li key={`${a}-${i}`}>{a}</li>)}
+              </ul>
+            </DetailSection>
+          ) : null
+        ) : (
+          p.achievements ? <DetailSection icon={Star} title="Achievements"><div className="prose prose-sm max-w-none text-foreground/80 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5" dangerouslySetInnerHTML={{ __html: p.achievements }} /></DetailSection> : null
+        )}
 
         <Separator />
 
         <DetailSection icon={Briefcase} title="Work">
           <InfoRow label="Working Project" value={p.working_project_name} />
           <InfoRow label="Met Place" value={MET_PLACES.find(m => m.value === p.met_place)?.label || p.met_place} />
-          {p.working_history && <div className="mt-2"><p className="text-xs font-semibold text-muted-foreground mb-1">Working History</p><div className="prose prose-sm max-w-none text-foreground/80 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5" dangerouslySetInnerHTML={{ __html: p.working_history }} /></div>}
+          {p.working_history ? (
+            <div className="mt-2">
+              <p className="text-xs font-semibold text-muted-foreground mb-1">Working History</p>
+              {(() => {
+                if (isDeveloperForJob && profileBlocks.length > 0) {
+                  return (
+                    <div className="space-y-2">
+                      {profileBlocks.map((b, i) => (
+                        <div key={`exb-${i}`} className="rounded border bg-muted/20 p-2">
+                          <p className="text-xs font-semibold text-muted-foreground mb-1">{b.title || `Profile ${i + 1}`}</p>
+                          <div className="space-y-2">
+                            {b.experience.map((w, j) => (
+                              <div key={`${w.title}-${j}`} className="rounded border bg-background p-2">
+                                <p className="text-sm font-medium">{w.title || 'Untitled role'}</p>
+                                {(w.start_date || w.end_date) ? <p className="text-xs text-muted-foreground">{w.start_date || 'Unknown'} - {w.end_date || 'Present'}</p> : null}
+                                {w.overview ? <p className="mt-1 text-sm text-foreground/80 whitespace-pre-line">{w.overview}</p> : null}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                }
+                const rows = parseWorkHistoryEntries(p.working_history || '');
+                if (rows.length === 0) {
+                  return (
+                    <div
+                      className="prose prose-sm max-w-none text-foreground/80 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5"
+                      dangerouslySetInnerHTML={{ __html: p.working_history || '' }}
+                    />
+                  );
+                }
+                return (
+                  <div className="space-y-2">
+                    {rows.map((w, i) => (
+                      <div key={`${w.title}-${i}`} className="rounded border bg-muted/20 p-2">
+                        <p className="text-sm font-medium">{w.title || 'Untitled role'}</p>
+                        {(w.start_date || w.end_date) ? (
+                          <p className="text-xs text-muted-foreground">
+                            {w.start_date || 'Unknown'} - {w.end_date || 'Present'}
+                          </p>
+                        ) : null}
+                        {w.overview ? <p className="mt-1 text-sm text-foreground/80 whitespace-pre-line">{w.overview}</p> : null}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
+          ) : null}
           {p.activity_notes && <div className="mt-2"><p className="text-xs font-semibold text-muted-foreground mb-1">Activity Notes</p><p className="text-sm text-foreground/80 whitespace-pre-line">{p.activity_notes}</p></div>}
         </DetailSection>
 
@@ -832,13 +1204,19 @@ export default function AdminPersonnel() {
                   <div className="space-y-2"><Label>Last Name *</Label><Input value={form.last_name} onChange={(e) => set('last_name', e.target.value)} /></div>
                 </div>
                 <div className="grid grid-cols-3 gap-4">
-                  <div className="space-y-2"><Label>Title</Label><Input value={form.title} onChange={(e) => set('title', e.target.value)} placeholder="e.g. Senior Developer, Project Manager" /></div>
+                  <div className="space-y-2">
+                    <Label>Title</Label>
+                    <Input value={form.title} onChange={(e) => set('title', e.target.value)} placeholder="e.g. Senior Developer, Project Manager" />
+                  </div>
                   <div className="space-y-2">
                     <Label>Role</Label>
                     <Select value={form.role} onValueChange={(v) => set('role', v)}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>{ROLES.map(r => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}</SelectContent>
                     </Select>
+                    <p className="text-xs text-muted-foreground">
+                      <strong>Developer For Job</strong>: interview/catching pipeline. <strong>Developer</strong>: implementation and task delivery.
+                    </p>
                   </div>
                   <div className="space-y-2">
                     <Label>Sex</Label>
@@ -848,7 +1226,14 @@ export default function AdminPersonnel() {
                     </Select>
                   </div>
                 </div>
-                <div className="space-y-2"><Label>Overview</Label><Textarea value={form.overview} onChange={(e) => set('overview', e.target.value)} rows={3} placeholder="Brief overview of this person..." /></div>
+                {form.role === 'developer_for_job' ? (
+                  <div className="space-y-2">
+                    <Label>Profile Tabs (repeatable)</Label>
+                    <ProfileBlocksEditor value={form.profile_blocks_json as string} onChange={(v) => set('profile_blocks_json', v)} />
+                  </div>
+                ) : (
+                  <div className="space-y-2"><Label>Overview</Label><Textarea value={form.overview} onChange={(e) => set('overview', e.target.value)} rows={3} placeholder="Brief overview of this person..." /></div>
+                )}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Met Place</Label>
@@ -968,23 +1353,38 @@ export default function AdminPersonnel() {
                 <div className="space-y-2"><Label>Portfolio URL</Label><Input value={form.portfolio_url} onChange={(e) => set('portfolio_url', e.target.value)} /></div>
                 <div className="space-y-2"><Label>Instagram URL</Label><Input value={form.instagram_url} onChange={(e) => set('instagram_url', e.target.value)} /></div>
                 <div className="space-y-2"><Label>Other Link</Label><Input value={form.other_link} onChange={(e) => set('other_link', e.target.value)} /></div>
-                <div className="space-y-2"><Label>Resume / CV</Label><FileUpload value={form.resume_cv_url} onChange={(url) => set('resume_cv_url', url)} folder="personnel-cv" accept=".pdf,.doc,.docx,image/*" label="Upload Resume/CV" /></div>
+                <div className="space-y-2">
+                  <Label>Resume / CV URL</Label>
+                  <Input value={form.resume_cv_url} onChange={(e) => set('resume_cv_url', e.target.value)} placeholder="https://drive.google.com/..." />
+                </div>
+                <CloudGoogleDriveUpload
+                  title="Upload Resume / CV to Google Drive"
+                  accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  onUrlAdded={(url) => set('resume_cv_url', url)}
+                />
               </TabsContent>
 
               {/* Work & Skills */}
               <TabsContent value="work" className="space-y-4 pt-4">
-                <SkillMultiSelect value={form.skills} onChange={(v) => set('skills', v)} label="Skills" />
-                <SkillMultiSelect value={form.main_skill_list} onChange={(v) => set('main_skill_list', v)} label="Main Skill List (for developers)" />
-
-                <div className="space-y-2">
-                  <Label>Achievements</Label>
-                  <RichTextEditor value={form.achievements} onChange={(val) => set('achievements', val)} placeholder="Add achievements, certifications, awards..." />
-                </div>
+                {form.role === 'developer_for_job' ? (
+                  <p className="text-xs text-muted-foreground">
+                    Skills, achievements, and experience are managed inside <strong>Profile Tabs</strong> in Basic tab.
+                  </p>
+                ) : (
+                  <>
+                    <SkillMultiSelect value={form.skills} onChange={(v) => set('skills', v)} label="Skills" />
+                    <SkillMultiSelect value={form.main_skill_list} onChange={(v) => set('main_skill_list', v)} label="Main Skill List (for developers)" />
+                    <div className="space-y-2">
+                      <Label>Achievements</Label>
+                      <RichTextEditor value={form.achievements} onChange={(val) => set('achievements', val)} placeholder="Add achievements, certifications, awards..." />
+                    </div>
+                  </>
+                )}
 
                 <div className="space-y-2"><Label>Working Project Name</Label><Input value={form.working_project_name} onChange={(e) => set('working_project_name', e.target.value)} /></div>
                 <div className="space-y-2">
-                  <Label>Working History</Label>
-                  <RichTextEditor value={form.working_history} onChange={(val) => set('working_history', val)} placeholder="Describe working history..." />
+                  <Label>Working History (LinkedIn/Upwork style)</Label>
+                  <WorkHistoryEditor value={form.working_history} onChange={(val) => set('working_history', val)} />
                 </div>
                 <div className="space-y-2"><Label>Activity Notes</Label><Textarea value={form.activity_notes} onChange={(e) => set('activity_notes', e.target.value)} rows={3} /></div>
                 <div className="space-y-2"><Label>Notes</Label><Textarea value={form.notes} onChange={(e) => set('notes', e.target.value)} rows={3} /></div>

@@ -52,7 +52,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { ArrowLeft, Trash2 } from 'lucide-react';
+import { ArrowLeft, ArrowUpDown, Trash2 } from 'lucide-react';
+import { PRIORITY_BADGE_CLASS, PRIORITY_OPTIONS, PRIORITY_RANK, taskDescriptionPreview } from '@/lib/taskPriority';
 
 export default function TaskPool() {
   const { user, hasRole } = useAuth();
@@ -64,6 +65,19 @@ export default function TaskPool() {
   const [sourceFiles, setSourceFiles] = useState<TaskPoolSourceFile[]>([]);
   const [subtasks, setSubtasks] = useState<PoolSubtask[]>([]);
   const [messages, setMessages] = useState<PoolChatMessage[]>([]);
+  const [linkedPayments, setLinkedPayments] = useState<
+    Array<{
+      id: string;
+      entry_type: 'incoming' | 'outgoing';
+      category: string;
+      amount: number;
+      currency: string;
+      occurred_at: string;
+      note: string | null;
+      source_kind: string;
+    }>
+  >([]);
+  const [linkedPaymentsCount, setLinkedPaymentsCount] = useState<number>(0);
   const [clients, setClients] = useState<ClientRef[]>([]);
   const [accounts, setAccounts] = useState<AccountRef[]>([]);
   const [personnel, setPersonnel] = useState<PersonnelRef[]>([]);
@@ -71,9 +85,11 @@ export default function TaskPool() {
   const [searchInput, setSearchInput] = useState('');
   const [listFilter, setListFilter] = useState<TaskPoolListFilter>('working');
   const [viewMode, setViewMode] = useState<'card' | 'list' | 'line' | 'table'>('line');
+  const [prioritySortOrder, setPrioritySortOrder] = useState<'high_first' | 'low_first'>('high_first');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
   const [newChat, setNewChat] = useState('');
   const [newTitle, setNewTitle] = useState('');
   const [newAssignee, setNewAssignee] = useState('');
@@ -117,6 +133,35 @@ export default function TaskPool() {
     setSubtaskDetailId(null);
   }, [selectedId]);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!selectedId) {
+        setLinkedPayments([]);
+        setLinkedPaymentsCount(0);
+        return;
+      }
+      const [countRes, rowsRes] = await Promise.all([
+        supabase
+          .from('payment_entries')
+          .select('id', { count: 'exact', head: true })
+          .eq('pool_item_id', selectedId),
+        supabase
+          .from('payment_entries')
+          .select('id,entry_type,category,amount,currency,occurred_at,note,source_kind')
+          .eq('pool_item_id', selectedId)
+          .order('occurred_at', { ascending: false })
+          .limit(5),
+      ]);
+      if (cancelled) return;
+      setLinkedPaymentsCount(countRes.count || 0);
+      setLinkedPayments((rowsRes.data || []) as typeof linkedPayments);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId]);
+
   const searchFiltered = useMemo(() => {
     const q = searchInput.trim().toLowerCase();
     if (!q) return items;
@@ -148,6 +193,44 @@ export default function TaskPool() {
     if (listFilter === 'this_year') return base.filter((x) => isWithinRange(x.task_received_at || x.created_at, yearStart, yearEnd));
     return base;
   }, [searchFiltered, listFilter, thisPeriod, lastPeriod, thisWeekStart, thisWeekEnd, lastWeekStart, lastWeekEnd, yearStart, yearEnd, customStart, customEnd]);
+  const sortedTasks = useMemo(
+    () =>
+      [...filtered].sort((a, b) => {
+        const pa = PRIORITY_RANK[a.priority] ?? 999;
+        const pb = PRIORITY_RANK[b.priority] ?? 999;
+        if (pa !== pb) return prioritySortOrder === 'high_first' ? pa - pb : pb - pa;
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      }),
+    [filtered, prioritySortOrder],
+  );
+
+  const priorityCounts = useMemo(() => {
+    const counts: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0 };
+    for (const t of sortedTasks) counts[t.priority] = (counts[t.priority] || 0) + 1;
+    return counts;
+  }, [sortedTasks]);
+
+  const updateTaskQuick = async (id: string, patch: Partial<Pick<TaskPoolItemRecord, 'priority' | 'status'>>) => {
+    if (!hasRole('admin')) return;
+    const res = await supabase
+      .from('task_pool_items')
+      .update({ ...patch, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select('*')
+      .single();
+    if (res.error || !res.data) {
+      toast({ title: 'Update failed', description: res.error?.message, variant: 'destructive' });
+      return;
+    }
+    setItems((prev) => prev.map((x) => (x.id === id ? (res.data as TaskPoolItemRecord) : x)));
+  };
+
+  const applyDraggedPriority = async (target: TaskPoolItemRecord) => {
+    if (!hasRole('admin') || !draggingTaskId || draggingTaskId === target.id) return;
+    const dragged = items.find((x) => x.id === draggingTaskId);
+    if (!dragged || dragged.priority === target.priority) return;
+    await updateTaskQuick(dragged.id, { priority: target.priority });
+  };
   const thisPeriodSummary = useMemo(
     () => summarizeTaskPool(items.filter((x) => isWithinRange(x.task_received_at || x.created_at, thisPeriod.start, thisPeriod.end))),
     [items, thisPeriod],
@@ -365,8 +448,30 @@ export default function TaskPool() {
             <StatCard title={`Last Month (${lastMonthLabel})`} summary={lastPeriodSummary} />
             <StatCard title={`Year (${yearLabel})`} summary={thisYearSummary} />
           </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-xs text-muted-foreground">
+              Showing {sortedTasks.length} tasks, sorted by priority ({prioritySortOrder === 'high_first' ? 'high to low' : 'low to high'}).
+            </p>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-7 gap-1 text-xs"
+              onClick={() => setPrioritySortOrder((v) => (v === 'high_first' ? 'low_first' : 'high_first'))}
+            >
+              <ArrowUpDown className="h-3.5 w-3.5" />
+              Toggle
+            </Button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {(['critical', 'high', 'medium', 'low'] as const).map((p) => (
+              <Badge key={p} variant="outline" className={`capitalize ${PRIORITY_BADGE_CLASS[p] || ''}`}>
+                {p}: {priorityCounts[p] || 0}
+              </Badge>
+            ))}
+          </div>
 
-          {filtered.length === 0 ? (
+          {sortedTasks.length === 0 ? (
             <div className="rounded-lg border bg-card py-12 text-center">
               <p className="text-lg font-medium text-foreground">{searchInput.trim() ? 'No matching tasks' : 'No tasks yet'}</p>
               <p className="mt-1 text-sm text-muted-foreground">
@@ -375,19 +480,39 @@ export default function TaskPool() {
             </div>
           ) : viewMode === 'card' ? (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {filtered.map((row) => (
+              {sortedTasks.map((row, idx) => (
                 <Card
                   key={row.id}
                   className="cursor-pointer transition-all hover:border-primary/40 hover:shadow-md"
+                  style={{ borderLeft: `4px solid ${row.priority === 'critical' ? '#dc2626' : row.priority === 'high' ? '#ea580c' : row.priority === 'medium' ? '#2563eb' : '#64748b'}` }}
                   onClick={() => setSelectedId(row.id)}
+                  draggable={hasRole('admin')}
+                  onDragStart={(e) => {
+                    if (!hasRole('admin')) return;
+                    setDraggingTaskId(row.id);
+                    e.dataTransfer.effectAllowed = 'move';
+                  }}
+                  onDragOver={(e) => {
+                    if (!hasRole('admin') || !draggingTaskId || draggingTaskId === row.id) return;
+                    e.preventDefault();
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    void applyDraggedPriority(row);
+                    setDraggingTaskId(null);
+                  }}
+                  onDragEnd={() => setDraggingTaskId(null)}
                 >
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between gap-2">
-                      <p className="font-medium text-foreground line-clamp-2">{row.name}</p>
+                      <p className="font-medium text-foreground line-clamp-2">#{idx + 1} {row.name}</p>
                       <Badge variant="secondary" className="shrink-0">
                         {taskPoolItemStatusLabel(row.status)}
                       </Badge>
                     </div>
+                    <Badge variant="outline" className={`mt-2 text-[10px] capitalize ${PRIORITY_BADGE_CLASS[row.priority] || ''}`}>
+                      {row.priority}
+                    </Badge>
                     {row.promoted_project_id ? (
                       <Badge variant="outline" className="mt-2 text-[10px]">
                         In Projects
@@ -408,7 +533,9 @@ export default function TaskPool() {
                     <p className="text-xs text-muted-foreground">
                       Received: {formatJstYmdFromIso(row.task_received_at)}
                     </p>
-                    <p className="mt-2 text-xs text-muted-foreground line-clamp-3 break-words [overflow-wrap:anywhere]">{row.description || 'No description'}</p>
+                    <p className="mt-2 text-xs text-muted-foreground line-clamp-3 break-words [overflow-wrap:anywhere]">
+                      {taskDescriptionPreview(row.description, 20)}
+                    </p>
                   </CardContent>
                 </Card>
               ))}
@@ -420,6 +547,17 @@ export default function TaskPool() {
                   <tr>
                     <th className="px-3 py-2">Task</th>
                     <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2">
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1 hover:text-foreground"
+                        onClick={() => setPrioritySortOrder((v) => (v === 'high_first' ? 'low_first' : 'high_first'))}
+                        title={`Priority sort: ${prioritySortOrder === 'high_first' ? 'high to low' : 'low to high'}`}
+                      >
+                        Priority
+                        <ArrowUpDown className="h-3.5 w-3.5" />
+                      </button>
+                    </th>
                     <th className="px-3 py-2">Source</th>
                     <th className="px-3 py-2">Received</th>
                     <th className="px-3 py-2">Real</th>
@@ -427,10 +565,65 @@ export default function TaskPool() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((row) => (
-                    <tr key={row.id} className="cursor-pointer border-t hover:bg-muted/30" onClick={() => setSelectedId(row.id)}>
-                      <td className="px-3 py-2 font-medium">{row.name}</td>
-                      <td className="px-3 py-2">{taskPoolItemStatusLabel(row.status)}</td>
+                  {sortedTasks.map((row, idx) => (
+                    <tr
+                      key={row.id}
+                      className="cursor-pointer border-t hover:bg-muted/30"
+                      onClick={() => setSelectedId(row.id)}
+                      draggable={hasRole('admin')}
+                      onDragStart={(e) => {
+                        if (!hasRole('admin')) return;
+                        setDraggingTaskId(row.id);
+                        e.dataTransfer.effectAllowed = 'move';
+                      }}
+                      onDragOver={(e) => {
+                        if (!hasRole('admin') || !draggingTaskId || draggingTaskId === row.id) return;
+                        e.preventDefault();
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        void applyDraggedPriority(row);
+                        setDraggingTaskId(null);
+                      }}
+                      onDragEnd={() => setDraggingTaskId(null)}
+                    >
+                      <td className="px-3 py-2 font-medium">#{idx + 1} {row.name}</td>
+                      <td className="px-3 py-2">
+                        {hasRole('admin') ? (
+                          <Select value={row.status} onValueChange={(v) => void updateTaskQuick(row.id, { status: v as TaskPoolItemRecord['status'] })}>
+                            <SelectTrigger className="h-8 w-[150px]" onClick={(e) => e.stopPropagation()}>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent onClick={(e) => e.stopPropagation()}>
+                              {TASK_POOL_ITEM_STATUS_OPTIONS.map((s) => (
+                                <SelectItem key={s} value={s}>
+                                  {taskPoolItemStatusLabel(s)}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          taskPoolItemStatusLabel(row.status)
+                        )}
+                      </td>
+                      <td className="px-3 py-2">
+                        {hasRole('admin') ? (
+                          <Select value={row.priority} onValueChange={(v) => void updateTaskQuick(row.id, { priority: v as TaskPoolItemRecord['priority'] })}>
+                            <SelectTrigger className="h-8 w-[130px]" onClick={(e) => e.stopPropagation()}>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent onClick={(e) => e.stopPropagation()}>
+                              {PRIORITY_OPTIONS.map((p) => (
+                                <SelectItem key={p} value={p}>
+                                  {p}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Badge variant="outline" className={`capitalize ${PRIORITY_BADGE_CLASS[row.priority] || ''}`}>{row.priority}</Badge>
+                        )}
+                      </td>
                       <td className="px-3 py-2 capitalize">{(row.task_source || '-').replace('_', ' ')}</td>
                       <td className="px-3 py-2">{formatJstYmdFromIso(row.task_received_at)}</td>
                       <td className="px-3 py-2">{row.currency} {taskPoolContractGross(row).toFixed(2)}</td>
@@ -442,19 +635,67 @@ export default function TaskPool() {
             </div>
           ) : viewMode === 'line' ? (
             <div className="rounded-lg border bg-card">
-              {filtered.map((row) => (
+              {sortedTasks.map((row, idx) => (
                 <button
                   key={row.id}
                   type="button"
                   className="flex w-full items-center justify-between gap-3 border-b px-3 py-2 text-left last:border-b-0 hover:bg-muted/30"
                   onClick={() => setSelectedId(row.id)}
+                  draggable={hasRole('admin')}
+                  onDragStart={(e) => {
+                    if (!hasRole('admin')) return;
+                    setDraggingTaskId(row.id);
+                    e.dataTransfer.effectAllowed = 'move';
+                  }}
+                  onDragOver={(e) => {
+                    if (!hasRole('admin') || !draggingTaskId || draggingTaskId === row.id) return;
+                    e.preventDefault();
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    void applyDraggedPriority(row);
+                    setDraggingTaskId(null);
+                  }}
+                  onDragEnd={() => setDraggingTaskId(null)}
                 >
                   <div className="min-w-0">
-                    <p className="truncate font-medium">{row.name}</p>
-                    <p className="text-xs text-muted-foreground capitalize">{(row.task_source || 'n/a').replace('_', ' ')}</p>
+                    <p className="truncate font-medium">#{idx + 1} {row.name}</p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <p className="text-xs text-muted-foreground capitalize">{(row.task_source || 'n/a').replace('_', ' ')}</p>
+                      <Badge variant="outline" className={`text-[10px] capitalize ${PRIORITY_BADGE_CLASS[row.priority] || ''}`}>{row.priority}</Badge>
+                    </div>
                   </div>
                   <div className="shrink-0 text-right">
-                    <p className="text-xs text-muted-foreground">{taskPoolItemStatusLabel(row.status)}</p>
+                    {hasRole('admin') ? (
+                      <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+                        <Select value={row.status} onValueChange={(v) => void updateTaskQuick(row.id, { status: v as TaskPoolItemRecord['status'] })}>
+                          <SelectTrigger className="h-8 w-[140px] text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {TASK_POOL_ITEM_STATUS_OPTIONS.map((s) => (
+                              <SelectItem key={s} value={s}>
+                                {taskPoolItemStatusLabel(s)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Select value={row.priority} onValueChange={(v) => void updateTaskQuick(row.id, { priority: v as TaskPoolItemRecord['priority'] })}>
+                          <SelectTrigger className="h-8 w-[120px] text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {PRIORITY_OPTIONS.map((p) => (
+                              <SelectItem key={p} value={p}>
+                                {p}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">{taskPoolItemStatusLabel(row.status)}</p>
+                    )}
                     <p className="text-xs text-emerald-600">{row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}</p>
                   </div>
                 </button>
@@ -462,14 +703,37 @@ export default function TaskPool() {
             </div>
           ) : (
             <div className="space-y-2">
-              {filtered.map((row) => (
-                <Card key={row.id} className="cursor-pointer hover:border-primary/40" onClick={() => setSelectedId(row.id)}>
+              {sortedTasks.map((row, idx) => (
+                <Card
+                  key={row.id}
+                  className="cursor-pointer hover:border-primary/40"
+                  onClick={() => setSelectedId(row.id)}
+                  draggable={hasRole('admin')}
+                  onDragStart={(e) => {
+                    if (!hasRole('admin')) return;
+                    setDraggingTaskId(row.id);
+                    e.dataTransfer.effectAllowed = 'move';
+                  }}
+                  onDragOver={(e) => {
+                    if (!hasRole('admin') || !draggingTaskId || draggingTaskId === row.id) return;
+                    e.preventDefault();
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    void applyDraggedPriority(row);
+                    setDraggingTaskId(null);
+                  }}
+                  onDragEnd={() => setDraggingTaskId(null)}
+                >
                   <CardContent className="flex items-center justify-between p-3">
                     <div className="min-w-0">
-                      <p className="truncate font-medium">{row.name}</p>
-                      <p className="text-xs text-muted-foreground">
+                      <p className="truncate font-medium">#{idx + 1} {row.name}</p>
+                      <div className="mt-1 flex items-center gap-2">
+                        <Badge variant="outline" className={`text-[10px] capitalize ${PRIORITY_BADGE_CLASS[row.priority] || ''}`}>{row.priority}</Badge>
+                        <p className="text-xs text-muted-foreground">
                         {taskPoolItemStatusLabel(row.status)} · {row.currency} {taskPoolContractGross(row).toFixed(2)}
-                      </p>
+                        </p>
+                      </div>
                     </div>
                     <Badge variant="outline" className="shrink-0">{row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}</Badge>
                   </CardContent>
@@ -556,6 +820,54 @@ export default function TaskPool() {
                 </TabsList>
 
                 <TabsContent value="overview" className="space-y-3">
+                  {Number(selected.withdrawn_amount ?? 0) > 0 && linkedPaymentsCount === 0 ? (
+                    <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm text-muted-foreground">
+                      <p className="font-medium text-foreground">Data check</p>
+                      <p>
+                        This task has withdrawn &gt; 0, but there are no linked payment entries yet. Confirm accruals in Admin to auto-create incoming rows.
+                      </p>
+                    </div>
+                  ) : null}
+                  <div className="rounded-lg border p-3 space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-sm font-medium">Linked payments</p>
+                      <Link to="/dashboard/payments" className="text-sm text-primary hover:underline">
+                        Open Payments
+                      </Link>
+                    </div>
+                    {linkedPayments.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No linked payment entries.</p>
+                    ) : (
+                      <ul className="space-y-2">
+                        {linkedPayments.map((p) => (
+                          <li key={p.id} className="rounded border bg-muted/20 p-2">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium truncate">{p.category}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {new Date(p.occurred_at).toLocaleString()}
+                                  {p.note ? ` · ${p.note}` : ''}
+                                </p>
+                              </div>
+                              <div className="shrink-0 text-right">
+                                <Badge variant={p.entry_type === 'incoming' ? 'secondary' : 'outline'} className="capitalize">
+                                  {p.entry_type}
+                                </Badge>
+                                <p className="text-sm font-medium">
+                                  {p.currency} {Number(p.amount ?? 0).toFixed(2)}
+                                </p>
+                              </div>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {linkedPaymentsCount > linkedPayments.length ? (
+                      <p className="text-xs text-muted-foreground">
+                        Showing latest {linkedPayments.length} of {linkedPaymentsCount}.
+                      </p>
+                    ) : null}
+                  </div>
                   <div className="flex flex-wrap gap-2">
                     {(selected.skillset_csv || '')
                       .split(',')
@@ -579,6 +891,7 @@ export default function TaskPool() {
                   <TaskPoolMultiLinks title="Source storage" links={parseLabeledLinks(selected.source_storage_urls, selected.source_storage_url, 'Storage')} />
                   <TaskPoolMultiLinks title="GitHub" links={parseLabeledLinks(selected.github_links, selected.github_url, 'GitHub')} />
                   <TaskPoolMultiLinks title="Initial documents" links={parseLabeledLinks(selected.initial_document_urls, selected.initial_document_url, 'Document')} />
+                  <TaskPoolCredentials metadata={selected.metadata_json} />
                 </TabsContent>
 
                 <TabsContent value="screenshots">
@@ -741,6 +1054,41 @@ function TaskPoolMultiLinks({ title, links }: { title: string; links: { label: s
       )}
     </div>
   );
+}
+
+function TaskPoolCredentials({ metadata }: { metadata: Record<string, unknown> | null }) {
+  const credentials = parseCredentialRows(metadata);
+  return (
+    <div className="rounded border p-3 bg-muted/20">
+      <p className="text-xs text-muted-foreground mb-2">Credentials</p>
+      {credentials.length === 0 ? (
+        <p className="text-sm text-muted-foreground">N/A</p>
+      ) : (
+        <ul className="space-y-2">
+          {credentials.map((c, idx) => (
+            <li key={`${c.label}-${idx}`}>
+              <p className="text-xs font-medium">{c.label}</p>
+              <p className="text-sm break-all whitespace-pre-wrap">{c.value}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function parseCredentialRows(metadata: Record<string, unknown> | null): Array<{ label: string; value: string }> {
+  const raw = (metadata as { credentials?: unknown } | null)?.credentials;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => {
+      const row = item as { label?: unknown; value?: unknown };
+      return {
+        label: String(row.label || 'Credential'),
+        value: String(row.value || ''),
+      };
+    })
+    .filter((x) => x.value.trim());
 }
 
 function StatCard({

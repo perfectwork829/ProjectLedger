@@ -17,6 +17,7 @@ import { Plus, Pencil, Trash2, Copy, ExternalLink, Pin, Link as LinkIcon, X } fr
 import { useToast } from '@/hooks/use-toast';
 import ModuleSearchBar from '@/components/ModuleSearchBar';
 import { filterUsefulLinks } from '@/lib/clientSearch';
+import { RichTextEditor } from '@/components/RichTextEditor';
 
 interface LinkItem {
   label: string;
@@ -64,31 +65,6 @@ function CopyButton({ value }: { value: string }) {
   );
 }
 
-function RichTextEditor({ value, onChange, placeholder }: { value: string; onChange: (val: string) => void; placeholder?: string }) {
-  const ReactQuill = React.lazy(() => import('react-quill-new'));
-  return (
-    <React.Suspense fallback={<div className="h-[200px] border rounded-md flex items-center justify-center text-sm text-muted-foreground">Loading editor...</div>}>
-      <div className="rich-editor [&_.ql-editor]:min-h-[180px]">
-        <ReactQuill
-          theme="snow"
-          value={value}
-          onChange={onChange}
-          modules={{
-            toolbar: [
-              [{ header: [1, 2, 3, false] }],
-              ['bold', 'italic', 'underline', 'strike'],
-              [{ list: 'ordered' }, { list: 'bullet' }],
-              ['link'],
-              ['clean'],
-            ],
-          }}
-          placeholder={placeholder || "Write here..."}
-        />
-      </div>
-    </React.Suspense>
-  );
-}
-
 const emptyForm = {
   title: '',
   category: 'general',
@@ -112,6 +88,7 @@ export default function AdminUsefulLinks() {
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; title: string } | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState('');
+  const [listViewMode, setListViewMode] = useState<'card' | 'list' | 'line' | 'table'>('card');
 
   const fetchItems = async () => {
     const { data, error } = await supabase
@@ -232,20 +209,33 @@ export default function AdminUsefulLinks() {
       </div>
 
       {/* Category filter */}
-      <div className="flex flex-wrap gap-2">
-        <Badge
-          variant={selectedCategory === null ? 'default' : 'outline'}
-          className="cursor-pointer"
-          onClick={() => setSelectedCategory(null)}
-        >All ({searchFiltered.length})</Badge>
-        {CATEGORIES.filter(c => grouped[c.value]).map(c => (
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap gap-2">
           <Badge
-            key={c.value}
-            variant={selectedCategory === c.value ? 'default' : 'outline'}
+            variant={selectedCategory === null ? 'default' : 'outline'}
             className="cursor-pointer"
-            onClick={() => setSelectedCategory(c.value)}
-          >{c.label} ({grouped[c.value].length})</Badge>
-        ))}
+            onClick={() => setSelectedCategory(null)}
+          >All ({searchFiltered.length})</Badge>
+          {CATEGORIES.filter(c => grouped[c.value]).map(c => (
+            <Badge
+              key={c.value}
+              variant={selectedCategory === c.value ? 'default' : 'outline'}
+              className="cursor-pointer"
+              onClick={() => setSelectedCategory(c.value)}
+            >{c.label} ({grouped[c.value].length})</Badge>
+          ))}
+        </div>
+        <Select value={listViewMode} onValueChange={(v) => setListViewMode(v as 'card' | 'list' | 'line' | 'table')}>
+          <SelectTrigger className="w-[150px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="card">Card mode</SelectItem>
+            <SelectItem value="list">List mode</SelectItem>
+            <SelectItem value="line">Line mode</SelectItem>
+            <SelectItem value="table">Table mode</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       {items.length === 0 ? (
@@ -263,6 +253,80 @@ export default function AdminUsefulLinks() {
             <p className="mt-1 text-sm text-muted-foreground">{searchInput.trim() ? 'Try different keywords or clear the search.' : 'Pick another category or clear filters.'}</p>
           </CardContent>
         </Card>
+      ) : listViewMode === 'table' ? (
+        <div className="overflow-x-auto rounded-lg border bg-card">
+          <table className="min-w-full text-sm">
+            <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2">Title</th>
+                <th className="px-3 py-2">Category</th>
+                <th className="px-3 py-2">Links</th>
+                <th className="px-3 py-2">Pinned</th>
+                <th className="px-3 py-2">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredItems.map((item) => (
+                <tr key={item.id} className="border-t hover:bg-muted/30">
+                  <td className="px-3 py-2 font-medium">{item.title}</td>
+                  <td className="px-3 py-2">{CATEGORIES.find(c => c.value === item.category)?.label || item.category}</td>
+                  <td className="px-3 py-2">{item.links.length}</td>
+                  <td className="px-3 py-2">{item.is_pinned ? 'Yes' : 'No'}</td>
+                  <td className="px-3 py-2">
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="outline" onClick={() => openEdit(item)} className="gap-1.5">
+                        <Pencil className="h-3.5 w-3.5" />Edit
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => setDeleteConfirm({ id: item.id, title: item.title })} className="gap-1.5 text-destructive hover:bg-destructive hover:text-destructive-foreground">
+                        <Trash2 className="h-3.5 w-3.5" />Delete
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : listViewMode === 'line' ? (
+        <div className="rounded-lg border bg-card">
+          {filteredItems.map((item) => (
+            <div key={item.id} className="flex items-center justify-between gap-3 border-b px-3 py-2 last:border-b-0 hover:bg-muted/30">
+              <div className="min-w-0">
+                <p className="truncate font-medium">{item.title}</p>
+                <p className="text-xs text-muted-foreground">{item.links.length} link{item.links.length !== 1 ? 's' : ''}</p>
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <Button size="sm" variant="outline" onClick={() => openEdit(item)} className="gap-1.5">
+                  <Pencil className="h-3.5 w-3.5" />Edit
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setDeleteConfirm({ id: item.id, title: item.title })} className="gap-1.5 text-destructive hover:bg-destructive hover:text-destructive-foreground">
+                  <Trash2 className="h-3.5 w-3.5" />Delete
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : listViewMode === 'list' ? (
+        <div className="space-y-2">
+          {filteredItems.map((item) => (
+            <Card key={item.id}>
+              <CardContent className="flex items-center justify-between gap-3 p-3">
+                <div className="min-w-0">
+                  <p className="truncate font-medium">{item.title}</p>
+                  <p className="text-xs text-muted-foreground">{item.purpose || 'No purpose'}</p>
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  <Button size="sm" variant="outline" onClick={() => openEdit(item)} className="gap-1.5">
+                    <Pencil className="h-3.5 w-3.5" />Edit
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => setDeleteConfirm({ id: item.id, title: item.title })} className="gap-1.5 text-destructive hover:bg-destructive hover:text-destructive-foreground">
+                    <Trash2 className="h-3.5 w-3.5" />Delete
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filteredItems.map((item) => (

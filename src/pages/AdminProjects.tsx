@@ -24,6 +24,7 @@ import {
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import ModuleSearchBar from '@/components/ModuleSearchBar';
 import { CloudGoogleDriveUpload } from '@/components/CloudGoogleDriveUpload';
+import { CloudBoxUpload } from '@/components/CloudBoxUpload';
 import { CountrySelect } from '@/components/CountrySelect';
 import { TimezoneSelect } from '@/components/TimezoneSelect';
 import { canonicalCountryNameOrLegacy } from '@/lib/countries';
@@ -40,7 +41,7 @@ import {
   SOURCE_STORAGE_PROVIDER_OPTIONS,
   toCsv,
 } from '@/lib/projects';
-import { Calendar, MessageSquare, Pencil, Plus, Trash2, FolderKanban, Link2, Clock } from 'lucide-react';
+import { Calendar, MessageSquare, PanelLeftClose, PanelLeftOpen, Pencil, Plus, Trash2, FolderKanban, Link2, Clock } from 'lucide-react';
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from '@/components/ui/carousel';
 
 const STATUS_OPTIONS = ['planning', 'active', 'blocked', 'qa', 'completed', 'cancelled'] as const;
@@ -70,6 +71,7 @@ const emptyForm = {
   accountId: '',
   chatHistory: '',
   metadataJson: '{}',
+  credentialsText: '',
   initialDocumentUrl: '',
   sourceStorageType: 'drive',
   sourceStorageUrl: '',
@@ -80,6 +82,34 @@ const emptyForm = {
   githubUrl: '',
   screenshotUrls: [] as string[],
 };
+
+type CredentialRow = { label: string; value: string };
+function parseCredentialsFromText(raw: string): CredentialRow[] {
+  return raw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const sep = line.includes('|') ? '|' : ':';
+      const idx = line.indexOf(sep);
+      if (idx < 0) return { label: 'Credential', value: line };
+      return { label: line.slice(0, idx).trim() || 'Credential', value: line.slice(idx + 1).trim() };
+    })
+    .filter((x) => x.value);
+}
+function credentialsToText(rows: CredentialRow[]): string {
+  return rows.map((r) => `${r.label} | ${r.value}`).join('\n');
+}
+function credentialsFromMetadata(metadata: Record<string, unknown> | null | undefined): CredentialRow[] {
+  const raw = (metadata as { credentials?: unknown } | null)?.credentials;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((x) => {
+      const row = x as { label?: unknown; value?: unknown };
+      return { label: String(row.label || 'Credential'), value: String(row.value || '') };
+    })
+    .filter((x) => x.value.trim());
+}
 
 export default function AdminProjects() {
   const { user } = useAuth();
@@ -97,6 +127,8 @@ export default function AdminProjects() {
   const [searchInput, setSearchInput] = useState('');
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [selectedStack, setSelectedStack] = useState<string>('all');
+  const [showCategoriesPanel, setShowCategoriesPanel] = useState(true);
+  const [showProjectsPanel, setShowProjectsPanel] = useState(true);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -212,6 +244,7 @@ export default function AdminProjects() {
       accountId: project.account_id || '',
       chatHistory: project.chat_history || '',
       metadataJson: project.metadata_json ? JSON.stringify(project.metadata_json, null, 2) : '{}',
+      credentialsText: credentialsToText(credentialsFromMetadata(project.metadata_json)),
       initialDocumentUrl: project.initial_document_url || '',
       sourceStorageType: project.source_storage_type,
       sourceStorageUrl: project.source_storage_url || '',
@@ -243,6 +276,10 @@ export default function AdminProjects() {
       return;
     }
 
+    const credentialRows = parseCredentialsFromText(form.credentialsText);
+    const normalizedMetadata = { ...metadata } as Record<string, unknown>;
+    if (credentialRows.length > 0) normalizedMetadata.credentials = credentialRows;
+    else delete normalizedMetadata.credentials;
     setSaving(true);
     const payload = {
       user_id: user?.id || null,
@@ -260,7 +297,7 @@ export default function AdminProjects() {
       client_timezone: form.clientTimezone.trim() || null,
       account_id: form.accountId || null,
       chat_history: form.chatHistory.trim() || null,
-      metadata_json: metadata,
+      metadata_json: normalizedMetadata,
       initial_document_url: form.initialDocumentUrl.trim() || null,
       source_storage_type: form.sourceStorageType,
       source_storage_url: form.sourceStorageUrl.trim(),
@@ -422,12 +459,39 @@ export default function AdminProjects() {
         </div>
         <div className="flex w-full max-w-2xl gap-3">
           <ModuleSearchBar value={searchInput} onChange={setSearchInput} placeholder="Search projects, clients, tags, statuses..." id="admin-project-search" />
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={() => setShowProjectsPanel((v) => !v)}
+            title={showProjectsPanel ? 'Hide projects panel' : 'Show projects panel'}
+            aria-label={showProjectsPanel ? 'Hide projects panel' : 'Show projects panel'}
+            className="shrink-0"
+          >
+            {showProjectsPanel ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={() => setShowCategoriesPanel((v) => !v)}
+            title={showCategoriesPanel ? 'Hide categories panel' : 'Show categories panel'}
+            aria-label={showCategoriesPanel ? 'Hide categories panel' : 'Show categories panel'}
+            className="shrink-0"
+          >
+            {showCategoriesPanel ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
+          </Button>
           <Button className="gap-2 shrink-0" onClick={openCreate}><Plus className="h-4 w-4" />New</Button>
         </div>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-4">
-        <Card className="lg:col-span-1">
+      <div
+        className={`grid gap-4 ${
+          showCategoriesPanel && showProjectsPanel ? 'lg:grid-cols-4' : showCategoriesPanel || showProjectsPanel ? 'lg:grid-cols-3' : 'lg:grid-cols-1'
+        }`}
+      >
+        {showCategoriesPanel ? (
+          <Card className="lg:col-span-1">
           <CardHeader><CardTitle className="text-base">Categories</CardTitle></CardHeader>
           <CardContent className="max-h-[70vh] overflow-auto">
             <button
@@ -471,41 +535,44 @@ export default function AdminProjects() {
               ))}
             </Accordion>
           </CardContent>
-        </Card>
+          </Card>
+        ) : null}
 
-        <Card className="lg:col-span-1">
-          <CardHeader><CardTitle className="text-base">Projects ({displayProjects.length})</CardTitle></CardHeader>
-          <CardContent className="space-y-2 max-h-[70vh] overflow-auto">
-            {displayProjects.map((project) => (
-              <button
-                key={project.id}
-                type="button"
-                onClick={() => setSelectedProjectId(project.id)}
-                className={`w-full rounded border p-3 text-left transition hover:border-primary/40 ${selectedProjectId === project.id ? 'border-primary bg-primary/5' : 'border-border'}`}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <p className="font-medium text-foreground line-clamp-1">{project.name}</p>
-                  <Badge variant="secondary" className="capitalize">{project.status}</Badge>
-                </div>
-                {project.project_source ? <p className="mt-1 text-xs text-muted-foreground capitalize">Project source(from): {project.project_source.replace('_', ' ')}</p> : null}
-                {project.main_stack ? <p className="mt-1 text-xs text-primary/90 capitalize">Stack: {project.main_stack.replace('_', ' ')}</p> : null}
-                <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{project.description || 'No description'}</p>
-                <div className="mt-2 flex flex-wrap gap-1">
-                  {(project.tags_csv || '').split(',').map((t) => t.trim()).filter(Boolean).slice(0, 3).map((tag) => (
-                    <Badge key={tag} variant="outline" className="text-[10px]">{tag}</Badge>
-                  ))}
-                </div>
-                <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
-                  <span>{projectClientLabel(project)}</span>
-                  <span>{project.deadline ? new Date(project.deadline).toLocaleDateString() : 'No deadline'}</span>
-                </div>
-              </button>
-            ))}
-            {displayProjects.length === 0 && <p className="text-sm text-muted-foreground">No projects found.</p>}
-          </CardContent>
-        </Card>
+        {showProjectsPanel ? (
+          <Card className="lg:col-span-1">
+            <CardHeader><CardTitle className="text-base">Projects ({displayProjects.length})</CardTitle></CardHeader>
+            <CardContent className="space-y-2 max-h-[70vh] overflow-auto">
+              {displayProjects.map((project) => (
+                <button
+                  key={project.id}
+                  type="button"
+                  onClick={() => setSelectedProjectId(project.id)}
+                  className={`w-full rounded border p-3 text-left transition hover:border-primary/40 ${selectedProjectId === project.id ? 'border-primary bg-primary/5' : 'border-border'}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="font-medium text-foreground line-clamp-1">{project.name}</p>
+                    <Badge variant="secondary" className="capitalize">{project.status}</Badge>
+                  </div>
+                  {project.project_source ? <p className="mt-1 text-xs text-muted-foreground capitalize">Project source(from): {project.project_source.replace('_', ' ')}</p> : null}
+                  {project.main_stack ? <p className="mt-1 text-xs text-primary/90 capitalize">Stack: {project.main_stack.replace('_', ' ')}</p> : null}
+                  <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{project.description || 'No description'}</p>
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {(project.tags_csv || '').split(',').map((t) => t.trim()).filter(Boolean).slice(0, 3).map((tag) => (
+                      <Badge key={tag} variant="outline" className="text-[10px]">{tag}</Badge>
+                    ))}
+                  </div>
+                  <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
+                    <span>{projectClientLabel(project)}</span>
+                    <span>{project.deadline ? new Date(project.deadline).toLocaleDateString() : 'No deadline'}</span>
+                  </div>
+                </button>
+              ))}
+              {displayProjects.length === 0 && <p className="text-sm text-muted-foreground">No projects found.</p>}
+            </CardContent>
+          </Card>
+        ) : null}
 
-        <Card className="lg:col-span-2">
+        <Card className={showCategoriesPanel && showProjectsPanel ? 'lg:col-span-2' : showCategoriesPanel || showProjectsPanel ? 'lg:col-span-2' : 'lg:col-span-1'}>
           {!selectedProject ? (
             <CardContent className="py-12 text-center text-muted-foreground">Select a project to view details.</CardContent>
           ) : (
@@ -567,6 +634,21 @@ export default function AdminProjects() {
                               <a href={url} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline break-all">
                                 {url}
                               </a>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium">Credentials</p>
+                      {credentialsFromMetadata(selectedProject.metadata_json).length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No credentials saved.</p>
+                      ) : (
+                        <ul className="space-y-2">
+                          {credentialsFromMetadata(selectedProject.metadata_json).map((c, i) => (
+                            <li key={`${c.label}-${i}`} className="rounded border bg-muted/20 p-2">
+                              <p className="text-xs text-muted-foreground">{c.label}</p>
+                              <p className="text-sm break-all">{c.value}</p>
                             </li>
                           ))}
                         </ul>
@@ -790,10 +872,43 @@ export default function AdminProjects() {
                 />
               </div>
             )}
+            {form.sourceStorageType === 'box' && (
+              <div className="space-y-3 md:col-span-2">
+                <CloudBoxUpload
+                  title="Upload screenshots to Box"
+                  accept="image/*"
+                  onUrlAdded={(url) => setForm((p) => ({ ...p, screenshotUrls: [...p.screenshotUrls, url] }))}
+                />
+                <CloudBoxUpload
+                  title="Upload source file to Box"
+                  accept="*/*"
+                  onUrlAdded={(url) =>
+                    setForm((p) => {
+                      if (!p.sourceStorageUrl.trim()) return { ...p, sourceStorageUrl: url };
+                      toast({
+                        title: 'Box file uploaded',
+                        description: `Primary URL is already set. Use this link if needed: ${url}`,
+                        duration: 12_000,
+                      });
+                      return p;
+                    })
+                  }
+                />
+              </div>
+            )}
 
             <div className="space-y-2"><Label>Initial document URL (PDF/DOCX)</Label><Input value={form.initialDocumentUrl} onChange={(e) => setForm((p) => ({ ...p, initialDocumentUrl: e.target.value }))} /></div>
             <div className="space-y-2"><Label>Legacy chat history</Label><Textarea value={form.chatHistory} onChange={(e) => setForm((p) => ({ ...p, chatHistory: e.target.value }))} /></div>
 
+            <div className="space-y-2 md:col-span-2">
+              <Label>Credentials (one per line)</Label>
+              <Textarea
+                className="min-h-[110px]"
+                value={form.credentialsText}
+                onChange={(e) => setForm((p) => ({ ...p, credentialsText: e.target.value }))}
+                placeholder="Hostinger | https://hpanel.hostinger.com&#10;cPanel user | john_doe&#10;SSH private key | -----BEGIN OPENSSH PRIVATE KEY-----..."
+              />
+            </div>
             <div className="space-y-2 md:col-span-2"><Label>Related metadata (JSON)</Label><Textarea className="font-mono min-h-[120px]" value={form.metadataJson} onChange={(e) => setForm((p) => ({ ...p, metadataJson: e.target.value }))} /></div>
 
             <div className="space-y-2 md:col-span-2">

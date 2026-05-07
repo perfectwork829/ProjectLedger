@@ -29,6 +29,7 @@ import AdminPayments from "@/pages/AdminPayments";
 import Payments from "@/pages/Payments";
 import NotFound from "./pages/NotFound";
 import OAuthGoogleDriveCallback from "@/pages/OAuthGoogleDriveCallback";
+import OAuthBoxCallback from "@/pages/OAuthBoxCallback";
 
 const queryClient = new QueryClient();
 
@@ -50,6 +51,14 @@ const App = () => (
               element={
                 <ProtectedRoute requiredRole="admin">
                   <OAuthGoogleDriveCallback />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/oauth/box/callback"
+              element={
+                <ProtectedRoute requiredRole="admin">
+                  <OAuthBoxCallback />
                 </ProtectedRoute>
               }
             />

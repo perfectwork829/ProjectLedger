@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Copy, ExternalLink, Pin, Link as LinkIcon, ChevronLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import ModuleSearchBar from '@/components/ModuleSearchBar';
 import { filterUsefulLinks } from '@/lib/clientSearch';
@@ -59,6 +60,7 @@ export default function UsefulLinks() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<UsefulLink | null>(null);
   const [searchInput, setSearchInput] = useState('');
+  const [listViewMode, setListViewMode] = useState<'table' | 'link' | 'list' | 'card'>('table');
 
   useEffect(() => {
     (async () => {
@@ -179,37 +181,93 @@ export default function UsefulLinks() {
         </Button>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <h2 className="text-2xl font-semibold text-foreground">{catLabel}</h2>
-          <ModuleSearchBar
-            value={searchInput}
-            onChange={setSearchInput}
-            placeholder={`Search in ${catLabel}…`}
-            id="useful-links-search-list"
-          />
+          <div className="flex w-full max-w-2xl gap-2">
+            <ModuleSearchBar
+              value={searchInput}
+              onChange={setSearchInput}
+              placeholder={`Search in ${catLabel}…`}
+              id="useful-links-search-list"
+            />
+            <Select value={listViewMode} onValueChange={(v) => setListViewMode(v as typeof listViewMode)}>
+              <SelectTrigger className="w-[140px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="table">Table mode</SelectItem>
+                <SelectItem value="link">Link mode</SelectItem>
+                <SelectItem value="list">List mode</SelectItem>
+                <SelectItem value="card">Card mode</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {catItems.length === 0 ? (
-            <div className="col-span-full rounded-lg border bg-card py-12 text-center">
-              <p className="text-lg font-medium text-foreground">{searchInput.trim() ? 'No matching links' : 'No links in this category'}</p>
-              <p className="mt-1 text-sm text-muted-foreground">{searchInput.trim() ? 'Try different keywords or clear the search.' : ''}</p>
-            </div>
-          ) : catItems.map(item => (
-            <Card key={item.id} className="cursor-pointer transition-shadow hover:shadow-md" onClick={() => { setSelectedItem(item); setView('detail'); }}>
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  {item.is_pinned && <Pin className="h-3.5 w-3.5 text-amber-500" />}
-                  {item.title}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {item.purpose && <p className="text-sm text-muted-foreground line-clamp-2 mb-2">{item.purpose}</p>}
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <LinkIcon className="h-3 w-3" />
-                  {item.links.length} link{item.links.length !== 1 ? 's' : ''}
+        {catItems.length === 0 ? (
+          <div className="rounded-lg border bg-card py-12 text-center">
+            <p className="text-lg font-medium text-foreground">{searchInput.trim() ? 'No matching links' : 'No links in this category'}</p>
+            <p className="mt-1 text-sm text-muted-foreground">{searchInput.trim() ? 'Try different keywords or clear the search.' : ''}</p>
+          </div>
+        ) : listViewMode === 'table' ? (
+          <div className="overflow-x-auto rounded-lg border bg-card">
+            <table className="min-w-full text-sm">
+              <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2">Title</th>
+                  <th className="px-3 py-2">Purpose</th>
+                  <th className="px-3 py-2">Links</th>
+                </tr>
+              </thead>
+              <tbody>
+                {catItems.map((item) => (
+                  <tr key={item.id} className="cursor-pointer border-t hover:bg-muted/30" onClick={() => { setSelectedItem(item); setView('detail'); }}>
+                    <td className="px-3 py-2 font-medium">{item.title}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{item.purpose || '-'}</td>
+                    <td className="px-3 py-2">{item.links.length}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : listViewMode === 'link' ? (
+          <div className="rounded-lg border bg-card divide-y">
+            {catItems.map((item) => (
+              <button key={item.id} type="button" className="w-full text-left px-3 py-2 hover:bg-muted/30" onClick={() => { setSelectedItem(item); setView('detail'); }}>
+                <span className="text-sm text-primary hover:underline">{item.title}</span>
+              </button>
+            ))}
+          </div>
+        ) : listViewMode === 'list' ? (
+          <div className="rounded-lg border bg-card">
+            {catItems.map((item) => (
+              <button key={item.id} type="button" className="flex w-full items-center justify-between gap-3 border-b px-3 py-2 text-left last:border-b-0 hover:bg-muted/30" onClick={() => { setSelectedItem(item); setView('detail'); }}>
+                <div className="min-w-0">
+                  <p className="truncate font-medium">{item.title}</p>
+                  <p className="text-xs text-muted-foreground">{item.links.length} link{item.links.length !== 1 ? 's' : ''}</p>
                 </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+                {item.is_pinned ? <Pin className="h-3.5 w-3.5 text-amber-500 shrink-0" /> : null}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {catItems.map(item => (
+              <Card key={item.id} className="cursor-pointer transition-shadow hover:shadow-md" onClick={() => { setSelectedItem(item); setView('detail'); }}>
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    {item.is_pinned && <Pin className="h-3.5 w-3.5 text-amber-500" />}
+                    {item.title}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {item.purpose && <p className="text-sm text-muted-foreground line-clamp-2 mb-2">{item.purpose}</p>}
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <LinkIcon className="h-3 w-3" />
+                    {item.links.length} link{item.links.length !== 1 ? 's' : ''}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
       </div>
     );
   }

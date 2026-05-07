@@ -23,7 +23,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Trash2 } from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen, Trash2 } from 'lucide-react';
 
 const TASK_STATUS_OPTIONS = ['todo', 'in_progress', 'review', 'done', 'blocked'] as const;
 
@@ -43,6 +43,8 @@ export default function Projects() {
   const [searchInput, setSearchInput] = useState('');
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [selectedStack, setSelectedStack] = useState<string>('all');
+  const [showCategoriesPanel, setShowCategoriesPanel] = useState(true);
+  const [showProjectsPanel, setShowProjectsPanel] = useState(true);
   const [newChat, setNewChat] = useState('');
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskAssignee, setNewTaskAssignee] = useState('');
@@ -188,11 +190,40 @@ export default function Projects() {
           <h2 className="text-2xl font-semibold tracking-tight text-foreground">Projects</h2>
           <p className="text-sm text-muted-foreground">Project pool with files, screenshots, chat, and task manager.</p>
         </div>
-        <ModuleSearchBar value={searchInput} onChange={setSearchInput} placeholder="Search projects..." id="projects-search" />
+        <div className="flex w-full max-w-2xl gap-2">
+          <ModuleSearchBar value={searchInput} onChange={setSearchInput} placeholder="Search projects..." id="projects-search" />
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={() => setShowProjectsPanel((v) => !v)}
+            title={showProjectsPanel ? 'Hide projects panel' : 'Show projects panel'}
+            aria-label={showProjectsPanel ? 'Hide projects panel' : 'Show projects panel'}
+            className="shrink-0"
+          >
+            {showProjectsPanel ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={() => setShowCategoriesPanel((v) => !v)}
+            title={showCategoriesPanel ? 'Hide categories panel' : 'Show categories panel'}
+            aria-label={showCategoriesPanel ? 'Hide categories panel' : 'Show categories panel'}
+            className="shrink-0"
+          >
+            {showCategoriesPanel ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
+          </Button>
+        </div>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-4">
-        <Card className="lg:col-span-1">
+      <div
+        className={`grid gap-4 ${
+          showCategoriesPanel && showProjectsPanel ? 'lg:grid-cols-4' : showCategoriesPanel || showProjectsPanel ? 'lg:grid-cols-3' : 'lg:grid-cols-1'
+        }`}
+      >
+        {showCategoriesPanel ? (
+          <Card className="lg:col-span-1">
           <CardHeader><CardTitle className="text-base">Categories</CardTitle></CardHeader>
           <CardContent className="max-h-[70vh] overflow-auto">
             <button
@@ -236,33 +267,36 @@ export default function Projects() {
               ))}
             </Accordion>
           </CardContent>
-        </Card>
+          </Card>
+        ) : null}
 
-        <Card className="lg:col-span-1">
-          <CardHeader><CardTitle className="text-base">Projects ({displayProjects.length})</CardTitle></CardHeader>
-          <CardContent className="space-y-2 max-h-[70vh] overflow-auto">
-            {displayProjects.map((project) => (
-              <button
-                key={project.id}
-                type="button"
-                onClick={() => setSelectedProjectId(project.id)}
-                className={`w-full rounded border p-3 text-left transition hover:border-primary/40 ${selectedProjectId === project.id ? 'border-primary bg-primary/5' : 'border-border'}`}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <p className="font-medium text-foreground line-clamp-1">{project.name}</p>
-                  <Badge variant="secondary" className="capitalize">{project.status}</Badge>
-                </div>
-                {project.project_source ? <p className="mt-1 text-xs text-muted-foreground capitalize">Project source(from): {project.project_source.replace('_', ' ')}</p> : null}
-                {project.main_stack ? <p className="mt-1 text-xs text-primary/90 capitalize">Stack: {project.main_stack.replace('_', ' ')}</p> : null}
-                <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{project.description || 'No description'}</p>
-                <p className="mt-2 text-xs text-muted-foreground">{clientLabel(project)}</p>
-              </button>
-            ))}
-            {displayProjects.length === 0 && <p className="text-sm text-muted-foreground">No projects found.</p>}
-          </CardContent>
-        </Card>
+        {showProjectsPanel ? (
+          <Card className="lg:col-span-1">
+            <CardHeader><CardTitle className="text-base">Projects ({displayProjects.length})</CardTitle></CardHeader>
+            <CardContent className="space-y-2 max-h-[70vh] overflow-auto">
+              {displayProjects.map((project) => (
+                <button
+                  key={project.id}
+                  type="button"
+                  onClick={() => setSelectedProjectId(project.id)}
+                  className={`w-full rounded border p-3 text-left transition hover:border-primary/40 ${selectedProjectId === project.id ? 'border-primary bg-primary/5' : 'border-border'}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="font-medium text-foreground line-clamp-1">{project.name}</p>
+                    <Badge variant="secondary" className="capitalize">{project.status}</Badge>
+                  </div>
+                  {project.project_source ? <p className="mt-1 text-xs text-muted-foreground capitalize">Project source(from): {project.project_source.replace('_', ' ')}</p> : null}
+                  {project.main_stack ? <p className="mt-1 text-xs text-primary/90 capitalize">Stack: {project.main_stack.replace('_', ' ')}</p> : null}
+                  <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{project.description || 'No description'}</p>
+                  <p className="mt-2 text-xs text-muted-foreground">{clientLabel(project)}</p>
+                </button>
+              ))}
+              {displayProjects.length === 0 && <p className="text-sm text-muted-foreground">No projects found.</p>}
+            </CardContent>
+          </Card>
+        ) : null}
 
-        <Card className="lg:col-span-2">
+        <Card className={showCategoriesPanel && showProjectsPanel ? 'lg:col-span-2' : showCategoriesPanel || showProjectsPanel ? 'lg:col-span-2' : 'lg:col-span-1'}>
           {!selectedProject ? (
             <CardContent className="py-12 text-center text-muted-foreground">Select a project to view details.</CardContent>
           ) : (
@@ -293,6 +327,7 @@ export default function Projects() {
                   <InfoLink label="Source code storage" url={selectedProject.source_storage_url} />
                   <InfoLink label="GitHub link" url={selectedProject.github_url} />
                   <InfoLink label="Initial document" url={selectedProject.initial_document_url} />
+                  <ProjectCredentials metadata={selectedProject.metadata_json} />
                   <div className="space-y-2">
                     <p className="text-sm font-medium">Source files (from Task promotion)</p>
                     {projectSourceFiles(selectedProject).length === 0 ? (
@@ -421,5 +456,37 @@ function InfoLink({ label, url }: { label: string; url: string | null }) {
       {url ? <a href={url} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline break-all">{url}</a> : <p className="text-sm text-muted-foreground">N/A</p>}
     </div>
   );
+}
+
+function ProjectCredentials({ metadata }: { metadata: Record<string, unknown> | null }) {
+  const credentials = parseCredentialRows(metadata);
+  return (
+    <div className="rounded border p-3 bg-muted/20">
+      <p className="text-xs text-muted-foreground">Credentials</p>
+      {credentials.length === 0 ? (
+        <p className="text-sm text-muted-foreground">N/A</p>
+      ) : (
+        <ul className="mt-2 space-y-2">
+          {credentials.map((c, idx) => (
+            <li key={`${c.label}-${idx}`}>
+              <p className="text-xs font-medium">{c.label}</p>
+              <p className="text-sm break-all whitespace-pre-wrap">{c.value}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function parseCredentialRows(metadata: Record<string, unknown> | null): Array<{ label: string; value: string }> {
+  const raw = (metadata as { credentials?: unknown } | null)?.credentials;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => {
+      const row = item as { label?: unknown; value?: unknown };
+      return { label: String(row.label || 'Credential'), value: String(row.value || '') };
+    })
+    .filter((x) => x.value.trim());
 }
 

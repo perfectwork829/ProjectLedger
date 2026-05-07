@@ -75,6 +75,11 @@ interface PersonnelItem {
   good_fit: boolean | null;
   birthday: string | null;
   identity_documents: unknown | null;
+  profile_titles_json?: unknown;
+  profile_overviews_json?: unknown;
+  profile_skills_json?: unknown;
+  profile_achievements_json?: unknown;
+  profile_blocks_json?: unknown;
 }
 
 const SEX_OPTIONS: Record<string, string> = { male: 'Male', female: 'Female', other: 'Other' };
@@ -82,6 +87,7 @@ interface UniEntry { name: string; course: string; start_date: string; end_date:
 
 const ROLES = [
   { value: 'caller', label: 'Caller', icon: '📞', color: 'bg-blue-500' },
+  { value: 'developer_for_job', label: 'Developer For Job', icon: '🧑‍💼', color: 'bg-cyan-500' },
   { value: 'developer', label: 'Developer', icon: '💻', color: 'bg-emerald-500' },
   { value: 'broker', label: 'Broker', icon: '🤝', color: 'bg-amber-500' },
   { value: 'recruiter', label: 'Recruiter', icon: '🎯', color: 'bg-rose-500' },
@@ -101,10 +107,54 @@ const availColor: Record<string, string> = {
 type View = 'roles' | 'list' | 'detail';
 
 interface LangEntry { language: string; level: string }
+interface WorkHistoryEntry { title: string; overview: string; start_date: string; end_date: string }
+interface ProfileBlock {
+  title: string;
+  overview: string;
+  skills: string[];
+  achievements: string[];
+  experience: WorkHistoryEntry[];
+}
 
 const parseUniversities = (val: string | null): UniEntry[] => {
   if (!val) return [];
   try { return JSON.parse(val); } catch { return []; }
+};
+const parseWorkHistoryEntries = (val: string | null): WorkHistoryEntry[] => {
+  if (!val) return [];
+  try {
+    const arr = JSON.parse(val);
+    if (!Array.isArray(arr)) return [];
+    return arr.map((x) => ({
+      title: String((x as { title?: unknown })?.title || ''),
+      overview: String((x as { overview?: unknown })?.overview || ''),
+      start_date: String((x as { start_date?: unknown })?.start_date || ''),
+      end_date: String((x as { end_date?: unknown })?.end_date || ''),
+    }));
+  } catch {
+    return [];
+  }
+};
+const parseTextItems = (raw: unknown): string[] => {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((x) => String(x || '').trim()).filter(Boolean);
+};
+const parseProfileBlocks = (raw: unknown): ProfileBlock[] => {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((x) => {
+    const obj = (x || {}) as Record<string, unknown>;
+    const expRaw = Array.isArray(obj.experience) ? obj.experience : [];
+    return {
+      title: String(obj.title || ''),
+      overview: String(obj.overview || ''),
+      skills: parseTextItems(obj.skills),
+      achievements: parseTextItems(obj.achievements),
+      experience: expRaw.map((e) => {
+        const eo = (e || {}) as Record<string, unknown>;
+        return { title: String(eo.title || ''), overview: String(eo.overview || ''), start_date: String(eo.start_date || ''), end_date: String(eo.end_date || '') };
+      }),
+    };
+  });
 };
 
 function CopyButton({ value }: { value: string }) {
@@ -215,6 +265,12 @@ export default function Personnel() {
     const p = selectedPerson;
     const fullName = [p.first_name, p.middle_name, p.last_name].filter(Boolean).join(' ');
     const langs = parseLanguages(p.languages);
+    const profileTitles = parseTextItems(p.profile_titles_json);
+    const profileOverviews = parseTextItems(p.profile_overviews_json);
+    const profileSkills = parseTextItems(p.profile_skills_json);
+    const profileAchievements = parseTextItems(p.profile_achievements_json);
+    const profileBlocks = parseProfileBlocks(p.profile_blocks_json);
+    const isDeveloperForJob = p.role === 'developer_for_job';
 
     return (
       <div className="space-y-8">
@@ -225,7 +281,23 @@ export default function Personnel() {
               <h2 className="text-3xl font-bold text-foreground">{fullName}</h2>
               {p.good_fit && <span title="Good Fit"><ThumbsUp className="h-5 w-5 text-emerald-500" /></span>}
             </div>
-            {p.title && <p className="text-lg text-muted-foreground">{p.title}</p>}
+            {isDeveloperForJob ? (
+              profileBlocks.length > 0 ? (
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {profileBlocks.map((b, i) => (
+                    <Badge key={`${b.title}-${i}`} variant="outline">{b.title || `Profile ${i + 1}`}</Badge>
+                  ))}
+                </div>
+              ) : profileTitles.length > 0 ? (
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {profileTitles.map((t, i) => (
+                    <Badge key={`${t}-${i}`} variant="outline">{t}</Badge>
+                  ))}
+                </div>
+              ) : p.title ? <p className="text-lg text-muted-foreground">{p.title}</p> : null
+            ) : (
+              p.title ? <p className="text-lg text-muted-foreground">{p.title}</p> : null
+            )}
             <div className="flex items-center gap-2 mt-1 flex-wrap">
               <Badge variant="secondary">{ROLES_MAP[p.role]?.label || p.role}</Badge>
               <Badge variant="secondary" className={availColor[p.availability_status || ''] || ''}>{p.availability_status || 'N/A'}</Badge>
@@ -236,7 +308,26 @@ export default function Personnel() {
           </div>
         </div>
 
-        {p.overview && (<div className="bg-muted/50 rounded-lg p-4"><p className="text-sm text-foreground/80 whitespace-pre-line">{p.overview}</p></div>)}
+        {isDeveloperForJob ? (
+          profileBlocks.length > 0 ? (
+            <div className="space-y-2">
+              {profileBlocks.map((b, i) => (
+                <div key={`ov-${i}`} className="bg-muted/50 rounded-lg p-4 space-y-1">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{b.title || `Profile ${i + 1}`}</p>
+                  {b.overview ? <p className="text-sm text-foreground/80 whitespace-pre-line">{b.overview}</p> : null}
+                </div>
+              ))}
+            </div>
+          ) : profileOverviews.length > 0 ? (
+            <div className="bg-muted/50 rounded-lg p-4 space-y-2">
+              {profileOverviews.map((o, i) => (
+                <p key={`${o}-${i}`} className="text-sm text-foreground/80 whitespace-pre-line">- {o}</p>
+              ))}
+            </div>
+          ) : p.overview ? <div className="bg-muted/50 rounded-lg p-4"><p className="text-sm text-foreground/80 whitespace-pre-line">{p.overview}</p></div> : null
+        ) : (
+          p.overview ? <div className="bg-muted/50 rounded-lg p-4"><p className="text-sm text-foreground/80 whitespace-pre-line">{p.overview}</p></div> : null
+        )}
 
         <Separator />
 
@@ -320,15 +411,109 @@ export default function Personnel() {
           <InfoRow label="Children" value={p.children_status} />
         </DetailSection>
 
-        {p.skills && <DetailSection icon={Star} title="Skills"><div className="flex flex-wrap gap-2">{p.skills.split(',').map((s, i) => <Badge key={i} variant="secondary" className="text-sm font-normal">{s.trim()}</Badge>)}</div></DetailSection>}
-        {p.achievements && <DetailSection icon={Star} title="Achievements"><div className="prose prose-sm max-w-none text-foreground/80 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5" dangerouslySetInnerHTML={{ __html: p.achievements }} /></DetailSection>}
+        {isDeveloperForJob ? (
+          profileBlocks.length > 0 ? (
+            <DetailSection icon={Star} title="Skills">
+              <div className="space-y-2">
+                {profileBlocks.map((b, i) => (
+                  <div key={`sk-${i}`} className="rounded border bg-muted/20 p-2">
+                    <p className="text-xs font-semibold text-muted-foreground mb-1">{b.title || `Profile ${i + 1}`}</p>
+                    <div className="flex flex-wrap gap-2">
+                      {b.skills.map((s, j) => <Badge key={`${s}-${j}`} variant="secondary" className="text-sm font-normal">{s}</Badge>)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </DetailSection>
+          ) : profileSkills.length > 0 ? (
+            <DetailSection icon={Star} title="Skills">
+              <div className="flex flex-wrap gap-2">{profileSkills.map((s, i) => <Badge key={i} variant="secondary" className="text-sm font-normal">{s}</Badge>)}</div>
+            </DetailSection>
+          ) : null
+        ) : (
+          p.skills ? <DetailSection icon={Star} title="Skills"><div className="flex flex-wrap gap-2">{p.skills.split(',').map((s, i) => <Badge key={i} variant="secondary" className="text-sm font-normal">{s.trim()}</Badge>)}</div></DetailSection> : null
+        )}
+        {isDeveloperForJob ? (
+          profileBlocks.length > 0 ? (
+            <DetailSection icon={Star} title="Achievements">
+              <div className="space-y-2">
+                {profileBlocks.map((b, i) => (
+                  <div key={`ac-${i}`} className="rounded border bg-muted/20 p-2">
+                    <p className="text-xs font-semibold text-muted-foreground mb-1">{b.title || `Profile ${i + 1}`}</p>
+                    <ul className="list-disc pl-5 space-y-1 text-sm text-foreground/80">
+                      {b.achievements.map((a, j) => <li key={`${a}-${j}`}>{a}</li>)}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            </DetailSection>
+          ) : profileAchievements.length > 0 ? (
+            <DetailSection icon={Star} title="Achievements">
+              <ul className="list-disc pl-5 space-y-1 text-sm text-foreground/80">
+                {profileAchievements.map((a, i) => <li key={`${a}-${i}`}>{a}</li>)}
+              </ul>
+            </DetailSection>
+          ) : null
+        ) : (
+          p.achievements ? <DetailSection icon={Star} title="Achievements"><div className="prose prose-sm max-w-none text-foreground/80 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5" dangerouslySetInnerHTML={{ __html: p.achievements }} /></DetailSection> : null
+        )}
 
         <Separator />
 
         <DetailSection icon={Briefcase} title="Work">
           <InfoRow label="Working Project" value={p.working_project_name} />
           <InfoRow label="Met Place" value={MET_PLACES[p.met_place || ''] || p.met_place} />
-          {p.working_history && <div className="mt-2"><p className="text-xs font-semibold text-muted-foreground mb-1">Working History</p><div className="prose prose-sm max-w-none text-foreground/80 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5" dangerouslySetInnerHTML={{ __html: p.working_history }} /></div>}
+          {p.working_history ? (
+            <div className="mt-2">
+              <p className="text-xs font-semibold text-muted-foreground mb-1">Working History</p>
+              {(() => {
+                if (isDeveloperForJob && profileBlocks.length > 0) {
+                  return (
+                    <div className="space-y-2">
+                      {profileBlocks.map((b, i) => (
+                        <div key={`exb-${i}`} className="rounded border bg-muted/20 p-2">
+                          <p className="text-xs font-semibold text-muted-foreground mb-1">{b.title || `Profile ${i + 1}`}</p>
+                          <div className="space-y-2">
+                            {b.experience.map((w, j) => (
+                              <div key={`${w.title}-${j}`} className="rounded border bg-background p-2">
+                                <p className="text-sm font-medium">{w.title || 'Untitled role'}</p>
+                                {(w.start_date || w.end_date) ? <p className="text-xs text-muted-foreground">{w.start_date || 'Unknown'} - {w.end_date || 'Present'}</p> : null}
+                                {w.overview ? <p className="mt-1 text-sm text-foreground/80 whitespace-pre-line">{w.overview}</p> : null}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                }
+                const rows = parseWorkHistoryEntries(p.working_history);
+                if (rows.length === 0) {
+                  return (
+                    <div
+                      className="prose prose-sm max-w-none text-foreground/80 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5"
+                      dangerouslySetInnerHTML={{ __html: p.working_history }}
+                    />
+                  );
+                }
+                return (
+                  <div className="space-y-2">
+                    {rows.map((w, i) => (
+                      <div key={`${w.title}-${i}`} className="rounded border bg-muted/20 p-2">
+                        <p className="text-sm font-medium">{w.title || 'Untitled role'}</p>
+                        {(w.start_date || w.end_date) ? (
+                          <p className="text-xs text-muted-foreground">
+                            {w.start_date || 'Unknown'} - {w.end_date || 'Present'}
+                          </p>
+                        ) : null}
+                        {w.overview ? <p className="mt-1 text-sm text-foreground/80 whitespace-pre-line">{w.overview}</p> : null}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
+          ) : null}
           {p.activity_notes && <div className="mt-2"><p className="text-xs font-semibold text-muted-foreground mb-1">Activity Notes</p><p className="text-sm text-foreground/80 whitespace-pre-line">{p.activity_notes}</p></div>}
         </DetailSection>
 
