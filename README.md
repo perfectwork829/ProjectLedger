@@ -1,3 +1,3 @@
-# Welcome to your Lovable project
+# BenchHub
 
-TODO: Document your project here
+Freelance operations app (tasks, projects, clients, payments, personnel, and more).

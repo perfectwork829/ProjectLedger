@@ -28,7 +28,7 @@ import { CloudBoxUpload } from '@/components/CloudBoxUpload';
 import { CountrySelect } from '@/components/CountrySelect';
 import { canonicalCountryNameOrLegacy } from '@/lib/countries';
 import { TimezoneSelect } from '@/components/TimezoneSelect';
-import { canonicalTimezoneOrLegacy } from '@/lib/timezones';
+import { canonicalTimezoneOrLegacy, suggestedTimezoneForCountry } from '@/lib/timezones';
 import {
   AccountRef,
   ClientRef,
@@ -47,6 +47,8 @@ import {
   hasPendingMilestonePayment,
   firstPendingMilestone,
   taskPoolContractGross,
+  compareTaskPoolItemsWithinPriority,
+  computeTaskPoolDragPatches,
   TASK_POOL_ITEM_STATUS_OPTIONS,
   TASK_POOL_SUBTASK_BOARD_STATUSES,
   poolSubtaskBoardLabel,
@@ -397,7 +399,7 @@ export default function AdminTaskPool() {
         const pa = PRIORITY_RANK[a.priority] ?? 999;
         const pb = PRIORITY_RANK[b.priority] ?? 999;
         if (pa !== pb) return prioritySortOrder === 'high_first' ? pa - pb : pb - pa;
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        return compareTaskPoolItemsWithinPriority(a, b);
       }),
     [filteredItems, prioritySortOrder],
   );
@@ -443,10 +445,18 @@ export default function AdminTaskPool() {
     }
   };
 
-  const updatePoolItemQuick = async (id: string, patch: Partial<Pick<TaskPoolItemRecord, 'priority' | 'status'>>) => {
+  const updatePoolItemQuick = async (id: string, patch: Partial<Pick<TaskPoolItemRecord, 'priority' | 'status' | 'priority_order'>>) => {
+    const row = items.find((x) => x.id === id);
+    let priority_order = patch.priority_order;
+    if (patch.priority !== undefined && priority_order === undefined && row && patch.priority !== row.priority) {
+      const maxO = items
+        .filter((x) => x.id !== id && x.priority === patch.priority)
+        .reduce((m, x) => Math.max(m, Number(x.priority_order ?? 0)), -1);
+      priority_order = maxO + 1;
+    }
     const res = await supabase
       .from('task_pool_items')
-      .update({ ...patch, updated_at: new Date().toISOString() })
+      .update({ ...patch, ...(priority_order !== undefined ? { priority_order } : {}), updated_at: new Date().toISOString() })
       .eq('id', id)
       .select('*')
       .single();
@@ -462,9 +472,31 @@ export default function AdminTaskPool() {
 
   const applyDraggedPriority = async (target: TaskPoolItemRecord) => {
     if (!draggingTaskId || draggingTaskId === target.id) return;
-    const dragged = items.find((x) => x.id === draggingTaskId);
-    if (!dragged || dragged.priority === target.priority) return;
-    await updatePoolItemQuick(dragged.id, { priority: target.priority });
+    const patches = computeTaskPoolDragPatches(items, draggingTaskId, target.id);
+    if (!patches?.length) return;
+    const ts = new Date().toISOString();
+    const results = await Promise.all(
+      patches.map((p) =>
+        supabase
+          .from('task_pool_items')
+          .update({ priority: p.priority, priority_order: p.priority_order, updated_at: ts })
+          .eq('id', p.id)
+          .select('*')
+          .maybeSingle(),
+      ),
+    );
+    const bad = results.find((r) => r.error);
+    if (bad?.error) {
+      toast({ title: 'Reorder failed', description: bad.error.message, variant: 'destructive' });
+      setDraggingTaskId(null);
+      return;
+    }
+    const byId = new Map<string, TaskPoolItemRecord>();
+    for (const r of results) {
+      if (r.data) byId.set(r.data.id, r.data as TaskPoolItemRecord);
+    }
+    setItems((prev) => prev.map((x) => byId.get(x.id) ?? x));
+    setDraggingTaskId(null);
   };
 
   const priorityCounts = useMemo(() => {
@@ -1138,7 +1170,8 @@ export default function AdminTaskPool() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-xs text-muted-foreground">
-              Showing {sortedItems.length} tasks, sorted by priority ({prioritySortOrder === 'high_first' ? 'high to low' : 'low to high'}).
+              Showing {sortedItems.length} tasks, sorted by priority ({prioritySortOrder === 'high_first' ? 'high to low' : 'low to high'}). Within the
+              same priority, drag a task onto another to place it <span className="font-medium text-foreground/80">before</span> that task.
             </p>
             <Button
               type="button"
@@ -2089,18 +2122,20 @@ export default function AdminTaskPool() {
                 value={form.clientId || 'none'}
                 onValueChange={(v) => {
                   const c = clients.find((x) => x.id === v);
-                  setForm((p) => ({
-                    ...p,
-                    clientId: v === 'none' ? '' : v,
-                    clientCountry:
-                      v === 'none'
-                        ? p.clientCountry
-                        : canonicalCountryNameOrLegacy(c?.country || '') || p.clientCountry,
-                    clientTimezone:
-                      v === 'none'
-                        ? p.clientTimezone
-                        : canonicalTimezoneOrLegacy(c?.timezone || '') || p.clientTimezone,
-                  }));
+                  setForm((p) => {
+                    if (v === 'none') {
+                      return { ...p, clientId: '', clientCountry: p.clientCountry, clientTimezone: p.clientTimezone };
+                    }
+                    const newCountry = canonicalCountryNameOrLegacy(c?.country || '') || p.clientCountry;
+                    const fromClientTz = canonicalTimezoneOrLegacy(c?.timezone || '');
+                    const fromCountry = suggestedTimezoneForCountry(newCountry);
+                    return {
+                      ...p,
+                      clientId: v,
+                      clientCountry: newCountry,
+                      clientTimezone: fromClientTz || fromCountry || '',
+                    };
+                  });
                 }}
               >
                 <SelectTrigger>
@@ -2124,7 +2159,16 @@ export default function AdminTaskPool() {
             <CountrySelect
               label="Client country"
               value={form.clientCountry}
-              onChange={(clientCountry) => setForm((p) => ({ ...p, clientCountry }))}
+              onChange={(clientCountry) =>
+                setForm((p) => {
+                  const suggested = suggestedTimezoneForCountry(clientCountry);
+                  return {
+                    ...p,
+                    clientCountry,
+                    ...(suggested ? { clientTimezone: suggested } : {}),
+                  };
+                })
+              }
             />
             <TimezoneSelect
               label="Client timezone"

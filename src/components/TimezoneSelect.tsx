@@ -26,9 +26,14 @@ function parseLegacyToken(v: string): string | null {
   }
 }
 
+/** Strip replacement/BOM noise from DB or pasted values (avoids U+FFFD in the trigger). */
+function cleanTzValue(raw: string) {
+  return raw.replace(/\uFFFD/g, '').replace(/\uFEFF/g, '').trim();
+}
+
 export function TimezoneSelect({ id, label, value, onChange, disabled }: Props) {
-  const normalized = matchTimezone(value);
-  const trimmed = value.trim();
+  const trimmed = cleanTzValue(value);
+  const normalized = matchTimezone(trimmed);
   const selectValue = !trimmed ? NONE : normalized ?? legacyToken(trimmed);
 
   return (
@@ -51,13 +56,13 @@ export function TimezoneSelect({ id, label, value, onChange, disabled }: Props) 
         </SelectTrigger>
         <SelectContent className="max-h-[min(320px,70vh)]">
           <SelectItem value={NONE} textValue="None">
-            <span className="text-muted-foreground">— None —</span>
+            <span className="text-muted-foreground">None</span>
           </SelectItem>
           {trimmed && !normalized ? (
             <SelectItem value={legacyToken(trimmed)} textValue={trimmed}>
               <span className="flex flex-col items-start gap-0">
                 <span>{trimmed}</span>
-                <span className="text-[11px] text-muted-foreground">Saved value — pick timezone below to normalize</span>
+                <span className="text-[11px] text-muted-foreground">Saved value - pick timezone below to normalize</span>
               </span>
             </SelectItem>
           ) : null}

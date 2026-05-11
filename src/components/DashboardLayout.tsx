@@ -50,10 +50,8 @@ export default function DashboardLayout() {
   const SidebarContent = () => (
     <div className="flex h-full flex-col">
       <div className="flex h-14 items-center gap-2 border-b border-sidebar-border px-4">
-        <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-primary-foreground text-sm font-bold">
-          F
-        </div>
-        <span className="font-semibold text-sidebar-foreground">FreelanceHub</span>
+        <img src="/favicon.svg" alt="" className="h-8 w-8 shrink-0 rounded-md" width={32} height={32} />
+        <span className="font-semibold text-sidebar-foreground">BenchHub</span>
       </div>
 
       <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">

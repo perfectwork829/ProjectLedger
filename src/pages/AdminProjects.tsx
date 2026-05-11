@@ -28,7 +28,7 @@ import { CloudBoxUpload } from '@/components/CloudBoxUpload';
 import { CountrySelect } from '@/components/CountrySelect';
 import { TimezoneSelect } from '@/components/TimezoneSelect';
 import { canonicalCountryNameOrLegacy } from '@/lib/countries';
-import { canonicalTimezoneOrLegacy } from '@/lib/timezones';
+import { canonicalTimezoneOrLegacy, suggestedTimezoneForCountry } from '@/lib/timezones';
 import {
   AccountRef,
   ClientRef,
@@ -820,21 +820,26 @@ export default function AdminProjects() {
 
             <div className="space-y-2"><Label>Client (linked)</Label><Select value={form.clientId} onValueChange={(v) => {
               const selected = clients.find((c) => c.id === v);
-              setForm((p) => ({
-                ...p,
-                clientId: v === 'none' ? '' : v,
-                clientCountry:
-                  v === 'none'
-                    ? p.clientCountry
-                    : canonicalCountryNameOrLegacy(selected?.country || '') || p.clientCountry,
-                clientTimezone:
-                  v === 'none'
-                    ? p.clientTimezone
-                    : canonicalTimezoneOrLegacy(selected?.timezone || '') || p.clientTimezone,
-              }));
+              setForm((p) => {
+                if (v === 'none') {
+                  return { ...p, clientId: '', clientCountry: p.clientCountry, clientTimezone: p.clientTimezone };
+                }
+                const newCountry = canonicalCountryNameOrLegacy(selected?.country || '') || p.clientCountry;
+                const fromClientTz = canonicalTimezoneOrLegacy(selected?.timezone || '');
+                const fromCountry = suggestedTimezoneForCountry(newCountry);
+                return {
+                  ...p,
+                  clientId: v,
+                  clientCountry: newCountry,
+                  clientTimezone: fromClientTz || fromCountry || '',
+                };
+              });
             }}><SelectTrigger><SelectValue placeholder="Select client" /></SelectTrigger><SelectContent><SelectItem value="none">None</SelectItem>{clients.map((c) => <SelectItem key={c.id} value={c.id}>{c.first_name} {c.last_name}{c.company_name ? ` (${c.company_name})` : ''}</SelectItem>)}</SelectContent></Select></div>
             <div className="space-y-2"><Label>Client name (manual)</Label><Input value={form.clientNameOverride} onChange={(e) => setForm((p) => ({ ...p, clientNameOverride: e.target.value }))} placeholder="Use when not in client module" /></div>
-            <CountrySelect label="Client country" value={form.clientCountry} onChange={(clientCountry) => setForm((p) => ({ ...p, clientCountry }))} />
+            <CountrySelect label="Client country" value={form.clientCountry} onChange={(clientCountry) => setForm((p) => {
+              const suggested = suggestedTimezoneForCountry(clientCountry);
+              return { ...p, clientCountry, ...(suggested ? { clientTimezone: suggested } : {}) };
+            })} />
             <TimezoneSelect label="Client timezone" value={form.clientTimezone} onChange={(clientTimezone) => setForm((p) => ({ ...p, clientTimezone }))} />
 
             <div className="space-y-2"><Label>Account linkage</Label><Select value={form.accountId} onValueChange={(v) => setForm((p) => ({ ...p, accountId: v === 'none' ? '' : v }))}><SelectTrigger><SelectValue placeholder="Select account" /></SelectTrigger><SelectContent><SelectItem value="none">None</SelectItem>{accounts.map((a) => <SelectItem key={a.id} value={a.id}>{a.platform} @{a.username}</SelectItem>)}</SelectContent></Select></div>

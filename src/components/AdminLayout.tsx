@@ -14,7 +14,7 @@ import {
   Menu,
   X,
   ArrowLeft,
-  LinkIcon,
+  HelpCircle,
   ChevronLeft,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -22,8 +22,11 @@ import { cn } from '@/lib/utils';
 
 const SIDEBAR_COLLAPSED_KEY = 'fh-admin-sidebar-collapsed';
 
-const COLLAPSED_RAIL_WIDTH = 'w-[5.25rem]';
+/** Icon-only rail: fixed width, content centered (no left stripe — it skewed visual alignment). */
+const COLLAPSED_RAIL_WIDTH = 'w-16';
 const EXPANDED_SIDEBAR_WIDTH = 'w-[260px]';
+
+const RAIL_ICON_HIT = 'inline-flex size-10 shrink-0 items-center justify-center rounded-md transition-colors';
 
 const adminItems = [
   { to: '/admin/roles', label: 'Manage Roles', icon: Shield },
@@ -33,7 +36,7 @@ const adminItems = [
   { to: '/admin/clients', label: 'Manage Clients', icon: Users },
   { to: '/admin/tasks', label: 'Manage Tasks', icon: ClipboardList },
   { to: '/admin/personnel', label: 'Manage Personnel', icon: Users2 },
-  { to: '/admin/useful-links', label: 'Manage Links', icon: LinkIcon },
+  { to: '/admin/useful-links', label: 'Manage Help', icon: HelpCircle },
 ];
 
 function readCollapsedPreference(): boolean {
@@ -46,23 +49,25 @@ function readCollapsedPreference(): boolean {
 
 const railMenuLinkClass = ({ isActive }: { isActive: boolean }) =>
   cn(
-    'relative flex h-10 w-full min-w-0 shrink-0 items-center justify-center rounded-sm py-2 text-sm font-medium tracking-tight transition-colors',
-    'before:pointer-events-none before:absolute before:left-0 before:top-0 before:h-full before:w-[3px] before:content-[""]',
+    RAIL_ICON_HIT,
+    'text-sm font-medium tracking-tight',
     isActive
-      ? 'bg-sidebar-accent font-semibold text-sidebar-accent-foreground before:bg-primary'
-      : 'text-sidebar-foreground before:bg-transparent hover:bg-muted/80 hover:text-sidebar-foreground hover:before:bg-sidebar-border',
+      ? 'bg-sidebar-accent font-semibold text-sidebar-accent-foreground shadow-sm'
+      : 'text-sidebar-foreground hover:bg-muted/80 hover:text-sidebar-foreground',
   );
 
 const railBackLinkClass = ({ isActive }: { isActive: boolean }) =>
   cn(
-    'relative flex h-10 w-full min-w-0 shrink-0 items-center justify-center rounded-sm py-2 text-sm font-medium tracking-tight transition-colors',
-    'before:pointer-events-none before:absolute before:left-0 before:top-0 before:h-full before:w-[3px] before:bg-transparent before:content-[""]',
-    'text-muted-foreground hover:bg-muted hover:text-foreground hover:before:bg-sidebar-border',
+    RAIL_ICON_HIT,
+    'text-sm font-medium tracking-tight text-muted-foreground hover:bg-muted hover:text-foreground',
     isActive && 'bg-muted/60 text-foreground',
   );
 
-const railChromeRowClass =
-  'relative flex h-10 w-full min-w-0 shrink-0 items-center justify-center rounded-sm py-2 text-muted-foreground transition-colors before:pointer-events-none before:absolute before:left-0 before:top-0 before:h-full before:w-[3px] before:bg-transparent before:content-[""] hover:bg-muted/80 hover:text-sidebar-foreground hover:before:bg-sidebar-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background';
+const railChromeButtonClass = cn(
+  RAIL_ICON_HIT,
+  'text-muted-foreground hover:bg-muted/80 hover:text-sidebar-foreground',
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+);
 
 function AdminRailNavItem({
   to,
@@ -84,7 +89,7 @@ function AdminRailNavItem({
   );
 
   return (
-    <li className="w-full min-w-0 shrink-0 list-none">
+    <li className="flex w-full list-none justify-center py-4">
       <Tooltip delayDuration={300}>
         <TooltipTrigger asChild>{link}</TooltipTrigger>
         <TooltipContent side="right" sideOffset={8}>
@@ -109,10 +114,10 @@ function AdminDesktopRail({
 
   return (
     <div className="flex h-full min-w-0 flex-col bg-sidebar">
-      <div className="shrink-0 border-b border-sidebar-border bg-card">
+      <div className="flex h-14 shrink-0 items-center justify-center border-b border-sidebar-border bg-card px-2">
         <Tooltip delayDuration={300}>
           <TooltipTrigger asChild>
-            <button type="button" className={railChromeRowClass} aria-label="Show full menu" onClick={onExpand}>
+            <button type="button" className={railChromeButtonClass} aria-label="Show full menu" onClick={onExpand}>
               <ChevronLeft className="h-4 w-4 shrink-0" strokeWidth={2} />
             </button>
           </TooltipTrigger>
@@ -120,9 +125,9 @@ function AdminDesktopRail({
         </Tooltip>
       </div>
 
-      <nav className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-3 [scrollbar-gutter:stable]" aria-label="Admin">
-        <ul className="flex flex-col gap-0.5">
-          <li className="w-full min-w-0 shrink-0 list-none">
+      <nav className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2 py-3 [scrollbar-gutter:stable]" aria-label="Admin">
+        <ul className="flex flex-col gap-0">
+          <li className="flex w-full list-none justify-center py-0.5">
             <Tooltip delayDuration={300}>
               <TooltipTrigger asChild>
                 <NavLink to="/dashboard" end onClick={onNavigate} title="Back to app" className={railBackLinkClass}>
@@ -141,10 +146,10 @@ function AdminDesktopRail({
         </ul>
       </nav>
 
-      <div className="shrink-0 border-t border-sidebar-border bg-card/50">
+      <div className="flex shrink-0 items-center justify-center border-t border-sidebar-border bg-card/50 px-2 py-3">
         <Tooltip delayDuration={300}>
           <TooltipTrigger asChild>
-            <button type="button" className={cn(railChromeRowClass, 'w-full bg-transparent')} onClick={onSignOut} aria-label="Sign out">
+            <button type="button" className={railChromeButtonClass} onClick={onSignOut} aria-label="Sign out">
               <LogOut className="h-4 w-4 shrink-0" strokeWidth={2} />
             </button>
           </TooltipTrigger>
@@ -202,12 +207,10 @@ export default function AdminLayout() {
   const DesktopSidebarExpanded = ({ onNavigate }: { onNavigate: () => void }) => (
     <div className="flex h-full flex-col">
       <div className="flex h-12 shrink-0 items-center gap-2 border-b border-sidebar-border bg-card px-3">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm bg-primary text-[11px] font-bold text-primary-foreground">
-          ADM
-        </div>
+        <img src="/favicon.svg" alt="" className="h-8 w-8 shrink-0 rounded-sm" width={32} height={32} />
         <div className="min-w-0 flex-1">
           <span className="block truncate text-[13px] font-semibold tracking-tight text-sidebar-foreground">Administration</span>
-          <span className="block truncate text-[11px] font-normal text-muted-foreground">FreelancerHub</span>
+          <span className="block truncate text-[11px] font-normal text-muted-foreground">BenchHub</span>
         </div>
         <Tooltip delayDuration={300}>
           <TooltipTrigger asChild>
@@ -262,12 +265,10 @@ export default function AdminLayout() {
   const MobileSidebarDrawer = ({ onNavigate }: { onNavigate: () => void }) => (
     <div className="flex h-full flex-col">
       <div className="flex h-12 shrink-0 items-center gap-2 border-b border-sidebar-border bg-card px-3">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm bg-primary text-[11px] font-bold text-primary-foreground">
-          ADM
-        </div>
+        <img src="/favicon.svg" alt="" className="h-8 w-8 shrink-0 rounded-sm" width={32} height={32} />
         <div className="min-w-0 flex-1 pr-8">
           <span className="block truncate text-[13px] font-semibold tracking-tight text-sidebar-foreground">Administration</span>
-          <span className="block truncate text-[11px] font-normal text-muted-foreground">FreelancerHub</span>
+          <span className="block truncate text-[11px] font-normal text-muted-foreground">BenchHub</span>
         </div>
       </div>
 

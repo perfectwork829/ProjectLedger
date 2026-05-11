@@ -28,6 +28,7 @@ import { cn } from '@/lib/utils';
 import ModuleSearchBar from '@/components/ModuleSearchBar';
 import { CLIENT_SEARCH_COLUMNS } from '@/lib/supabaseSearch';
 import { filterItemsBySearch } from '@/lib/clientSearch';
+import { resolveUtcSelectValueForIana, suggestedTimezoneForCountry } from '@/lib/timezones';
 
 interface Client {
   id: string;
@@ -238,6 +239,8 @@ const TIMEZONES = [
   { value: 'UTC+12:00', label: 'UTC+12:00 – Auckland, Fiji' },
   { value: 'UTC+13:00', label: 'UTC+13:00 – Samoa, Tonga' },
 ];
+
+const TIMEZONE_SELECT_VALUES = TIMEZONES.map((t) => t.value) as readonly string[];
 
 const MET_PLACES = [
   { value: 'skype', label: 'Skype' },
@@ -925,7 +928,18 @@ export default function AdminClients() {
                 </div>
                 <div className="space-y-2"><Label>Profile Photo</Label><FileUpload value={form.profile_photo_url} onChange={(url) => set('profile_photo_url', url)} folder="client-photos" label="Upload Photo" /></div>
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2"><Label>Country</Label><Input value={form.country} onChange={(e) => set('country', e.target.value)} /></div>
+                  <div className="space-y-2">
+                    <Label>Country</Label>
+                    <Input
+                      value={form.country}
+                      onChange={(e) => {
+                        const country = e.target.value;
+                        const iana = suggestedTimezoneForCountry(country);
+                        const tz = iana ? resolveUtcSelectValueForIana(iana, TIMEZONE_SELECT_VALUES) : null;
+                        setForm((prev) => ({ ...prev, country, ...(tz ? { timezone: tz } : {}) }));
+                      }}
+                    />
+                  </div>
                   <div className="space-y-2">
                     <Label>Timezone</Label>
                     <Select value={form.timezone} onValueChange={(v) => set('timezone', v)}>

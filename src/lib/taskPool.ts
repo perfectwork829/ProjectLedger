@@ -112,10 +112,68 @@ export interface TaskPoolItemRecord {
   github_url: string | null;
   status: TaskPoolItemStatus;
   priority: ProjectPriority;
+  /** Lower = earlier among tasks with the same `priority`. */
+  priority_order?: number;
   promoted_project_id: string | null;
   promoted_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/** Sort tasks that share the same `priority` (display + drag reorder). */
+export function compareTaskPoolItemsWithinPriority(a: TaskPoolItemRecord, b: TaskPoolItemRecord): number {
+  const oa = Number(a.priority_order ?? 0);
+  const ob = Number(b.priority_order ?? 0);
+  if (oa !== ob) return oa - ob;
+  return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+}
+
+export type TaskPoolOrderPatch = { id: string; priority: ProjectPriority; priority_order: number };
+
+/**
+ * Drop `draggedId` immediately before `targetId` in the target's priority band.
+ * If dragged had another priority, it moves into the target band and the old band is renumbered.
+ */
+export function computeTaskPoolDragPatches(
+  items: TaskPoolItemRecord[],
+  draggedId: string,
+  targetId: string,
+): TaskPoolOrderPatch[] | null {
+  const dragged = items.find((x) => x.id === draggedId);
+  const target = items.find((x) => x.id === targetId);
+  if (!dragged || !target || draggedId === targetId) return null;
+
+  const newPri = target.priority;
+  const oldPri = dragged.priority;
+
+  const withoutDragged = (pri: ProjectPriority) =>
+    items
+      .filter((x) => x.priority === pri && x.id !== draggedId)
+      .sort(compareTaskPoolItemsWithinPriority);
+
+  const newGroupBase = withoutDragged(newPri);
+  const ti = newGroupBase.findIndex((x) => x.id === targetId);
+  if (ti < 0) return null;
+
+  const newOrderIds = [
+    ...newGroupBase.slice(0, ti).map((x) => x.id),
+    draggedId,
+    ...newGroupBase.slice(ti).map((x) => x.id),
+  ];
+
+  const allPatches = new Map<string, TaskPoolOrderPatch>();
+  newOrderIds.forEach((id, i) => {
+    allPatches.set(id, { id, priority: newPri, priority_order: i });
+  });
+
+  if (oldPri !== newPri) {
+    const oldGroup = withoutDragged(oldPri);
+    oldGroup.forEach((row, i) => {
+      allPatches.set(row.id, { id: row.id, priority: oldPri, priority_order: i });
+    });
+  }
+
+  return [...allPatches.values()];
 }
 
 export interface TaskPoolScreenshot {

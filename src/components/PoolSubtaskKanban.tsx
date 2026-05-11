@@ -11,7 +11,7 @@ import {
 } from '@/lib/taskPool';
 import { FileText, GripVertical, Trash2 } from 'lucide-react';
 
-const DND_TYPE = 'application/x-freelancerhub-pool-subtask';
+const DND_TYPE = 'application/x-benchhub-pool-subtask';
 
 type Props = {
   subtasks: PoolSubtask[];

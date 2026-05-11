@@ -13,7 +13,7 @@ import {
   Menu,
   X,
   Shield,
-  LinkIcon,
+  HelpCircle,
   ChevronDown,
 } from 'lucide-react';
 import { useState } from 'react';
@@ -35,7 +35,7 @@ const navItems = [
   { to: '/dashboard/payments', label: 'Payments', icon: DollarSign },
   { to: '/dashboard/tasks', label: 'Tasks', icon: ClipboardList },
   { to: '/dashboard/personnel', label: 'Personnel', icon: Users2 },
-  { to: '/dashboard/useful-links', label: 'Links', icon: LinkIcon },
+  { to: '/dashboard/useful-links', label: 'Help & links', icon: HelpCircle },
 ];
 
 export default function FrontendLayout() {
@@ -73,11 +73,9 @@ export default function FrontendLayout() {
         <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4 md:px-6">
           <div className="flex items-center gap-5">
             <div className="flex items-center gap-2.5">
-              <div className="flex h-8 w-8 items-center justify-center rounded-sm bg-primary text-[13px] font-bold text-primary-foreground shadow-sm">
-                FH
-              </div>
+              <img src="/favicon.svg" alt="" className="h-8 w-8 shrink-0 rounded-sm shadow-sm" width={32} height={32} />
               <span className="hidden text-[15px] font-semibold tracking-tight text-foreground sm:inline">
-                FreelancerHub
+                BenchHub
               </span>
             </div>
 

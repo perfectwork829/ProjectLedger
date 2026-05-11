@@ -59,7 +59,7 @@ export function CountrySelect({ id, label, value, onChange, disabled }: Props) {
         </SelectTrigger>
         <SelectContent className="max-h-[min(320px,70vh)]">
           <SelectItem value={NONE} textValue="None">
-            <span className="text-muted-foreground">— None —</span>
+            <span className="text-muted-foreground">None</span>
           </SelectItem>
           {row?.legacy ? (
             <SelectItem value={legacyToken(row.name)} textValue={row.name}>
@@ -69,7 +69,7 @@ export function CountrySelect({ id, label, value, onChange, disabled }: Props) {
                 </span>
                 <span className="flex flex-col items-start gap-0">
                   <span>{row.name}</span>
-                  <span className="text-[11px] text-muted-foreground">Saved value — pick a country below to normalize</span>
+                  <span className="text-[11px] text-muted-foreground">Saved value - pick a country below to normalize</span>
                 </span>
               </span>
             </SelectItem>

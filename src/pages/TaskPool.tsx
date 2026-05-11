@@ -29,6 +29,8 @@ import {
   type TaskPoolScreenshot,
   type TaskPoolSourceFile,
   taskPoolContractGross,
+  compareTaskPoolItemsWithinPriority,
+  computeTaskPoolDragPatches,
 } from '@/lib/taskPool';
 import {
   getLastPeriodBounds,
@@ -199,7 +201,7 @@ export default function TaskPool() {
         const pa = PRIORITY_RANK[a.priority] ?? 999;
         const pb = PRIORITY_RANK[b.priority] ?? 999;
         if (pa !== pb) return prioritySortOrder === 'high_first' ? pa - pb : pb - pa;
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        return compareTaskPoolItemsWithinPriority(a, b);
       }),
     [filtered, prioritySortOrder],
   );
@@ -210,11 +212,19 @@ export default function TaskPool() {
     return counts;
   }, [sortedTasks]);
 
-  const updateTaskQuick = async (id: string, patch: Partial<Pick<TaskPoolItemRecord, 'priority' | 'status'>>) => {
+  const updateTaskQuick = async (id: string, patch: Partial<Pick<TaskPoolItemRecord, 'priority' | 'status' | 'priority_order'>>) => {
     if (!hasRole('admin')) return;
+    const row = items.find((x) => x.id === id);
+    let priority_order = patch.priority_order;
+    if (patch.priority !== undefined && priority_order === undefined && row && patch.priority !== row.priority) {
+      const maxO = items
+        .filter((x) => x.id !== id && x.priority === patch.priority)
+        .reduce((m, x) => Math.max(m, Number(x.priority_order ?? 0)), -1);
+      priority_order = maxO + 1;
+    }
     const res = await supabase
       .from('task_pool_items')
-      .update({ ...patch, updated_at: new Date().toISOString() })
+      .update({ ...patch, ...(priority_order !== undefined ? { priority_order } : {}), updated_at: new Date().toISOString() })
       .eq('id', id)
       .select('*')
       .single();
@@ -227,9 +237,31 @@ export default function TaskPool() {
 
   const applyDraggedPriority = async (target: TaskPoolItemRecord) => {
     if (!hasRole('admin') || !draggingTaskId || draggingTaskId === target.id) return;
-    const dragged = items.find((x) => x.id === draggingTaskId);
-    if (!dragged || dragged.priority === target.priority) return;
-    await updateTaskQuick(dragged.id, { priority: target.priority });
+    const patches = computeTaskPoolDragPatches(items, draggingTaskId, target.id);
+    if (!patches?.length) return;
+    const ts = new Date().toISOString();
+    const results = await Promise.all(
+      patches.map((p) =>
+        supabase
+          .from('task_pool_items')
+          .update({ priority: p.priority, priority_order: p.priority_order, updated_at: ts })
+          .eq('id', p.id)
+          .select('*')
+          .maybeSingle(),
+      ),
+    );
+    const bad = results.find((r) => r.error);
+    if (bad?.error) {
+      toast({ title: 'Reorder failed', description: bad.error.message, variant: 'destructive' });
+      setDraggingTaskId(null);
+      return;
+    }
+    const byId = new Map<string, TaskPoolItemRecord>();
+    for (const r of results) {
+      if (r.data) byId.set(r.data.id, r.data as TaskPoolItemRecord);
+    }
+    setItems((prev) => prev.map((x) => byId.get(x.id) ?? x));
+    setDraggingTaskId(null);
   };
   const thisPeriodSummary = useMemo(
     () => summarizeTaskPool(items.filter((x) => isWithinRange(x.task_received_at || x.created_at, thisPeriod.start, thisPeriod.end))),
@@ -451,6 +483,13 @@ export default function TaskPool() {
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-xs text-muted-foreground">
               Showing {sortedTasks.length} tasks, sorted by priority ({prioritySortOrder === 'high_first' ? 'high to low' : 'low to high'}).
+              {hasRole('admin') ? (
+                <>
+                  {' '}
+                  Within the same priority, drag a task onto another to place it{' '}
+                  <span className="font-medium text-foreground/80">before</span> that task.
+                </>
+              ) : null}
             </p>
             <Button
               type="button"

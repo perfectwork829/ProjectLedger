@@ -701,15 +701,15 @@ export default function AdminAccounts() {
                     </Select>
                   </div>
                   {freelancerMode && (
-                    <div className="space-y-2">
-                      <Label>Badge / Tier</Label>
-                      <Select value={form.badge_status} onValueChange={(v) => set('badge_status', v)}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {BADGE_OPTIONS.map((b) => <SelectItem key={b.value} value={b.value}>{b.label}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                  <div className="space-y-2">
+                    <Label>Badge / Tier</Label>
+                    <Select value={form.badge_status} onValueChange={(v) => set('badge_status', v)}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {BADGE_OPTIONS.map((b) => <SelectItem key={b.value} value={b.value}>{b.label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
                   )}
                 </div>
                 {form.status === 'disabled' && (
@@ -720,25 +720,25 @@ export default function AdminAccounts() {
                 )}
                 {freelancerMode && (
                   <>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label>Job Success Score (%)</Label>
-                        <Input type="number" min={0} max={100} value={form.job_success_score} onChange={(e) => set('job_success_score', e.target.value)} placeholder="e.g. 97" />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Working Hours</Label>
-                        <Input value={form.working_hours} onChange={(e) => set('working_hours', e.target.value)} placeholder="e.g. 30+ hrs/week" />
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Purchase Way</Label>
-                      <Select value={form.purchase_way} onValueChange={(v) => set('purchase_way', v)}>
-                        <SelectTrigger><SelectValue placeholder="How was this acquired?" /></SelectTrigger>
-                        <SelectContent>
-                          {PURCHASE_WAY_OPTIONS.map((p) => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Job Success Score (%)</Label>
+                    <Input type="number" min={0} max={100} value={form.job_success_score} onChange={(e) => set('job_success_score', e.target.value)} placeholder="e.g. 97" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Working Hours</Label>
+                    <Input value={form.working_hours} onChange={(e) => set('working_hours', e.target.value)} placeholder="e.g. 30+ hrs/week" />
+                  </div>
+                </div>
+                  <div className="space-y-2">
+                    <Label>Purchase Way</Label>
+                    <Select value={form.purchase_way} onValueChange={(v) => set('purchase_way', v)}>
+                      <SelectTrigger><SelectValue placeholder="How was this acquired?" /></SelectTrigger>
+                      <SelectContent>
+                        {PURCHASE_WAY_OPTIONS.map((p) => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
                   </>
                 )}
                 <div className="grid grid-cols-2 gap-4">
@@ -749,35 +749,35 @@ export default function AdminAccounts() {
                   <div className="space-y-2">
                     <Label>Country</Label>
                     <Input value={form.country} onChange={(e) => set('country', e.target.value)} placeholder="Country" />
-                  </div>
+                </div>
                 </div>
                 {freelancerMode && (
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Connected Payment Type</Label>
-                      <Select value={form.connected_payment_type} onValueChange={(v) => set('connected_payment_type', v)}>
-                        <SelectTrigger><SelectValue placeholder="Select payment type" /></SelectTrigger>
-                        <SelectContent>
-                          {PAYMENT_TYPES.map((p) => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Linked Payment Account</Label>
-                      <Select value={form.payment_account_id} onValueChange={(v) => set('payment_account_id', v)}>
-                        <SelectTrigger><SelectValue placeholder="Link to payment account" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">None</SelectItem>
-                          {paymentAccounts.map((pa) => (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Connected Payment Type</Label>
+                    <Select value={form.connected_payment_type} onValueChange={(v) => set('connected_payment_type', v)}>
+                      <SelectTrigger><SelectValue placeholder="Select payment type" /></SelectTrigger>
+                      <SelectContent>
+                        {PAYMENT_TYPES.map((p) => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Linked Payment Account</Label>
+                    <Select value={form.payment_account_id} onValueChange={(v) => set('payment_account_id', v)}>
+                      <SelectTrigger><SelectValue placeholder="Link to payment account" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">None</SelectItem>
+                        {paymentAccounts.map((pa) => (
                             <SelectItem key={pa.id} value={pa.id}>
                               {paymentProviderLabel(pa.provider)} — {pa.label || 'Untitled'}
                               {pa.account_identifier ? ` (${pa.account_identifier})` : ''}
                             </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
+                </div>
                 )}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
@@ -834,12 +834,12 @@ export default function AdminAccounts() {
                 </div>
                 {freelancerMode && (
                   <>
-                    <div className="space-y-2"><Label>Skills (comma-separated)</Label><Textarea value={form.skills} onChange={(e) => set('skills', e.target.value)} placeholder="React, TypeScript..." rows={2} /></div>
-                    <div className="space-y-2"><Label>Employment History</Label><Textarea value={form.employment_history} onChange={(e) => set('employment_history', e.target.value)} rows={3} /></div>
-                    <div className="space-y-2"><Label>Achievements</Label><Textarea value={form.achievements} onChange={(e) => set('achievements', e.target.value)} rows={3} /></div>
-                    <div className="space-y-2"><Label>Certifications</Label><Textarea value={form.certifications} onChange={(e) => set('certifications', e.target.value)} rows={2} /></div>
-                    <div className="space-y-2"><Label>Recent Projects</Label><Textarea value={form.recent_projects} onChange={(e) => set('recent_projects', e.target.value)} rows={3} /></div>
-                    <div className="space-y-2"><Label>Reviews / Feedback</Label><Textarea value={form.reviews} onChange={(e) => set('reviews', e.target.value)} rows={3} /></div>
+                <div className="space-y-2"><Label>Skills (comma-separated)</Label><Textarea value={form.skills} onChange={(e) => set('skills', e.target.value)} placeholder="React, TypeScript..." rows={2} /></div>
+                <div className="space-y-2"><Label>Employment History</Label><Textarea value={form.employment_history} onChange={(e) => set('employment_history', e.target.value)} rows={3} /></div>
+                <div className="space-y-2"><Label>Achievements</Label><Textarea value={form.achievements} onChange={(e) => set('achievements', e.target.value)} rows={3} /></div>
+                <div className="space-y-2"><Label>Certifications</Label><Textarea value={form.certifications} onChange={(e) => set('certifications', e.target.value)} rows={2} /></div>
+                <div className="space-y-2"><Label>Recent Projects</Label><Textarea value={form.recent_projects} onChange={(e) => set('recent_projects', e.target.value)} rows={3} /></div>
+                <div className="space-y-2"><Label>Reviews / Feedback</Label><Textarea value={form.reviews} onChange={(e) => set('reviews', e.target.value)} rows={3} /></div>
                   </>
                 )}
               </TabsContent>
@@ -853,18 +853,18 @@ export default function AdminAccounts() {
                   <div className="space-y-2"><Label>{genericMode ? 'ZIP / Pin code' : 'ZIP'}</Label><Input value={form.zip} onChange={(e) => set('zip', e.target.value)} /></div>
                 </div>
                 {freelancerMode && (
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2"><Label>AnyDesk ID</Label><Input value={form.anydesk_id} onChange={(e) => set('anydesk_id', e.target.value)} /></div>
-                    <div className="space-y-2">
-                      <Label>AnyDesk Password</Label>
-                      <div className="relative">
-                        <Input type={showAnydeskPassword ? 'text' : 'password'} value={form.anydesk_password} onChange={(e) => set('anydesk_password', e.target.value)} className="pr-10" />
-                        <button type="button" onClick={() => setShowAnydeskPassword(!showAnydeskPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-                          {showAnydeskPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                        </button>
-                      </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2"><Label>AnyDesk ID</Label><Input value={form.anydesk_id} onChange={(e) => set('anydesk_id', e.target.value)} /></div>
+                  <div className="space-y-2">
+                    <Label>AnyDesk Password</Label>
+                    <div className="relative">
+                      <Input type={showAnydeskPassword ? 'text' : 'password'} value={form.anydesk_password} onChange={(e) => set('anydesk_password', e.target.value)} className="pr-10" />
+                      <button type="button" onClick={() => setShowAnydeskPassword(!showAnydeskPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                        {showAnydeskPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
                     </div>
                   </div>
+                </div>
                 )}
               </TabsContent>
 
@@ -876,10 +876,10 @@ export default function AdminAccounts() {
                 </div>
                 {freelancerMode && (
                   <>
-                    <div className="space-y-2"><Label>Portfolio URL</Label><Input value={form.portfolio_url} onChange={(e) => set('portfolio_url', e.target.value)} /></div>
-                    <div className="space-y-2"><Label>GitHub URL</Label><Input value={form.github_url} onChange={(e) => set('github_url', e.target.value)} /></div>
-                    <div className="space-y-2"><Label>LinkedIn URL</Label><Input value={form.linkedin_url} onChange={(e) => set('linkedin_url', e.target.value)} /></div>
-                    <div className="space-y-2"><Label>Profile Screenshot</Label><FileUpload value={form.profile_screenshot_url} onChange={(url) => set('profile_screenshot_url', url)} folder="screenshots" label="Upload Screenshot" /></div>
+                <div className="space-y-2"><Label>Portfolio URL</Label><Input value={form.portfolio_url} onChange={(e) => set('portfolio_url', e.target.value)} /></div>
+                <div className="space-y-2"><Label>GitHub URL</Label><Input value={form.github_url} onChange={(e) => set('github_url', e.target.value)} /></div>
+                <div className="space-y-2"><Label>LinkedIn URL</Label><Input value={form.linkedin_url} onChange={(e) => set('linkedin_url', e.target.value)} /></div>
+                <div className="space-y-2"><Label>Profile Screenshot</Label><FileUpload value={form.profile_screenshot_url} onChange={(url) => set('profile_screenshot_url', url)} folder="screenshots" label="Upload Screenshot" /></div>
                   </>
                 )}
                 <div className="grid grid-cols-2 gap-4">
@@ -898,7 +898,7 @@ export default function AdminAccounts() {
                     <div className="flex items-center gap-3 p-3 border rounded-md">
                       <input type="checkbox" id="auth-app" checked={form.authenticator_enabled} onChange={(e) => set('authenticator_enabled', e.target.checked)} className="rounded" />
                       <Label htmlFor="auth-app" className="cursor-pointer">Authenticator (2FA) enabled</Label>
-                    </div>
+                </div>
                     <div className="space-y-2">
                       <Label>Backup codes</Label>
                       <Textarea value={form.backup_codes} onChange={(e) => set('backup_codes', e.target.value)} placeholder="Store recovery / backup codes (one per line)" rows={4} className="font-mono text-sm" />
@@ -1157,12 +1157,12 @@ export default function AdminAccounts() {
         </div>
 
         {accFreelancer && (
-          <div className="flex flex-wrap items-center gap-2">
-            {acc.badge_status && BADGES[acc.badge_status] && <Badge variant="outline" className="gap-1.5 py-1"><Award className="h-3.5 w-3.5 text-amber-500" />{BADGES[acc.badge_status]}</Badge>}
-            {acc.job_success_score != null && <Badge variant="outline" className="gap-1.5 py-1"><Star className="h-3.5 w-3.5 text-amber-500" />{acc.job_success_score}% Success</Badge>}
-            {acc.working_hours && <Badge variant="outline" className="gap-1.5 py-1"><Clock className="h-3.5 w-3.5" />{acc.working_hours}</Badge>}
-            {acc.purchase_way && <Badge variant="outline" className="gap-1.5 py-1">{PURCHASE_WAY_OPTIONS.find(p => p.value === acc.purchase_way)?.label || acc.purchase_way}</Badge>}
-          </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {acc.badge_status && BADGES[acc.badge_status] && <Badge variant="outline" className="gap-1.5 py-1"><Award className="h-3.5 w-3.5 text-amber-500" />{BADGES[acc.badge_status]}</Badge>}
+          {acc.job_success_score != null && <Badge variant="outline" className="gap-1.5 py-1"><Star className="h-3.5 w-3.5 text-amber-500" />{acc.job_success_score}% Success</Badge>}
+          {acc.working_hours && <Badge variant="outline" className="gap-1.5 py-1"><Clock className="h-3.5 w-3.5" />{acc.working_hours}</Badge>}
+          {acc.purchase_way && <Badge variant="outline" className="gap-1.5 py-1">{PURCHASE_WAY_OPTIONS.find(p => p.value === acc.purchase_way)?.label || acc.purchase_way}</Badge>}
+        </div>
         )}
 
         {acc.status === 'disabled' && acc.disabled_at && (
@@ -1239,17 +1239,17 @@ export default function AdminAccounts() {
         </DetailSection>
 
         {(accFreelancer || acc.connected_payment_type || linkedPayment) && (
-          <DetailSection icon={CreditCard} title="Payment">
-            <div className="space-y-1">
-              <InfoRow label="Payment Type" value={acc.connected_payment_type?.replace('_', ' ') || null} />
+        <DetailSection icon={CreditCard} title="Payment">
+          <div className="space-y-1">
+            <InfoRow label="Payment Type" value={acc.connected_payment_type?.replace('_', ' ') || null} />
               {linkedPayment && (
                 <InfoRow
                   label="Linked payment account"
                   value={`${paymentProviderLabel(linkedPayment.provider)} — ${linkedPayment.label || '—'}${linkedPayment.account_identifier ? ` (${linkedPayment.account_identifier})` : ''}`}
                 />
               )}
-            </div>
-          </DetailSection>
+          </div>
+        </DetailSection>
         )}
 
         {!accFreelancer && (acc.authenticator_enabled || acc.backup_codes) && (
@@ -1420,7 +1420,7 @@ export default function AdminAccounts() {
 
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:flex-1 lg:justify-start lg:gap-8">
-          <div>
+        <div>
             <h2 className="text-2xl font-semibold tracking-tight text-foreground">Manage accounts</h2>
             <p className="text-sm text-muted-foreground">
               {accountHub === 'categories' && 'Choose a category: freelancing marketplaces, workspace tools, or payment payout accounts.'}
@@ -1428,7 +1428,7 @@ export default function AdminAccounts() {
               {accountHub === 'workspace' && 'Email, chat, GitHub, storage, and other non-marketplace accounts.'}
               {accountHub === 'payment' && 'PayPal, Payoneer, Wise, crypto, bank rails. Passwords are not stored—use credentials note for vault references.'}
             </p>
-          </div>
+        </div>
           {accountHub !== 'categories' &&
             ((accountHub === 'payment' && paymentView === 'list') ||
               (showFreelanceWorkspaceChrome && view !== 'detail')) && (
@@ -1498,10 +1498,10 @@ export default function AdminAccounts() {
                   </button>
                 </>
               )}
-              {selectedPlatform && (
-                <>
+          {selectedPlatform && (
+            <>
                   <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
-                  {view === 'detail' ? (
+              {view === 'detail' ? (
                     <button
                       type="button"
                       onClick={() => goToList(selectedPlatform)}
@@ -1509,15 +1509,15 @@ export default function AdminAccounts() {
                     >
                       {platformLabel}
                     </button>
-                  ) : (
-                    <span className="text-foreground font-medium">{platformLabel}</span>
-                  )}
-                </>
+              ) : (
+                <span className="text-foreground font-medium">{platformLabel}</span>
               )}
-              {view === 'detail' && selectedAccount && (
-                <>
+            </>
+          )}
+          {view === 'detail' && selectedAccount && (
+            <>
                   <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
-                  <span className="text-foreground font-medium">@{selectedAccount.username}</span>
+              <span className="text-foreground font-medium">@{selectedAccount.username}</span>
                 </>
               )}
             </>
@@ -1582,8 +1582,8 @@ export default function AdminAccounts() {
       {accountHub === 'payment' && paymentView === 'list' && (
         <>
           {paymentSearchFiltered.length === 0 ? (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+          <Card>
+            <CardContent className="flex flex-col items-center justify-center py-12 text-center">
                 <p className="text-lg font-medium text-foreground">
                   {searchInput.trim() ? 'No matching payment accounts' : 'No payment accounts yet'}
                 </p>
@@ -1648,32 +1648,32 @@ export default function AdminAccounts() {
                 <p className="mt-1 text-sm text-muted-foreground">
                   {searchInput.trim() ? 'Try different keywords or clear the search.' : 'Add an account to get started.'}
                 </p>
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {platformList.map(({ platform, info, count, activeCount }) => (
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {platformList.map(({ platform, info, count, activeCount }) => (
                 <Card
                   key={platform}
                   className="cursor-pointer transition-all hover:shadow-md hover:border-primary/30 group"
                   onClick={() => goToList(platform)}
                 >
-                  <CardHeader className="flex flex-row items-center justify-between pb-2">
-                    <div className="flex items-center gap-3">
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <div className="flex items-center gap-3">
                       <div className={cn('flex h-10 w-10 items-center justify-center rounded-lg text-lg text-white', info.color)}>
                         {info.icon}
                       </div>
-                      <CardTitle className="text-lg">{info.label}</CardTitle>
-                    </div>
-                    <ChevronRight className="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-2xl font-bold text-foreground">{count}</p>
-                    <p className="text-sm text-muted-foreground">{activeCount} active</p>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
+                    <CardTitle className="text-lg">{info.label}</CardTitle>
+                  </div>
+                  <ChevronRight className="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
+                </CardHeader>
+                <CardContent>
+                  <p className="text-2xl font-bold text-foreground">{count}</p>
+                  <p className="text-sm text-muted-foreground">{activeCount} active</p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
           )}
         </>
       )}
@@ -1712,23 +1712,23 @@ export default function AdminAccounts() {
                 className="cursor-pointer transition-all hover:shadow-md hover:border-primary/30"
                 onClick={() => goToDetail(acc.id)}
               >
-                <CardContent className="flex items-center justify-between p-4">
-                  <div className="flex items-center gap-4 min-w-0">
-                    <div>
-                      <p className="font-medium text-foreground">@{acc.username}</p>
+              <CardContent className="flex items-center justify-between p-4">
+                <div className="flex items-center gap-4 min-w-0">
+                  <div>
+                    <p className="font-medium text-foreground">@{acc.username}</p>
                       {acc.profile_title && (
                         <p className="text-sm text-muted-foreground truncate max-w-[300px]">{acc.profile_title}</p>
                       )}
-                    </div>
                   </div>
-                  <div className="flex items-center gap-3">
+                </div>
+                <div className="flex items-center gap-3">
                     <Badge variant="secondary" className={statusColor[acc.status] || ''}>
                       {acc.status}
                     </Badge>
                     {isFreelancerPlatform(acc.platform) && acc.job_success_score != null && (
                       <span className="text-sm font-medium">{acc.job_success_score}%</span>
                     )}
-                    <div className="flex gap-1">
+                  <div className="flex gap-1">
                       <Button
                         size="icon"
                         variant="ghost"
@@ -1755,11 +1755,11 @@ export default function AdminAccounts() {
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
-                    </div>
-                    <ChevronRight className="h-5 w-5 text-muted-foreground" />
                   </div>
-                </CardContent>
-              </Card>
+                  <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                </div>
+              </CardContent>
+            </Card>
             ))
           ) : listViewMode === 'line' ? (
             <Card><CardContent className="p-0">

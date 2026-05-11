@@ -18,6 +18,11 @@ import { useToast } from '@/hooks/use-toast';
 import ModuleSearchBar from '@/components/ModuleSearchBar';
 import { filterUsefulLinks } from '@/lib/clientSearch';
 import { RichTextEditor } from '@/components/RichTextEditor';
+import {
+  orderedUsefulLinkCategoryKeys,
+  usefulLinkCategoryLabel,
+  USEFUL_LINK_CATEGORIES,
+} from '@/lib/usefulLinksCategories';
 
 interface LinkItem {
   label: string;
@@ -38,19 +43,6 @@ interface UsefulLink {
   created_at: string;
   updated_at: string;
 }
-
-const CATEGORIES = [
-  { value: 'resume_builder', label: 'Resume Builder' },
-  { value: 'job_sites', label: 'Job Sites' },
-  { value: 'telephone_sms', label: 'Telephone & SMS' },
-  { value: 'chatbot_ai', label: 'ChatBot & AI' },
-  { value: 'smtp_test', label: 'SMTP Test' },
-  { value: 'file_transfer', label: 'File Transfer' },
-  { value: 'design_tools', label: 'Design Tools' },
-  { value: 'dev_tools', label: 'Dev Tools' },
-  { value: 'productivity', label: 'Productivity' },
-  { value: 'general', label: 'General' },
-];
 
 function CopyButton({ value }: { value: string }) {
   const { toast } = useToast();
@@ -76,6 +68,17 @@ const emptyForm = {
   is_pinned: false,
 };
 
+function parseTagsString(tags: string): string[] {
+  return tags
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
+function joinTagsList(tags: string[]): string {
+  return tags.join(', ');
+}
+
 export default function AdminUsefulLinks() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -88,7 +91,9 @@ export default function AdminUsefulLinks() {
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; title: string } | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState('');
-  const [listViewMode, setListViewMode] = useState<'card' | 'list' | 'line' | 'table'>('card');
+  const [listViewMode, setListViewMode] = useState<'card' | 'list' | 'line' | 'table'>('table');
+  /** Current text in the tag input (committed on Enter or comma). */
+  const [tagDraft, setTagDraft] = useState('');
 
   const fetchItems = async () => {
     const { data, error } = await supabase
@@ -96,16 +101,52 @@ export default function AdminUsefulLinks() {
       .select('*')
       .order('is_pinned', { ascending: false })
       .order('created_at', { ascending: false });
-    if (error) toast({ title: 'Error loading links', description: error.message, variant: 'destructive' });
+    if (error) toast({ title: 'Error loading help entries', description: error.message, variant: 'destructive' });
     else setItems(data || []);
     setLoading(false);
   };
 
   useEffect(() => { fetchItems(); }, []);
 
+  useEffect(() => {
+    if (!dialogOpen) setTagDraft('');
+  }, [dialogOpen]);
+
   const set = (key: string, value: string | boolean | LinkItem[]) => setForm(prev => ({ ...prev, [key]: value }));
 
-  const openCreate = () => { setEditingId(null); setForm(emptyForm); setDialogOpen(true); };
+  const mergeTagsIntoForm = (incoming: string[]) => {
+    const existing = parseTagsString(form.tags);
+    const seen = new Set(existing.map((t) => t.toLowerCase()));
+    for (const raw of incoming) {
+      const t = raw.trim();
+      if (!t) continue;
+      const key = t.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      existing.push(t);
+    }
+    set('tags', joinTagsList(existing));
+  };
+
+  const removeTagAt = (index: number) => {
+    const arr = parseTagsString(form.tags);
+    arr.splice(index, 1);
+    set('tags', joinTagsList(arr));
+  };
+
+  const removeLastTag = () => {
+    const arr = parseTagsString(form.tags);
+    if (arr.length === 0) return;
+    arr.pop();
+    set('tags', joinTagsList(arr));
+  };
+
+  const openCreate = () => {
+    setEditingId(null);
+    setForm(emptyForm);
+    setTagDraft('');
+    setDialogOpen(true);
+  };
 
   const openEdit = (item: UsefulLink) => {
     setEditingId(item.id);
@@ -119,11 +160,30 @@ export default function AdminUsefulLinks() {
       tags: item.tags || '',
       is_pinned: item.is_pinned,
     });
+    setTagDraft('');
     setDialogOpen(true);
+  };
+
+  /** Merge pending tag draft into a comma string (sync, for save payload). */
+  const tagsStringForSave = (): string | null => {
+    const existing = parseTagsString(form.tags);
+    const seen = new Set(existing.map((t) => t.toLowerCase()));
+    const pending = tagDraft.trim();
+    if (pending) {
+      const k = pending.toLowerCase();
+      if (!seen.has(k)) {
+        seen.add(k);
+        existing.push(pending);
+      }
+    }
+    const s = joinTagsList(existing);
+    return s || null;
   };
 
   const handleSave = async () => {
     if (!form.title) { toast({ title: 'Title is required', variant: 'destructive' }); return; }
+    const tagsPayload = tagsStringForSave();
+    setTagDraft('');
     setSaving(true);
     const validLinks = form.links.filter(l => l.url.trim());
     const payload = {
@@ -133,7 +193,7 @@ export default function AdminUsefulLinks() {
       description: form.description || null,
       how_to_use: form.how_to_use || null,
       links: validLinks,
-      tags: form.tags || null,
+      tags: tagsPayload,
       is_pinned: form.is_pinned,
       user_id: user!.id,
       updated_at: new Date().toISOString(),
@@ -142,11 +202,11 @@ export default function AdminUsefulLinks() {
     if (editingId) {
       const { error } = await supabase.from('useful_links').update(payload).eq('id', editingId);
       if (error) toast({ title: 'Update failed', description: error.message, variant: 'destructive' });
-      else toast({ title: 'Link updated' });
+      else toast({ title: 'Entry updated' });
     } else {
       const { error } = await supabase.from('useful_links').insert(payload);
       if (error) toast({ title: 'Create failed', description: error.message, variant: 'destructive' });
-      else toast({ title: 'Link created' });
+      else toast({ title: 'Entry created' });
     }
     setSaving(false);
     setDialogOpen(false);
@@ -157,7 +217,7 @@ export default function AdminUsefulLinks() {
     if (!deleteConfirm) return;
     const { error } = await supabase.from('useful_links').delete().eq('id', deleteConfirm.id);
     if (error) toast({ title: 'Delete failed', description: error.message, variant: 'destructive' });
-    else { toast({ title: 'Link deleted' }); fetchItems(); }
+    else { toast({ title: 'Entry deleted' }); fetchItems(); }
     setDeleteConfirm(null);
   };
 
@@ -186,6 +246,16 @@ export default function AdminUsefulLinks() {
     [searchFiltered, selectedCategory],
   );
 
+  const categoryKeysOrdered = useMemo(() => orderedUsefulLinkCategoryKeys(grouped), [grouped]);
+
+  const categorySelectOptions = useMemo(() => {
+    const known = new Map(USEFUL_LINK_CATEGORIES.map((c) => [c.value, c.label] as const));
+    if (form.category && !known.has(form.category)) {
+      known.set(form.category, `${form.category} (saved topic)`);
+    }
+    return [...known.entries()].map(([value, label]) => ({ value, label }));
+  }, [form.category]);
+
   if (loading) {
     return <div className="flex items-center justify-center py-12"><div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" /></div>;
   }
@@ -195,17 +265,17 @@ export default function AdminUsefulLinks() {
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:flex-1 lg:justify-start lg:gap-8">
           <div>
-            <h2 className="text-2xl font-semibold tracking-tight text-foreground">Useful Links</h2>
-            <p className="text-sm text-muted-foreground">Manage your collection of useful resources</p>
+            <h2 className="text-2xl font-semibold tracking-tight text-foreground">Manage Help</h2>
+            <p className="text-sm text-muted-foreground">Commands, troubleshooting steps, and related URLs</p>
           </div>
           <ModuleSearchBar
             value={searchInput}
             onChange={setSearchInput}
-            placeholder="Search title, tags, URLs, category…"
+            placeholder="Search title, steps, tags, URLs, topic…"
             id="admin-useful-links-search"
           />
         </div>
-        <Button onClick={openCreate} className="gap-2 shrink-0"><Plus className="h-4 w-4" />Add Link</Button>
+        <Button onClick={openCreate} className="gap-2 shrink-0"><Plus className="h-4 w-4" />Add entry</Button>
       </div>
 
       {/* Category filter */}
@@ -216,13 +286,15 @@ export default function AdminUsefulLinks() {
             className="cursor-pointer"
             onClick={() => setSelectedCategory(null)}
           >All ({searchFiltered.length})</Badge>
-          {CATEGORIES.filter(c => grouped[c.value]).map(c => (
+          {categoryKeysOrdered.map((catKey) => (
             <Badge
-              key={c.value}
-              variant={selectedCategory === c.value ? 'default' : 'outline'}
+              key={catKey}
+              variant={selectedCategory === catKey ? 'default' : 'outline'}
               className="cursor-pointer"
-              onClick={() => setSelectedCategory(c.value)}
-            >{c.label} ({grouped[c.value].length})</Badge>
+              onClick={() => setSelectedCategory(catKey)}
+            >
+              {usefulLinkCategoryLabel(catKey)} ({grouped[catKey].length})
+            </Badge>
           ))}
         </div>
         <Select value={listViewMode} onValueChange={(v) => setListViewMode(v as 'card' | 'list' | 'line' | 'table')}>
@@ -230,10 +302,10 @@ export default function AdminUsefulLinks() {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
+            <SelectItem value="table">Table mode</SelectItem>
             <SelectItem value="card">Card mode</SelectItem>
             <SelectItem value="list">List mode</SelectItem>
             <SelectItem value="line">Line mode</SelectItem>
-            <SelectItem value="table">Table mode</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -241,15 +313,15 @@ export default function AdminUsefulLinks() {
       {items.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-            <p className="text-lg font-medium text-foreground">No links yet</p>
-            <p className="mt-1 text-sm text-muted-foreground">Add useful resources to your collection</p>
-            <Button onClick={openCreate} variant="outline" className="mt-4 gap-2"><Plus className="h-4 w-4" />Add Link</Button>
+            <p className="text-lg font-medium text-foreground">No help entries yet</p>
+            <p className="mt-1 text-sm text-muted-foreground">Add steps, commands, or bookmarks you use often</p>
+            <Button onClick={openCreate} variant="outline" className="mt-4 gap-2"><Plus className="h-4 w-4" />Add entry</Button>
           </CardContent>
         </Card>
       ) : filteredItems.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-            <p className="text-lg font-medium text-foreground">{searchInput.trim() ? 'No matching links' : 'No links in this category'}</p>
+            <p className="text-lg font-medium text-foreground">{searchInput.trim() ? 'No matching entries' : 'No entries in this topic'}</p>
             <p className="mt-1 text-sm text-muted-foreground">{searchInput.trim() ? 'Try different keywords or clear the search.' : 'Pick another category or clear filters.'}</p>
           </CardContent>
         </Card>
@@ -260,7 +332,7 @@ export default function AdminUsefulLinks() {
               <tr>
                 <th className="px-3 py-2">Title</th>
                 <th className="px-3 py-2">Category</th>
-                <th className="px-3 py-2">Links</th>
+                <th className="px-3 py-2">URLs</th>
                 <th className="px-3 py-2">Pinned</th>
                 <th className="px-3 py-2">Actions</th>
               </tr>
@@ -269,7 +341,7 @@ export default function AdminUsefulLinks() {
               {filteredItems.map((item) => (
                 <tr key={item.id} className="border-t hover:bg-muted/30">
                   <td className="px-3 py-2 font-medium">{item.title}</td>
-                  <td className="px-3 py-2">{CATEGORIES.find(c => c.value === item.category)?.label || item.category}</td>
+                  <td className="px-3 py-2">{usefulLinkCategoryLabel(item.category)}</td>
                   <td className="px-3 py-2">{item.links.length}</td>
                   <td className="px-3 py-2">{item.is_pinned ? 'Yes' : 'No'}</td>
                   <td className="px-3 py-2">
@@ -293,7 +365,7 @@ export default function AdminUsefulLinks() {
             <div key={item.id} className="flex items-center justify-between gap-3 border-b px-3 py-2 last:border-b-0 hover:bg-muted/30">
               <div className="min-w-0">
                 <p className="truncate font-medium">{item.title}</p>
-                <p className="text-xs text-muted-foreground">{item.links.length} link{item.links.length !== 1 ? 's' : ''}</p>
+                <p className="text-xs text-muted-foreground">{item.links.length} URL{item.links.length !== 1 ? 's' : ''}</p>
               </div>
               <div className="flex gap-2 shrink-0">
                 <Button size="sm" variant="outline" onClick={() => openEdit(item)} className="gap-1.5">
@@ -339,7 +411,7 @@ export default function AdminUsefulLinks() {
                       <span className="truncate">{item.title}</span>
                     </CardTitle>
                     <Badge variant="secondary" className="mt-1 text-xs">
-                      {CATEGORIES.find(c => c.value === item.category)?.label || item.category}
+                      {usefulLinkCategoryLabel(item.category)}
                     </Badge>
                   </div>
                 </div>
@@ -359,7 +431,7 @@ export default function AdminUsefulLinks() {
                       </a>
                     </div>
                   ))}
-                  {item.links.length > 3 && <p className="text-xs text-muted-foreground">+{item.links.length - 3} more links</p>}
+                  {item.links.length > 3 && <p className="text-xs text-muted-foreground">+{item.links.length - 3} more URLs</p>}
                 </div>
 
                 {item.tags && (
@@ -386,37 +458,58 @@ export default function AdminUsefulLinks() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] p-0">
           <DialogHeader className="px-6 pt-6 pb-2">
-            <DialogTitle>{editingId ? 'Edit Useful Link' : 'Add Useful Link'}</DialogTitle>
+            <DialogTitle>{editingId ? 'Edit help entry' : 'Add help entry'}</DialogTitle>
           </DialogHeader>
           <ScrollArea className="max-h-[75vh] px-6 pb-6">
             <div className="space-y-5 pt-2">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Title *</Label>
-                  <Input value={form.title} onChange={(e) => set('title', e.target.value)} placeholder="e.g. Best Resume Builders" />
+                  <Input value={form.title} onChange={(e) => set('title', e.target.value)} placeholder="e.g. MySQL won’t start in XAMPP" />
                 </div>
                 <div className="space-y-2">
-                  <Label>Category</Label>
+                  <Label>Topic</Label>
                   <Select value={form.category} onValueChange={(v) => set('category', v)}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {CATEGORIES.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
+                      {categorySelectOptions.map((c) => (
+                        <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
               </div>
 
               <div className="space-y-2">
-                <Label>Purpose</Label>
-                <Input value={form.purpose} onChange={(e) => set('purpose', e.target.value)} placeholder="What is this collection for?" />
+                <Label>Summary</Label>
+                <Input value={form.purpose} onChange={(e) => set('purpose', e.target.value)} placeholder="One-line context (optional)" />
               </div>
 
-              {/* Multiple Links */}
+              <div className="space-y-2">
+                <Label>Steps &amp; commands</Label>
+                <p className="text-xs text-muted-foreground">Numbered lists, paths, and shell commands. Use code formatting in the editor for copy-paste blocks.</p>
+                <RichTextEditor
+                  value={form.how_to_use}
+                  onChange={(v) => set('how_to_use', v)}
+                  placeholder="Numbered steps and commands (e.g. mysql_install_db --datadir=…)"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Notes</Label>
+                <RichTextEditor value={form.description} onChange={(v) => set('description', v)} placeholder="Extra context, warnings, or links to docs (optional)" />
+              </div>
+
+              <Separator />
+
               <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <Label>Links</Label>
-                  <Button type="button" size="sm" variant="outline" onClick={addLink} className="gap-1.5">
-                    <Plus className="h-3.5 w-3.5" />Add Link
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <Label>Related URLs</Label>
+                    <p className="text-xs text-muted-foreground mt-0.5">Optional. Leave blank for command-only entries.</p>
+                  </div>
+                  <Button type="button" size="sm" variant="outline" onClick={addLink} className="gap-1.5 shrink-0">
+                    <Plus className="h-3.5 w-3.5" />Add URL
                   </Button>
                 </div>
                 {form.links.map((link, idx) => (
@@ -425,7 +518,7 @@ export default function AdminUsefulLinks() {
                       <Input
                         value={link.label}
                         onChange={(e) => updateLink(idx, 'label', e.target.value)}
-                        placeholder="Label (e.g. Canva)"
+                        placeholder="Label (e.g. Laravel docs)"
                       />
                       <Input
                         value={link.url}
@@ -442,31 +535,73 @@ export default function AdminUsefulLinks() {
                 ))}
               </div>
 
-              <Separator />
-
-              <div className="space-y-2">
-                <Label>How to Use</Label>
-                <RichTextEditor value={form.how_to_use} onChange={(v) => set('how_to_use', v)} placeholder="Explain how to use these links..." />
-              </div>
-
-              <div className="space-y-2">
-                <Label>Description</Label>
-                <RichTextEditor value={form.description} onChange={(v) => set('description', v)} placeholder="Add a detailed description..." />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-4">
                 <div className="space-y-2">
-                  <Label>Tags (comma-separated)</Label>
-                  <Input value={form.tags} onChange={(e) => set('tags', e.target.value)} placeholder="e.g. free, online, tool" />
+                  <Label>Tags</Label>
+                  <p className="text-xs text-muted-foreground">Type a tag and press Enter or comma — it is added automatically. Backspace removes the last tag when the field is empty.</p>
+                  <div className="flex min-h-10 flex-wrap items-center gap-1.5 rounded-md border border-input bg-background px-2 py-1.5">
+                    {parseTagsString(form.tags).map((tag, idx) => (
+                      <Badge key={`${tag}-${idx}`} variant="secondary" className="gap-0.5 pr-0.5 font-normal">
+                        <span>{tag}</span>
+                        <button
+                          type="button"
+                          className="ml-0.5 rounded-sm p-0.5 hover:bg-muted"
+                          aria-label={`Remove tag ${tag}`}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => removeTagAt(idx)}
+                        >
+                          <X className="h-3 w-3 opacity-70" />
+                        </button>
+                      </Badge>
+                    ))}
+                    <Input
+                      className="min-w-[140px] flex-1 border-0 bg-transparent shadow-none focus-visible:ring-0 h-8 px-1"
+                      value={tagDraft}
+                      placeholder={parseTagsString(form.tags).length === 0 ? 'e.g. xampp' : 'Add another…'}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v.includes(',')) {
+                          const parts = v.split(',');
+                          const tail = parts.length > 0 ? parts[parts.length - 1] ?? '' : '';
+                          const complete = parts.slice(0, -1).map((p) => p.trim()).filter(Boolean);
+                          if (complete.length) mergeTagsIntoForm(complete);
+                          setTagDraft(tail);
+                          return;
+                        }
+                        setTagDraft(v);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          const t = tagDraft.trim();
+                          if (t) {
+                            mergeTagsIntoForm([t]);
+                            setTagDraft('');
+                          }
+                        }
+                        if (e.key === 'Backspace' && tagDraft === '' && parseTagsString(form.tags).length > 0) {
+                          e.preventDefault();
+                          removeLastTag();
+                        }
+                      }}
+                      onBlur={() => {
+                        const t = tagDraft.trim();
+                        if (t) {
+                          mergeTagsIntoForm([t]);
+                          setTagDraft('');
+                        }
+                      }}
+                    />
+                  </div>
                 </div>
-                <div className="flex items-center justify-between pt-6">
+                <div className="flex items-center justify-between">
                   <Label>Pin to top</Label>
                   <Switch checked={form.is_pinned} onCheckedChange={(v) => set('is_pinned', v)} />
                 </div>
               </div>
 
               <Button onClick={handleSave} disabled={saving} className="w-full">
-                {saving ? 'Saving...' : editingId ? 'Update Link' : 'Create Link'}
+                {saving ? 'Saving…' : editingId ? 'Save changes' : 'Create entry'}
               </Button>
             </div>
           </ScrollArea>
@@ -477,7 +612,7 @@ export default function AdminUsefulLinks() {
       <AlertDialog open={!!deleteConfirm} onOpenChange={(open) => !open && setDeleteConfirm(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Link</AlertDialogTitle>
+            <AlertDialogTitle>Delete help entry</AlertDialogTitle>
             <AlertDialogDescription>Are you sure you want to delete <strong>{deleteConfirm?.title}</strong>?</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

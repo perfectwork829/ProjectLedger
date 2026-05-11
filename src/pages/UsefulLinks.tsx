@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@/hooks/use-toast';
 import ModuleSearchBar from '@/components/ModuleSearchBar';
 import { filterUsefulLinks } from '@/lib/clientSearch';
+import { orderedUsefulLinkCategoryKeys, usefulLinkCategoryLabel } from '@/lib/usefulLinksCategories';
 
 interface LinkItem { label: string; url: string; }
 
@@ -24,18 +25,8 @@ interface UsefulLink {
   is_pinned: boolean;
 }
 
-const CATEGORIES = [
-  { value: 'resume_builder', label: 'Resume Builder' },
-  { value: 'job_sites', label: 'Job Sites' },
-  { value: 'telephone_sms', label: 'Telephone & SMS' },
-  { value: 'chatbot_ai', label: 'ChatBot & AI' },
-  { value: 'smtp_test', label: 'SMTP Test' },
-  { value: 'file_transfer', label: 'File Transfer' },
-  { value: 'design_tools', label: 'Design Tools' },
-  { value: 'dev_tools', label: 'Dev Tools' },
-  { value: 'productivity', label: 'Productivity' },
-  { value: 'general', label: 'General' },
-];
+const richHelpProse =
+  'prose prose-sm max-w-none text-foreground/80 pl-6 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5 [&_pre]:rounded-md [&_pre]:bg-muted/70 [&_pre]:px-3 [&_pre]:py-2 [&_pre]:text-sm [&_code]:rounded [&_code]:bg-muted/70 [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-sm [&_a]:text-primary [&_a]:underline';
 
 function CopyButton({ value }: { value: string }) {
   const { toast } = useToast();
@@ -60,7 +51,7 @@ export default function UsefulLinks() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<UsefulLink | null>(null);
   const [searchInput, setSearchInput] = useState('');
-  const [listViewMode, setListViewMode] = useState<'table' | 'link' | 'list' | 'card'>('table');
+  const [listViewMode, setListViewMode] = useState<'table' | 'link' | 'line' | 'card'>('line');
 
   useEffect(() => {
     (async () => {
@@ -87,6 +78,8 @@ export default function UsefulLinks() {
     [searchFiltered],
   );
 
+  const categoryKeysOrdered = useMemo(() => orderedUsefulLinkCategoryKeys(grouped), [grouped]);
+
   if (loading) {
     return <div className="flex items-center justify-center py-12"><div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" /></div>;
   }
@@ -106,7 +99,7 @@ export default function UsefulLinks() {
             <h2 className="text-2xl font-semibold text-foreground">{item.title}</h2>
           </div>
           <Badge variant="secondary">
-            {CATEGORIES.find(c => c.value === item.category)?.label || item.category}
+            {usefulLinkCategoryLabel(item.category)}
           </Badge>
         </div>
 
@@ -116,34 +109,12 @@ export default function UsefulLinks() {
           </div>
         )}
 
-        <Separator />
-
-        {/* Links */}
-        <div className="space-y-3">
-          <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-            <LinkIcon className="h-4 w-4 text-primary" />Links
-          </h3>
-          <div className="space-y-2 pl-6">
-            {item.links.map((link, i) => (
-              <div key={i} className="flex items-center gap-2 py-1.5 px-3 rounded-md bg-muted/30 hover:bg-muted/60 transition-colors">
-                <LinkIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                <span className="text-sm font-medium text-foreground flex-1 min-w-0 truncate">{link.label || link.url}</span>
-                <span className="text-xs text-muted-foreground truncate max-w-[200px] hidden sm:inline">{link.url}</span>
-                <CopyButton value={link.url} />
-                <a href={link.url} target="_blank" rel="noopener noreferrer" className="inline-flex h-7 w-7 items-center justify-center rounded hover:bg-accent transition-colors">
-                  <ExternalLink className="h-3.5 w-3.5 text-primary" />
-                </a>
-              </div>
-            ))}
-          </div>
-        </div>
-
         {item.how_to_use && (
           <>
             <Separator />
             <div className="space-y-2">
-              <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">How to Use</h3>
-              <div className="prose prose-sm max-w-none text-foreground/80 pl-6" dangerouslySetInnerHTML={{ __html: item.how_to_use }} />
+              <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Steps &amp; commands</h3>
+              <div className={richHelpProse} dangerouslySetInnerHTML={{ __html: item.how_to_use }} />
             </div>
           </>
         )}
@@ -152,8 +123,33 @@ export default function UsefulLinks() {
           <>
             <Separator />
             <div className="space-y-2">
-              <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Description</h3>
-              <div className="prose prose-sm max-w-none text-foreground/80 pl-6" dangerouslySetInnerHTML={{ __html: item.description }} />
+              <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Notes</h3>
+              <div className={richHelpProse} dangerouslySetInnerHTML={{ __html: item.description }} />
+            </div>
+          </>
+        )}
+
+        {item.links.length > 0 && (
+          <>
+            <Separator />
+            <div className="space-y-3">
+              <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                <LinkIcon className="h-4 w-4 text-primary" />
+                Related URLs
+              </h3>
+              <div className="space-y-2 pl-6">
+                {item.links.map((link, i) => (
+                  <div key={i} className="flex items-center gap-2 py-1.5 px-3 rounded-md bg-muted/30 hover:bg-muted/60 transition-colors">
+                    <LinkIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                    <span className="text-sm font-medium text-foreground flex-1 min-w-0 truncate">{link.label || link.url}</span>
+                    <span className="text-xs text-muted-foreground truncate max-w-[200px] hidden sm:inline">{link.url}</span>
+                    <CopyButton value={link.url} />
+                    <a href={link.url} target="_blank" rel="noopener noreferrer" className="inline-flex h-7 w-7 items-center justify-center rounded hover:bg-accent transition-colors">
+                      <ExternalLink className="h-3.5 w-3.5 text-primary" />
+                    </a>
+                  </div>
+                ))}
+              </div>
             </div>
           </>
         )}
@@ -173,7 +169,7 @@ export default function UsefulLinks() {
   // List view
   if (view === 'list' && selectedCategory) {
     const catItems = grouped[selectedCategory] || [];
-    const catLabel = CATEGORIES.find(c => c.value === selectedCategory)?.label || selectedCategory;
+    const catLabel = usefulLinkCategoryLabel(selectedCategory);
     return (
       <div className="space-y-6">
         <Button variant="ghost" onClick={() => { setView('categories'); setSelectedCategory(null); }} className="gap-2 text-muted-foreground">
@@ -203,7 +199,7 @@ export default function UsefulLinks() {
         </div>
         {catItems.length === 0 ? (
           <div className="rounded-lg border bg-card py-12 text-center">
-            <p className="text-lg font-medium text-foreground">{searchInput.trim() ? 'No matching links' : 'No links in this category'}</p>
+            <p className="text-lg font-medium text-foreground">{searchInput.trim() ? 'No matching entries' : 'No entries in this topic'}</p>
             <p className="mt-1 text-sm text-muted-foreground">{searchInput.trim() ? 'Try different keywords or clear the search.' : ''}</p>
           </div>
         ) : listViewMode === 'table' ? (
@@ -213,7 +209,7 @@ export default function UsefulLinks() {
                 <tr>
                   <th className="px-3 py-2">Title</th>
                   <th className="px-3 py-2">Purpose</th>
-                  <th className="px-3 py-2">Links</th>
+                  <th className="px-3 py-2">URLs</th>
                 </tr>
               </thead>
               <tbody>
@@ -235,13 +231,15 @@ export default function UsefulLinks() {
               </button>
             ))}
           </div>
-        ) : listViewMode === 'list' ? (
+        ) : listViewMode === 'line' ? (
           <div className="rounded-lg border bg-card">
             {catItems.map((item) => (
               <button key={item.id} type="button" className="flex w-full items-center justify-between gap-3 border-b px-3 py-2 text-left last:border-b-0 hover:bg-muted/30" onClick={() => { setSelectedItem(item); setView('detail'); }}>
                 <div className="min-w-0">
                   <p className="truncate font-medium">{item.title}</p>
-                  <p className="text-xs text-muted-foreground">{item.links.length} link{item.links.length !== 1 ? 's' : ''}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {item.links.length} URL{item.links.length !== 1 ? 's' : ''}
+                  </p>
                 </div>
                 {item.is_pinned ? <Pin className="h-3.5 w-3.5 text-amber-500 shrink-0" /> : null}
               </button>
@@ -261,7 +259,7 @@ export default function UsefulLinks() {
                   {item.purpose && <p className="text-sm text-muted-foreground line-clamp-2 mb-2">{item.purpose}</p>}
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <LinkIcon className="h-3 w-3" />
-                    {item.links.length} link{item.links.length !== 1 ? 's' : ''}
+                    {item.links.length} URL{item.links.length !== 1 ? 's' : ''}
                   </div>
                 </CardContent>
               </Card>
@@ -277,13 +275,13 @@ export default function UsefulLinks() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight text-foreground">Useful Links</h2>
-          <p className="text-sm text-muted-foreground">Browse your curated collection of resources</p>
+          <h2 className="text-2xl font-semibold tracking-tight text-foreground">Help &amp; links</h2>
+          <p className="text-sm text-muted-foreground">Commands, troubleshooting, and bookmarks by topic</p>
         </div>
         <ModuleSearchBar
           value={searchInput}
           onChange={setSearchInput}
-          placeholder="Search title, tags, URLs, category…"
+          placeholder="Search title, steps, tags, URLs, topic…"
           id="useful-links-search"
         />
       </div>
@@ -291,33 +289,33 @@ export default function UsefulLinks() {
       {items.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-            <p className="text-lg font-medium text-foreground">No links saved yet</p>
-            <p className="mt-1 text-sm text-muted-foreground">Links added by admin will appear here</p>
+            <p className="text-lg font-medium text-foreground">No help entries yet</p>
+            <p className="mt-1 text-sm text-muted-foreground">Add entries under Admin → Manage Help</p>
           </CardContent>
         </Card>
       ) : searchFiltered.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-            <p className="text-lg font-medium text-foreground">No matching links</p>
+            <p className="text-lg font-medium text-foreground">No matching entries</p>
             <p className="mt-1 text-sm text-muted-foreground">Try different keywords or clear the search.</p>
           </CardContent>
         </Card>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {CATEGORIES.filter(c => grouped[c.value]).map(c => (
-            <Card key={c.value} className="cursor-pointer transition-all hover:shadow-md hover:border-primary/30" onClick={() => { setSelectedCategory(c.value); setView('list'); }}>
+          {categoryKeysOrdered.map((catKey) => (
+            <Card key={catKey} className="cursor-pointer transition-all hover:shadow-md hover:border-primary/30" onClick={() => { setSelectedCategory(catKey); setView('list'); }}>
               <CardHeader>
                 <CardTitle className="flex items-center justify-between">
-                  <span>{c.label}</span>
-                  <Badge variant="secondary">{grouped[c.value].length}</Badge>
+                  <span>{usefulLinkCategoryLabel(catKey)}</span>
+                  <Badge variant="secondary">{grouped[catKey].length}</Badge>
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-1">
-                  {grouped[c.value].slice(0, 3).map(item => (
+                  {grouped[catKey].slice(0, 3).map(item => (
                     <p key={item.id} className="text-sm text-muted-foreground truncate">• {item.title}</p>
                   ))}
-                  {grouped[c.value].length > 3 && <p className="text-xs text-muted-foreground">+{grouped[c.value].length - 3} more</p>}
+                  {grouped[catKey].length > 3 && <p className="text-xs text-muted-foreground">+{grouped[catKey].length - 3} more</p>}
                 </div>
               </CardContent>
             </Card>
