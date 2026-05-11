@@ -16,7 +16,9 @@ import {
   ArrowLeft,
   HelpCircle,
   ChevronLeft,
+  CalendarClock,
 } from 'lucide-react';
+import { JobInterviewReminders } from '@/components/JobInterviewReminders';
 import { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
 
@@ -36,6 +38,7 @@ const adminItems = [
   { to: '/admin/clients', label: 'Manage Clients', icon: Users },
   { to: '/admin/tasks', label: 'Manage Tasks', icon: ClipboardList },
   { to: '/admin/personnel', label: 'Manage Personnel', icon: Users2 },
+  { to: '/admin/job-interviews', label: 'Job interviews', icon: CalendarClock },
   { to: '/admin/useful-links', label: 'Manage Help', icon: HelpCircle },
 ];
 
@@ -307,6 +310,7 @@ export default function AdminLayout() {
 
   return (
     <TooltipProvider>
+      <JobInterviewReminders />
       <div className="flex h-screen bg-background">
         <aside
           className={cn(

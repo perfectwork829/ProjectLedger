@@ -15,7 +15,9 @@ import {
   Shield,
   HelpCircle,
   ChevronDown,
+  CalendarClock,
 } from 'lucide-react';
+import { JobInterviewReminders } from '@/components/JobInterviewReminders';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import {
@@ -35,6 +37,7 @@ const navItems = [
   { to: '/dashboard/payments', label: 'Payments', icon: DollarSign },
   { to: '/dashboard/tasks', label: 'Tasks', icon: ClipboardList },
   { to: '/dashboard/personnel', label: 'Personnel', icon: Users2 },
+  { to: '/dashboard/job-interviews', label: 'Job interviews', icon: CalendarClock },
   { to: '/dashboard/useful-links', label: 'Help & links', icon: HelpCircle },
 ];
 
@@ -67,6 +70,7 @@ export default function FrontendLayout() {
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
+      <JobInterviewReminders />
       {/* Clarity-style header: white/chrome bar + primary accent strip */}
       <header className="sticky top-0 z-50 bg-card shadow-[0_1px_0_0_hsl(var(--border))]">
         <div className="clarity-header-strip" aria-hidden />

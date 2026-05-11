@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -16,6 +17,7 @@ import { IdentityDocumentsGallery } from '@/components/IdentityDocumentsFields';
 import { formatBirthday, normalizeIdentityDocuments } from '@/lib/identityDocuments';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
+import { parseProfileBlocks, type ProfileBlock, type WorkHistoryEntry } from '@/lib/personnelProfileBlocks';
 
 interface PersonnelItem {
   id: string;
@@ -107,14 +109,6 @@ const availColor: Record<string, string> = {
 type View = 'roles' | 'list' | 'detail';
 
 interface LangEntry { language: string; level: string }
-interface WorkHistoryEntry { title: string; overview: string; start_date: string; end_date: string }
-interface ProfileBlock {
-  title: string;
-  overview: string;
-  skills: string[];
-  achievements: string[];
-  experience: WorkHistoryEntry[];
-}
 
 const parseUniversities = (val: string | null): UniEntry[] => {
   if (!val) return [];
@@ -139,24 +133,6 @@ const parseTextItems = (raw: unknown): string[] => {
   if (!Array.isArray(raw)) return [];
   return raw.map((x) => String(x || '').trim()).filter(Boolean);
 };
-const parseProfileBlocks = (raw: unknown): ProfileBlock[] => {
-  if (!Array.isArray(raw)) return [];
-  return raw.map((x) => {
-    const obj = (x || {}) as Record<string, unknown>;
-    const expRaw = Array.isArray(obj.experience) ? obj.experience : [];
-    return {
-      title: String(obj.title || ''),
-      overview: String(obj.overview || ''),
-      skills: parseTextItems(obj.skills),
-      achievements: parseTextItems(obj.achievements),
-      experience: expRaw.map((e) => {
-        const eo = (e || {}) as Record<string, unknown>;
-        return { title: String(eo.title || ''), overview: String(eo.overview || ''), start_date: String(eo.start_date || ''), end_date: String(eo.end_date || '') };
-      }),
-    };
-  });
-};
-
 function CopyButton({ value }: { value: string }) {
   const { toast } = useToast();
   return (
@@ -206,6 +182,9 @@ function DefaultAvatar({ name, sex, size = 'lg' }: { name: string; sex?: string 
 
 export default function Personnel() {
   const { toast } = useToast();
+  const [searchParams] = useSearchParams();
+  const idParam = searchParams.get('id')?.trim() ?? '';
+  const lastOpenedPersonnelIdParam = useRef<string | null>(null);
   const [people, setPeople] = useState<PersonnelItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<View>('roles');
@@ -237,6 +216,22 @@ export default function Personnel() {
       setView(selectedRole ? 'list' : 'roles');
     }
   }, [people, selectedId, selectedRole]);
+
+  /** Open a person from links such as Job interviews → `/dashboard/personnel?id=…`. */
+  useEffect(() => {
+    if (loading || !people.length) return;
+    if (!idParam) {
+      lastOpenedPersonnelIdParam.current = null;
+      return;
+    }
+    if (lastOpenedPersonnelIdParam.current === idParam) return;
+    const p = people.find((x) => x.id === idParam);
+    if (!p) return;
+    lastOpenedPersonnelIdParam.current = idParam;
+    setSelectedRole(p.role);
+    setSelectedId(idParam);
+    setView('detail');
+  }, [loading, people, idParam]);
 
   const searchFilteredPeople = useMemo(
     () => filterItemsBySearch(people, searchInput, PERSONNEL_SEARCH_COLUMNS),

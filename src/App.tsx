@@ -25,6 +25,9 @@ import AdminClients from "@/pages/AdminClients";
 import Clients from "@/pages/Clients";
 import AdminUsefulLinks from "@/pages/AdminUsefulLinks";
 import UsefulLinks from "@/pages/UsefulLinks";
+import JobInterviews from "@/pages/JobInterviews";
+import AdminJobInterviews from "@/pages/AdminJobInterviews";
+import JobInterviewDetail from "@/pages/JobInterviewDetail";
 import AdminPayments from "@/pages/AdminPayments";
 import Payments from "@/pages/Payments";
 import NotFound from "./pages/NotFound";
@@ -79,6 +82,8 @@ const App = () => (
               <Route path="payments" element={<Payments />} />
               <Route path="tasks" element={<TaskPool />} />
               <Route path="personnel" element={<Personnel />} />
+              <Route path="job-interviews" element={<JobInterviews />} />
+              <Route path="job-interviews/:id" element={<JobInterviewDetail />} />
               <Route path="useful-links" element={<UsefulLinks />} />
             </Route>
 
@@ -99,6 +104,8 @@ const App = () => (
               <Route path="payments" element={<AdminPayments />} />
               <Route path="tasks" element={<AdminTaskPool />} />
               <Route path="personnel" element={<AdminPersonnel />} />
+              <Route path="job-interviews" element={<AdminJobInterviews />} />
+              <Route path="job-interviews/:id" element={<JobInterviewDetail />} />
               <Route path="useful-links" element={<AdminUsefulLinks />} />
             </Route>
 
