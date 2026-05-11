@@ -275,7 +275,7 @@ export default function UsefulLinks() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight text-foreground">Help &amp; links</h2>
+          <h2 className="text-2xl font-semibold tracking-tight text-foreground">Help</h2>
           <p className="text-sm text-muted-foreground">Commands, troubleshooting, and bookmarks by topic</p>
         </div>
         <ModuleSearchBar

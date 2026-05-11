@@ -1,4 +1,4 @@
-import { Outlet, NavLink, useNavigate } from 'react-router-dom';
+import { Outlet, NavLink, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import {
@@ -38,7 +38,7 @@ const navItems = [
   { to: '/dashboard/tasks', label: 'Tasks', icon: ClipboardList },
   { to: '/dashboard/personnel', label: 'Personnel', icon: Users2 },
   { to: '/dashboard/job-interviews', label: 'Job interviews', icon: CalendarClock },
-  { to: '/dashboard/useful-links', label: 'Help & links', icon: HelpCircle },
+  { to: '/dashboard/useful-links', label: 'Help', icon: HelpCircle },
 ];
 
 export default function FrontendLayout() {
@@ -76,12 +76,16 @@ export default function FrontendLayout() {
         <div className="clarity-header-strip" aria-hidden />
         <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4 md:px-6">
           <div className="flex items-center gap-5">
-            <div className="flex items-center gap-2.5">
+            <Link
+              to="/dashboard"
+              className="flex items-center gap-2.5 rounded-sm text-foreground outline-none ring-offset-background transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              aria-label="BenchHub — go to overview"
+            >
               <img src="/favicon.svg" alt="" className="h-8 w-8 shrink-0 rounded-sm shadow-sm" width={32} height={32} />
               <span className="hidden text-[15px] font-semibold tracking-tight text-foreground sm:inline">
                 BenchHub
               </span>
-            </div>
+            </Link>
 
             <nav className="hidden items-stretch md:flex md:gap-0 lg:gap-1">
               {navItems.map((item) => (
@@ -90,12 +94,6 @@ export default function FrontendLayout() {
                   {item.label}
                 </NavLink>
               ))}
-              {isAdmin && (
-                <NavLink to="/admin" className={linkClass}>
-                  <Shield className="h-[15px] w-[15px] shrink-0 opacity-90" strokeWidth={2} />
-                  Admin
-                </NavLink>
-              )}
             </nav>
           </div>
 
@@ -115,6 +113,17 @@ export default function FrontendLayout() {
                 <DropdownMenuItem className="cursor-default font-medium">
                   <span className="truncate">{email || 'Unknown user'}</span>
                 </DropdownMenuItem>
+                {isAdmin ? (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem asChild className="cursor-pointer">
+                      <NavLink to="/admin" className="flex w-full cursor-pointer items-center gap-2">
+                        <Shield className="h-4 w-4 shrink-0" />
+                        Admin
+                      </NavLink>
+                    </DropdownMenuItem>
+                  </>
+                ) : null}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={handleSignOut} className="gap-2 text-destructive focus:text-destructive">
                   <LogOut className="h-4 w-4" />
@@ -149,12 +158,6 @@ export default function FrontendLayout() {
                   {item.label}
                 </NavLink>
               ))}
-              {isAdmin && (
-                <NavLink to="/admin" className={mobileLinkClass} onClick={() => setMobileMenuOpen(false)}>
-                  <Shield className="h-4 w-4" />
-                  Admin
-                </NavLink>
-              )}
             </div>
           </nav>
         )}

@@ -1,4 +1,4 @@
-/** Shared category keys for `useful_links` (Help & links). */
+/** Shared category keys for `useful_links` (Help page). */
 
 export const USEFUL_LINK_CATEGORIES = [
   { value: 'resume_builder', label: 'Resume Builder' },
