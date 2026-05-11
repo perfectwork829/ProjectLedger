@@ -17,7 +17,6 @@ import {
 import type { JobInterviewRow } from '@/lib/jobInterviews';
 import type { JobInterviewStageRow } from '@/lib/jobInterviewStages';
 import { getPipelineListCursor } from '@/lib/jobInterviewPipelineList';
-import { formatInTimeZone } from 'date-fns-tz';
 
 interface PersonnelMini {
   id: string;
@@ -79,17 +78,17 @@ function InterviewScheduleTable({ rows, personnelMap, stagesByInterview, viewerT
             <th className="px-3 py-2 min-w-[240px]">Upcoming</th>
             <th className="px-3 py-2">Job</th>
             <th className="px-3 py-2">Posting</th>
-            <th className="px-3 py-2">Caller</th>
+            <th className="px-3 py-2">Developer (for job)</th>
             <th className="px-3 py-2">Recruiter</th>
+            <th className="px-3 py-2">Caller</th>
             <th className="px-3 py-2">Source</th>
-            <th className="px-3 py-2 min-w-[140px] max-w-[240px]">Follow-up notes</th>
-            <th className="px-3 py-2">Status</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((r) => {
-            const caller = personnelMap[r.developer_personnel_id];
+            const developerForJob = personnelMap[r.developer_personnel_id];
             const recruiter = r.recruiter_personnel_id ? personnelMap[r.recruiter_personnel_id] : undefined;
+            const caller = r.caller_personnel_id ? personnelMap[r.caller_personnel_id] : undefined;
             const cursor = getPipelineListCursor(stagesByInterview[r.id], r);
             const stepGmt = gmtOffsetLabelForInstant(cursor.instant, cursor.wallIana);
             const stepWhen = formatUpcomingSlotWallLine(cursor.instant, cursor.wallIana);
@@ -143,14 +142,14 @@ function InterviewScheduleTable({ rows, personnelMap, stagesByInterview, viewerT
                   )}
                 </td>
                 <td className="px-3 py-2 align-top">
-                  {caller ? (
+                  {developerForJob ? (
                     <a
-                      href={personnelDashboardHref(caller.id)}
+                      href={personnelDashboardHref(developerForJob.id)}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="font-medium text-primary hover:underline"
                     >
-                      {name(caller)}
+                      {name(developerForJob)}
                     </a>
                   ) : (
                     <span className="text-muted-foreground">—</span>
@@ -171,26 +170,21 @@ function InterviewScheduleTable({ rows, personnelMap, stagesByInterview, viewerT
                   )}
                 </td>
                 <td className="px-3 py-2 align-top">
-                  <Badge variant="outline">{r.job_source || '—'}</Badge>
-                </td>
-                <td className="px-3 py-2 align-top max-w-[min(100vw,16rem)]">
-                  {r.next_followup_at ? (
-                    <p className="mb-1 text-xs font-medium text-muted-foreground">
-                      Check-in: {formatInTimeZone(new Date(r.next_followup_at), viewerTz, "EEE MMM d, h:mm a")} ({viewerTz})
-                    </p>
-                  ) : null}
-                  {r.followup_notes?.trim() ? (
-                    <p className="whitespace-pre-wrap break-words text-sm leading-snug text-foreground/90" title={r.followup_notes}>
-                      {r.followup_notes}
-                    </p>
-                  ) : !r.next_followup_at ? (
-                    <span className="text-muted-foreground">—</span>
+                  {caller ? (
+                    <a
+                      href={personnelDashboardHref(caller.id)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-medium text-primary hover:underline"
+                    >
+                      {name(caller)}
+                    </a>
                   ) : (
-                    <span className="text-xs text-muted-foreground">No notes</span>
+                    <span className="text-muted-foreground">—</span>
                   )}
                 </td>
                 <td className="px-3 py-2 align-top">
-                  <Badge variant="secondary">{r.status}</Badge>
+                  <Badge variant="outline">{r.job_source || '—'}</Badge>
                 </td>
               </tr>
             );
@@ -295,8 +289,7 @@ export default function JobInterviews() {
           <p className="text-sm text-muted-foreground">
             <strong>Current step</strong> is the next open pipeline round. <strong>Upcoming</strong> shows Step Zone with GMT offset, then
             date and time, then Your time with GMT offset, then date and time in your display zone. <strong>Posting</strong> opens the job URL
-            when provided. <strong>Follow-up notes</strong> (and optional check-in time) come from admin. <strong>Caller</strong> and{' '}
-            <strong>Recruiter</strong> open Personnel in a new browser tab. Tomorrow in {viewerTz} is split into its own section below.
+            when provided. <strong>Developer (for job)</strong>, <strong>Recruiter</strong>, and <strong>Caller</strong> open Personnel in a new browser tab. Tomorrow in {viewerTz} is split into its own section below.
           </p>
         </div>
         <ViewerTimezonePicker id="job-interviews-list-tz" />

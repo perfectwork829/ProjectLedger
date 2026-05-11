@@ -3,6 +3,8 @@ export interface JobInterviewRow {
   user_id: string;
   developer_personnel_id: string;
   recruiter_personnel_id: string | null;
+  /** Personnel with role caller; optional until set in admin. */
+  caller_personnel_id?: string | null;
   interview_timezone: string;
   scheduled_at: string;
   job_source: string | null;

@@ -65,9 +65,14 @@ function personnelName(p: PersonnelMini | undefined) {
   return [p.first_name, p.last_name].filter(Boolean).join(' ') || '—';
 }
 
+function personnelDashboardHref(personnelId: string) {
+  return `/dashboard/personnel?id=${encodeURIComponent(personnelId)}`;
+}
+
 const emptyForm = () => ({
   developer_personnel_id: '',
   recruiter_personnel_id: '' as string | '',
+  caller_personnel_id: '' as string | '',
   interview_timezone: '',
   dateYmd: '',
   timeHm: '10:00',
@@ -118,8 +123,9 @@ export default function AdminJobInterviews() {
     load();
   }, [load]);
 
-  const callers = useMemo(() => personnel.filter((p) => p.role === 'caller'), [personnel]);
+  const developersForJob = useMemo(() => personnel.filter((p) => p.role === 'developer_for_job'), [personnel]);
   const recruiters = useMemo(() => personnel.filter((p) => p.role === 'recruiter'), [personnel]);
+  const callers = useMemo(() => personnel.filter((p) => p.role === 'caller'), [personnel]);
 
   const personnelMap = useMemo(() => Object.fromEntries(personnel.map((p) => [p.id, p])), [personnel]);
 
@@ -127,13 +133,17 @@ export default function AdminJobInterviews() {
     const q = search.trim().toLowerCase();
     if (!q) return rows;
     return rows.filter((r) => {
-      const caller = personnelMap[r.developer_personnel_id];
+      const developerForJob = personnelMap[r.developer_personnel_id];
+      const recruiterMini = r.recruiter_personnel_id ? personnelMap[r.recruiter_personnel_id] : undefined;
+      const callerMini = r.caller_personnel_id ? personnelMap[r.caller_personnel_id] : undefined;
       const blob = [
         r.job_title,
         r.job_source,
         r.description,
         r.job_posting_url,
-        caller && personnelName(caller),
+        developerForJob && personnelName(developerForJob),
+        recruiterMini && personnelName(recruiterMini),
+        callerMini && personnelName(callerMini),
       ]
         .filter(Boolean)
         .join(' ')
@@ -169,6 +179,7 @@ export default function AdminJobInterviews() {
     setForm({
       developer_personnel_id: r.developer_personnel_id,
       recruiter_personnel_id: r.recruiter_personnel_id || '',
+      caller_personnel_id: r.caller_personnel_id || '',
       interview_timezone: iana,
       dateYmd,
       timeHm,
@@ -184,20 +195,20 @@ export default function AdminJobInterviews() {
     setDialogOpen(true);
   };
 
-  const onCallerChange = (id: string) => {
-    const caller = personnelMap[id];
-    const tz = caller?.timezone ? resolveIanaForBooking(caller.timezone) : null;
+  const onDeveloperForJobChange = (id: string) => {
+    const dev = personnelMap[id];
+    const tz = dev?.timezone ? resolveIanaForBooking(dev.timezone) : null;
     setForm((p) => ({
       ...p,
       developer_personnel_id: id,
-      interview_timezone: tz ? caller!.timezone!.trim() : p.interview_timezone,
+      interview_timezone: tz ? dev!.timezone!.trim() : p.interview_timezone,
     }));
   };
 
   const handleSave = async () => {
     if (!user?.id) return;
     if (!form.developer_personnel_id) {
-      toast({ title: 'Pick a caller', variant: 'destructive' });
+      toast({ title: 'Pick a developer (for job)', variant: 'destructive' });
       return;
     }
     if (!form.job_title.trim()) {
@@ -240,6 +251,7 @@ export default function AdminJobInterviews() {
       user_id: user.id,
       developer_personnel_id: form.developer_personnel_id,
       recruiter_personnel_id: form.recruiter_personnel_id || null,
+      caller_personnel_id: form.caller_personnel_id || null,
       interview_timezone: iana,
       scheduled_at: scheduledAt.toISOString(),
       job_source: form.job_source || null,
@@ -304,12 +316,12 @@ export default function AdminJobInterviews() {
         <div>
           <h2 className="text-2xl font-semibold tracking-tight text-foreground">Job interviews</h2>
           <p className="text-sm text-muted-foreground">
-            Schedule using the <strong>caller&apos;s</strong> personnel timezone. Alerts show{' '}
-            <strong>caller local time</strong> and <strong>your time</strong> ({viewerTz}).
+            Pick a <strong>developer (for job)</strong>; the slot defaults to their personnel timezone. Alerts show{' '}
+            <strong>developer local time</strong> and <strong>your time</strong> ({viewerTz}).
           </p>
         </div>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <ModuleSearchBar value={search} onChange={setSearch} placeholder="Search title, source, caller…" id="job-interviews-search" />
+          <ModuleSearchBar value={search} onChange={setSearch} placeholder="Search title, source, developer, recruiter, caller…" id="job-interviews-search" />
           <Button onClick={openCreate} className="gap-2 shrink-0">
             <Plus className="h-4 w-4" />
             New interview
@@ -322,7 +334,7 @@ export default function AdminJobInterviews() {
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">
             <CalendarClock className="mb-2 h-10 w-10 text-muted-foreground" />
             <p className="text-lg font-medium text-foreground">{search.trim() ? 'No matching interviews' : 'No interviews yet'}</p>
-            <p className="mt-1 text-sm text-muted-foreground">Add one to track dates in the caller&apos;s timezone.</p>
+            <p className="mt-1 text-sm text-muted-foreground">Add one to track dates in the developer&apos;s timezone.</p>
             {!search.trim() && (
               <Button variant="outline" className="mt-4 gap-2" onClick={openCreate}>
                 <Plus className="h-4 w-4" />
@@ -338,6 +350,8 @@ export default function AdminJobInterviews() {
               <tr>
                 <th className="px-3 py-2">When</th>
                 <th className="px-3 py-2">Job</th>
+                <th className="px-3 py-2">Developer (for job)</th>
+                <th className="px-3 py-2">Recruiter</th>
                 <th className="px-3 py-2">Caller</th>
                 <th className="px-3 py-2">Source</th>
                 <th className="px-3 py-2">Status</th>
@@ -346,7 +360,9 @@ export default function AdminJobInterviews() {
             </thead>
             <tbody>
               {filtered.map((r) => {
-                const caller = personnelMap[r.developer_personnel_id];
+                const developerForJob = personnelMap[r.developer_personnel_id];
+                const recruiterPerson = r.recruiter_personnel_id ? personnelMap[r.recruiter_personnel_id] : undefined;
+                const callerPerson = r.caller_personnel_id ? personnelMap[r.caller_personnel_id] : undefined;
                 const iana = resolveIanaForBooking(r.interview_timezone) || r.interview_timezone;
                 const dual = formatDualInterviewTime(new Date(r.scheduled_at), iana, viewerTz);
                 return (
@@ -362,7 +378,48 @@ export default function AdminJobInterviews() {
                         {r.job_title}
                       </Link>
                     </td>
-                    <td className="px-3 py-2 align-top">{personnelName(caller)}</td>
+                    <td className="px-3 py-2 align-top">
+                      {developerForJob ? (
+                        <a
+                          href={personnelDashboardHref(developerForJob.id)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-medium text-primary hover:underline"
+                        >
+                          {personnelName(developerForJob)}
+                        </a>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 align-top">
+                      {recruiterPerson ? (
+                        <a
+                          href={personnelDashboardHref(recruiterPerson.id)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-medium text-primary hover:underline"
+                        >
+                          {personnelName(recruiterPerson)}
+                        </a>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 align-top">
+                      {callerPerson ? (
+                        <a
+                          href={personnelDashboardHref(callerPerson.id)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-medium text-primary hover:underline"
+                        >
+                          {personnelName(callerPerson)}
+                        </a>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
                     <td className="px-3 py-2 align-top">
                       <Badge variant="outline">{r.job_source || '—'}</Badge>
                     </td>
@@ -400,13 +457,13 @@ export default function AdminJobInterviews() {
           <ScrollArea className="max-h-[75vh] px-6 pb-6">
             <div className="space-y-4 pt-2">
               <div className="space-y-2">
-                <Label>Caller *</Label>
-                <Select value={form.developer_personnel_id} onValueChange={onCallerChange}>
+                <Label>Developer (for job) *</Label>
+                <Select value={form.developer_personnel_id} onValueChange={onDeveloperForJobChange}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Select caller" />
+                    <SelectValue placeholder="Select developer (for job)" />
                   </SelectTrigger>
                   <SelectContent>
-                    {callers.map((p) => (
+                    {developersForJob.map((p) => (
                       <SelectItem key={p.id} value={p.id}>
                         {personnelName(p)}
                       </SelectItem>
@@ -432,12 +489,29 @@ export default function AdminJobInterviews() {
                 </Select>
               </div>
 
+              <div className="space-y-2">
+                <Label>Caller (personnel)</Label>
+                <Select value={form.caller_personnel_id || '__none__'} onValueChange={(v) => set('caller_personnel_id', v === '__none__' ? '' : v)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Optional" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">None</SelectItem>
+                    {callers.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {personnelName(p)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
               <Separator />
 
               <div className="rounded-md border bg-muted/30 p-3 text-sm">
                 <p className="font-medium text-foreground">Interview time zone</p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Date and time below are interpreted in this zone (defaults from the caller&apos;s personnel record).
+                  Date and time below are interpreted in this zone (defaults from the developer you select above, using their personnel timezone).
                 </p>
                 <div className="mt-3">
                   <TimezoneSelect label="Wall-clock timezone" value={form.interview_timezone} onChange={(tz) => set('interview_timezone', tz)} />

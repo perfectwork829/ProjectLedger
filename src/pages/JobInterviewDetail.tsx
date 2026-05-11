@@ -68,6 +68,10 @@ function personnelName(p: { first_name?: string | null; last_name?: string | nul
   return [p.first_name, p.last_name].filter(Boolean).join(' ') || '—';
 }
 
+function personnelDashboardHref(personnelId: string) {
+  return `/dashboard/personnel?id=${encodeURIComponent(personnelId)}`;
+}
+
 function CopyIconButton({ value, title: titleProp }: { value: string; title?: string }) {
   const { toast } = useToast();
   return (
@@ -172,7 +176,7 @@ export default function JobInterviewDetail() {
       supabase.from('job_interview_stages').select('*').eq('interview_id', id).order('sort_order', { ascending: true }),
     ]);
     if (dErr || !dev) {
-      toast({ title: 'Caller not found', description: dErr?.message, variant: 'destructive' });
+      toast({ title: 'Developer (for job) not found', description: dErr?.message, variant: 'destructive' });
       setDeveloper(null);
     } else {
       setDeveloper(dev as DeveloperPersonnelRecord);
@@ -351,7 +355,14 @@ export default function JobInterviewDetail() {
           <div className="flex flex-wrap gap-2">
             <Badge variant="secondary">{interview.status}</Badge>
             <Badge variant="outline">{jobSourceLabel(interview.job_source)}</Badge>
-            <Badge variant="outline">{personnelName(developer)}</Badge>
+            <a
+              href={personnelDashboardHref(developer.id)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center rounded-full border border-border px-2.5 py-0.5 text-xs font-semibold text-foreground transition-colors hover:bg-muted"
+            >
+              {personnelName(developer)}
+            </a>
           </div>
         </div>
         <ViewerTimezonePicker id="interview-detail-tz" />
@@ -412,12 +423,21 @@ export default function JobInterviewDetail() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Recruiter / caller</CardTitle>
+          <CardTitle className="text-base">Recruiter</CardTitle>
         </CardHeader>
         <CardContent className="text-sm">
           {recruiter ? (
             <div className="space-y-2">
-              <p className="text-lg font-medium text-foreground">{personnelName(recruiter)}</p>
+              <p className="text-lg font-medium text-foreground">
+                <a
+                  href={personnelDashboardHref(recruiter.id)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:underline"
+                >
+                  {personnelName(recruiter)}
+                </a>
+              </p>
               <div className="grid gap-1 sm:grid-cols-2">
                 {recruiter.email ? (
                   <div className="flex items-center gap-2">
@@ -569,7 +589,7 @@ export default function JobInterviewDetail() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Caller profile</CardTitle>
+          <CardTitle className="text-base">Developer profile (for job)</CardTitle>
         </CardHeader>
         <CardContent>
           <JobInterviewDeveloperProfile

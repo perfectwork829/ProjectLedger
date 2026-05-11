@@ -399,7 +399,27 @@ function WorkHistoryEditor({ value, onChange }: { value: string; onChange: (v: s
   );
 }
 
-function ProfileBlocksEditor({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function emptyProfileBlock(): ProfileBlock {
+  return { title: '', overview: '', skills: [], achievements: [], experience: [] };
+}
+
+function skillsFromCommaDraft(draft: string): string[] {
+  return draft.split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+function achievementsFromLinesDraft(draft: string): string[] {
+  return draft.split('\n').map((s) => s.trim()).filter(Boolean);
+}
+
+function ProfileBlocksEditor({
+  value,
+  onChange,
+  saveDraftRef,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  saveDraftRef?: React.MutableRefObject<{ skills: string; achievements: string; activeIndex: number }>;
+}) {
   const [active, setActive] = useState(0);
   const blocks = useMemo(() => {
     try {
@@ -408,43 +428,105 @@ function ProfileBlocksEditor({ value, onChange }: { value: string; onChange: (v:
       return [] as ProfileBlock[];
     }
   }, [value]);
-  const safeBlocks = blocks.length > 0 ? blocks : [{ title: '', overview: '', skills: [], achievements: [], experience: [] }];
+  const safeBlocks = blocks.length > 0 ? blocks : [emptyProfileBlock()];
   const activeIndex = Math.min(active, safeBlocks.length - 1);
   const current = safeBlocks[activeIndex];
-  const save = (next: ProfileBlock[]) => onChange(JSON.stringify(next));
-  const patchBlock = (idx: number, patch: Partial<ProfileBlock>) => {
-    const next = [...safeBlocks];
-    next[idx] = { ...next[idx], ...patch };
+
+  const [skillsDraft, setSkillsDraft] = useState(() => current.skills.join(', '));
+  const [achievementsDraft, setAchievementsDraft] = useState(() => current.achievements.join('\n'));
+
+  const save = useCallback(
+    (next: ProfileBlock[]) => {
+      onChange(JSON.stringify(next));
+    },
+    [onChange],
+  );
+
+  const withMergedDrafts = useCallback(
+    (base: ProfileBlock[], idx: number): ProfileBlock[] => {
+      const next = [...base];
+      const row = { ...next[idx] };
+      if (idx === activeIndex) {
+        row.skills = skillsFromCommaDraft(skillsDraft);
+        row.achievements = achievementsFromLinesDraft(achievementsDraft);
+      }
+      next[idx] = row;
+      return next;
+    },
+    [activeIndex, skillsDraft, achievementsDraft],
+  );
+
+  const patchBlock = useCallback(
+    (idx: number, patch: Partial<ProfileBlock>) => {
+      const mergedBase = withMergedDrafts(safeBlocks, idx);
+      mergedBase[idx] = { ...mergedBase[idx], ...patch };
+      save(mergedBase);
+    },
+    [withMergedDrafts, safeBlocks, save],
+  );
+
+  const goToTab = (newIdx: number) => {
+    if (newIdx === activeIndex) return;
+    const next = withMergedDrafts(safeBlocks, activeIndex);
     save(next);
+    setActive(newIdx);
+    setSkillsDraft(next[newIdx].skills.join(', '));
+    setAchievementsDraft(next[newIdx].achievements.join('\n'));
   };
+
   const addBlock = () => {
-    const next = [...safeBlocks, { title: '', overview: '', skills: [], achievements: [], experience: [] }];
+    const next = withMergedDrafts(safeBlocks, activeIndex);
+    next.push(emptyProfileBlock());
     save(next);
-    setActive(next.length - 1);
+    const newIdx = next.length - 1;
+    setActive(newIdx);
+    setSkillsDraft('');
+    setAchievementsDraft('');
   };
-  const removeBlock = (idx: number) => {
-    const next = safeBlocks.filter((_, i) => i !== idx);
-    save(next.length ? next : [{ title: '', overview: '', skills: [], achievements: [], experience: [] }]);
-    setActive(Math.max(0, idx - 1));
+
+  const removeBlock = (rmIdx: number) => {
+    const next = withMergedDrafts(safeBlocks, activeIndex);
+    const filtered = next.filter((_, i) => i !== rmIdx);
+    const out = filtered.length ? filtered : [emptyProfileBlock()];
+    save(out);
+    let na = activeIndex;
+    if (rmIdx < activeIndex) na = activeIndex - 1;
+    else if (rmIdx === activeIndex) na = Math.max(0, Math.min(activeIndex, out.length - 1));
+    na = Math.max(0, Math.min(na, out.length - 1));
+    setActive(na);
+    setSkillsDraft(out[na].skills.join(', '));
+    setAchievementsDraft(out[na].achievements.join('\n'));
   };
-  const setSkillsText = (txt: string) => patchBlock(activeIndex, { skills: txt.split(',').map((s) => s.trim()).filter(Boolean) });
-  const setAchievementsText = (txt: string) => patchBlock(activeIndex, { achievements: txt.split('\n').map((s) => s.trim()).filter(Boolean) });
-  const addExp = () => patchBlock(activeIndex, { experience: [...current.experience, { title: '', overview: '', start_date: '', end_date: '' }] });
-  const patchExp = (idx: number, patch: Partial<WorkHistoryEntry>) => {
+
+  const addExp = () =>
+    patchBlock(activeIndex, {
+      experience: [...current.experience, { title: '', overview: '', start_date: '', end_date: '' }],
+    });
+  const patchExp = (expIdx: number, patch: Partial<WorkHistoryEntry>) => {
     const exp = [...current.experience];
-    exp[idx] = { ...exp[idx], ...patch };
+    exp[expIdx] = { ...exp[expIdx], ...patch };
     patchBlock(activeIndex, { experience: exp });
   };
-  const removeExp = (idx: number) => patchBlock(activeIndex, { experience: current.experience.filter((_, i) => i !== idx) });
+  const removeExp = (expIdx: number) =>
+    patchBlock(activeIndex, { experience: current.experience.filter((_, i) => i !== expIdx) });
+
+  useEffect(() => {
+    if (!saveDraftRef) return;
+    saveDraftRef.current = { skills: skillsDraft, achievements: achievementsDraft, activeIndex };
+  }, [saveDraftRef, skillsDraft, achievementsDraft, activeIndex]);
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap gap-2">
         {safeBlocks.map((_, i) => (
-          <Button key={i} type="button" size="sm" variant={i === activeIndex ? 'default' : 'outline'} onClick={() => setActive(i)}>
+          <Button key={i} type="button" size="sm" variant={i === activeIndex ? 'default' : 'outline'} onClick={() => goToTab(i)}>
             Profile Tab {i + 1}
           </Button>
         ))}
-        <Button type="button" size="sm" variant="outline" className="gap-1" onClick={addBlock}><Plus className="h-3.5 w-3.5" />Add Tab</Button>
+        <Button type="button" size="sm" variant="outline" className="gap-1" onClick={addBlock}>
+          <Plus className="h-3.5 w-3.5" />
+          Add Tab
+        </Button>
         {safeBlocks.length > 1 ? (
           <Button type="button" size="sm" variant="ghost" className="text-destructive" onClick={() => removeBlock(activeIndex)}>
             Remove Current
@@ -452,17 +534,47 @@ function ProfileBlocksEditor({ value, onChange }: { value: string; onChange: (v:
         ) : null}
       </div>
       <div className="rounded-md border p-3 space-y-3">
-        <div className="space-y-2"><Label>Title</Label><Input value={current.title} onChange={(e) => patchBlock(activeIndex, { title: e.target.value })} /></div>
-        <div className="space-y-2"><Label>Overview</Label><Textarea rows={3} value={current.overview} onChange={(e) => patchBlock(activeIndex, { overview: e.target.value })} /></div>
-        <div className="space-y-2"><Label>Skills (comma separated)</Label><Input value={current.skills.join(', ')} onChange={(e) => setSkillsText(e.target.value)} /></div>
-        <div className="space-y-2"><Label>Achievements (one per line)</Label><Textarea rows={3} value={current.achievements.join('\n')} onChange={(e) => setAchievementsText(e.target.value)} /></div>
+        <div className="space-y-2">
+          <Label>Title</Label>
+          <Input value={current.title} onChange={(e) => patchBlock(activeIndex, { title: e.target.value })} />
+        </div>
+        <div className="space-y-2">
+          <Label>Overview</Label>
+          <Textarea rows={3} value={current.overview} onChange={(e) => patchBlock(activeIndex, { overview: e.target.value })} />
+        </div>
+        <div className="space-y-2">
+          <Label>Skills (comma separated)</Label>
+          <Input
+            value={skillsDraft}
+            onChange={(e) => setSkillsDraft(e.target.value)}
+            onBlur={() => {
+              const next = withMergedDrafts(safeBlocks, activeIndex);
+              save(next);
+            }}
+            placeholder="e.g. TypeScript, React, Node.js"
+          />
+        </div>
+        <div className="space-y-2">
+          <Label>Achievements (one per line)</Label>
+          <Textarea
+            rows={3}
+            value={achievementsDraft}
+            onChange={(e) => setAchievementsDraft(e.target.value)}
+            onBlur={() => {
+              const next = withMergedDrafts(safeBlocks, activeIndex);
+              save(next);
+            }}
+          />
+        </div>
         <div className="space-y-2">
           <Label>Experience</Label>
           {current.experience.map((ex, i) => (
             <div key={i} className="rounded border p-2 space-y-2">
               <div className="flex items-center justify-between">
                 <p className="text-xs text-muted-foreground">Experience #{i + 1}</p>
-                <Button type="button" size="icon" variant="ghost" className="h-6 w-6 text-destructive" onClick={() => removeExp(i)}><X className="h-3.5 w-3.5" /></Button>
+                <Button type="button" size="icon" variant="ghost" className="h-6 w-6 text-destructive" onClick={() => removeExp(i)}>
+                  <X className="h-3.5 w-3.5" />
+                </Button>
               </div>
               <Input placeholder="Title" value={ex.title} onChange={(e) => patchExp(i, { title: e.target.value })} />
               <Textarea rows={2} placeholder="Overview" value={ex.overview} onChange={(e) => patchExp(i, { overview: e.target.value })} />
@@ -472,7 +584,10 @@ function ProfileBlocksEditor({ value, onChange }: { value: string; onChange: (v:
               </div>
             </div>
           ))}
-          <Button type="button" variant="outline" size="sm" className="gap-1" onClick={addExp}><Plus className="h-3.5 w-3.5" />Add Experience</Button>
+          <Button type="button" variant="outline" size="sm" className="gap-1" onClick={addExp}>
+            <Plus className="h-3.5 w-3.5" />
+            Add Experience
+          </Button>
         </div>
       </div>
     </div>
@@ -664,6 +779,7 @@ export default function AdminPersonnel() {
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string } | null>(null);
+  const profileBlocksSaveDraftRef = useRef({ skills: '', achievements: '', activeIndex: 0 });
 
   const [view, setView] = useState<View>('roles');
   const [selectedRole, setSelectedRole] = useState<string | null>(null);
@@ -763,7 +879,20 @@ export default function AdminPersonnel() {
     const profileAchievements = parseFormTextItems(form.profile_achievements_json as string);
     const profileBlocks = (() => {
       try {
-        return parseProfileBlocks(JSON.parse((form.profile_blocks_json as string) || '[]'));
+        let blocks = parseProfileBlocks(JSON.parse((form.profile_blocks_json as string) || '[]'));
+        if (form.role === 'developer_for_job') {
+          if (blocks.length === 0) blocks = [emptyProfileBlock()];
+          const d = profileBlocksSaveDraftRef.current;
+          const ai = Math.max(0, Math.min(d.activeIndex, blocks.length - 1));
+          const copy = [...blocks];
+          copy[ai] = {
+            ...copy[ai],
+            skills: skillsFromCommaDraft(d.skills),
+            achievements: achievementsFromLinesDraft(d.achievements),
+          };
+          return copy;
+        }
+        return blocks;
       } catch {
         return [] as ProfileBlock[];
       }
@@ -1229,7 +1358,12 @@ export default function AdminPersonnel() {
                 {form.role === 'developer_for_job' ? (
                   <div className="space-y-2">
                     <Label>Profile Tabs (repeatable)</Label>
-                    <ProfileBlocksEditor value={form.profile_blocks_json as string} onChange={(v) => set('profile_blocks_json', v)} />
+                    <ProfileBlocksEditor
+                      key={editingId ?? 'new-person'}
+                      value={form.profile_blocks_json as string}
+                      onChange={(v) => set('profile_blocks_json', v)}
+                      saveDraftRef={profileBlocksSaveDraftRef}
+                    />
                   </div>
                 ) : (
                   <div className="space-y-2"><Label>Overview</Label><Textarea value={form.overview} onChange={(e) => set('overview', e.target.value)} rows={3} placeholder="Brief overview of this person..." /></div>
