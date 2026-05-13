@@ -1,5 +1,6 @@
 import { Input } from '@/components/ui/input';
 import { Search, X } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 interface ModuleSearchBarProps {
   value: string;
@@ -17,7 +18,7 @@ export default function ModuleSearchBar({
   id = 'module-search',
 }: ModuleSearchBarProps) {
   return (
-    <div className={`relative w-full max-w-md ${className}`}>
+    <div className={cn('relative w-full max-w-md', className)}>
       <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
       <Input
         id={id}

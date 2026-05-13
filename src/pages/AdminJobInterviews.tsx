@@ -357,7 +357,7 @@ export default function AdminJobInterviews() {
             onChange={setSearch}
             placeholder="Search title, source, status, developer, recruiter, caller…"
             id="job-interviews-search"
-            className="min-w-0 flex-1 sm:min-w-[12rem] sm:max-w-md"
+            className="min-w-0 flex-1 max-w-none sm:max-w-2xl"
           />
           <Button onClick={openCreate} className="h-10 shrink-0 gap-2">
             <Plus className="h-4 w-4" />
