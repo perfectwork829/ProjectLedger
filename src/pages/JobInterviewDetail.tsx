@@ -353,7 +353,7 @@ export default function JobInterviewDetail() {
           </Button>
           <h2 className="text-2xl font-semibold tracking-tight text-foreground">{interview.job_title}</h2>
           <div className="flex flex-wrap gap-2">
-            <Badge variant="secondary">{interview.status}</Badge>
+            <Badge variant={interview.status === 'failed' ? 'destructive' : 'secondary'}>{interview.status}</Badge>
             <Badge variant="outline">{jobSourceLabel(interview.job_source)}</Badge>
             <a
               href={personnelDashboardHref(developer.id)}

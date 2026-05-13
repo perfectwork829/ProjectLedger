@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import 'react-quill-new/dist/quill.snow.css';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -26,6 +27,8 @@ import type { IdentityDocuments } from '@/lib/identityDocuments';
 import { identityDocumentsForDb, formatBirthday, normalizeIdentityDocuments } from '@/lib/identityDocuments';
 import { cn } from '@/lib/utils';
 import ModuleSearchBar from '@/components/ModuleSearchBar';
+import { ClientLinkedProjectsSection } from '@/components/ClientLinkedProjectsSection';
+import { ClientLinkedTasksSection } from '@/components/ClientLinkedTasksSection';
 import { CLIENT_SEARCH_COLUMNS } from '@/lib/supabaseSearch';
 import { filterItemsBySearch } from '@/lib/clientSearch';
 import { resolveUtcSelectValueForIana, suggestedTimezoneForCountry } from '@/lib/timezones';
@@ -454,6 +457,7 @@ function PhoneInput({ value, onChange }: { value: string; onChange: (v: string) 
 export default function AdminClients() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [clients, setClients] = useState<Client[]>([]);
   const [sourceAccounts, setSourceAccounts] = useState<SourceAccountOption[]>([]);
   const [loading, setLoading] = useState(true);
@@ -488,6 +492,25 @@ export default function AdminClients() {
   };
 
   useEffect(() => { fetchClients(); }, []);
+
+  useEffect(() => {
+    if (loading) return;
+    const id = searchParams.get('client');
+    if (!id) return;
+    const c = clients.find((x) => x.id === id);
+    if (!c) {
+      toast({
+        title: 'Client not found',
+        description: 'The link may be outdated or this client may have been removed.',
+        variant: 'destructive',
+      });
+      setSearchParams({}, { replace: true });
+      return;
+    }
+    setView('detail');
+    setSelectedId(c.id);
+    setSelectedType(c.client_type);
+  }, [loading, clients, searchParams, setSearchParams, toast]);
 
   const openCreate = (type?: string) => { setEditingId(null); setForm({ ...emptyForm, client_type: type || 'individual' }); setDialogOpen(true); };
 
@@ -645,8 +668,18 @@ export default function AdminClients() {
       : (selectedClient?.source_account_label || null);
   const typeLabel = selectedType ? (CLIENT_TYPES_MAP[selectedType]?.label || selectedType) : '';
 
-  const goToTypes = () => { setView('types'); setSelectedType(null); setSelectedId(null); };
-  const goToList = (type: string) => { setView('list'); setSelectedType(type); setSelectedId(null); };
+  const goToTypes = () => {
+    setSearchParams({}, { replace: true });
+    setView('types');
+    setSelectedType(null);
+    setSelectedId(null);
+  };
+  const goToList = (type: string) => {
+    setSearchParams({}, { replace: true });
+    setView('list');
+    setSelectedType(type);
+    setSelectedId(null);
+  };
   const goToDetail = (id: string) => { setView('detail'); setSelectedId(id); };
 
   const DefaultAvatar = ({ name, sex }: { name: string; sex?: string | null }) => (
@@ -796,7 +829,21 @@ export default function AdminClients() {
 
         {c.skills && <DetailSection icon={Star} title="Skills"><div className="flex flex-wrap gap-2">{c.skills.split(',').map((s, i) => <Badge key={i} variant="secondary" className="text-sm font-normal">{s.trim()}</Badge>)}</div></DetailSection>}
         {c.achievements && <DetailSection icon={Star} title="Achievements"><div className="prose prose-sm max-w-none text-foreground/80 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5" dangerouslySetInnerHTML={{ __html: c.achievements }} /></DetailSection>}
-        {c.project_history && <DetailSection icon={Briefcase} title="Project History"><div className="prose prose-sm max-w-none text-foreground/80 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5" dangerouslySetInnerHTML={{ __html: c.project_history }} /></DetailSection>}
+        <DetailSection icon={Briefcase} title="Project history">
+          <div className="space-y-4">
+            <ClientLinkedProjectsSection clientId={c.id} projectsBasePath="/admin/projects" emptyState="hidden" />
+            <ClientLinkedTasksSection clientId={c.id} tasksBasePath="/admin/tasks" emptyState="hidden" />
+            {c.project_history ? (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-1">Additional notes (rich text)</p>
+                <div
+                  className="prose prose-sm max-w-none text-foreground/80 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5"
+                  dangerouslySetInnerHTML={{ __html: c.project_history }}
+                />
+              </div>
+            ) : null}
+          </div>
+        </DetailSection>
 
         <Separator />
 
@@ -968,9 +1015,30 @@ export default function AdminClients() {
                   <div className="space-y-2"><Label>Budget</Label><Input value={form.budget} onChange={(e) => set('budget', e.target.value)} placeholder="e.g. $5,000-$10,000" /></div>
                   <div className="space-y-2"><Label>Payment Terms</Label><Input value={form.payment_terms} onChange={(e) => set('payment_terms', e.target.value)} placeholder="e.g. Net 30, Milestone-based" /></div>
                 </div>
+                <div className="space-y-4">
+                  <ClientLinkedProjectsSection
+                    clientId={editingId}
+                    projectsBasePath="/admin/projects"
+                    emptyState={editingId ? 'hidden' : 'hint'}
+                  />
+                  <ClientLinkedTasksSection
+                    clientId={editingId}
+                    tasksBasePath="/admin/tasks"
+                    emptyState={editingId ? 'hidden' : 'hint'}
+                  />
+                </div>
                 <div className="space-y-2">
-                  <Label>Project History</Label>
-                  <RichTextEditor value={form.project_history} onChange={(val) => set('project_history', val)} placeholder="Describe past projects with this client..." />
+                  <Label>Additional project history (rich text)</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Linked rows from <strong className="text-foreground">Admin → Projects</strong> and{' '}
+                    <strong className="text-foreground">Admin → Tasks</strong> (Client linked) appear above. Use the editor for meetings, context, or work that is
+                    not stored as a project or task lead.
+                  </p>
+                  <RichTextEditor
+                    value={form.project_history}
+                    onChange={(val) => set('project_history', val)}
+                    placeholder="Optional narrative: milestones, meetings, legacy work…"
+                  />
                 </div>
               </TabsContent>
 

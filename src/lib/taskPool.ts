@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import type { ProjectPriority, ProjectStatus, SourceStorageType } from '@/lib/projects';
+import { normalizeExternalUrl } from '@/lib/externalUrl';
 import { addDaysToJstYmd, compareJstYmd, formatJstYmd, getJstMondayYmd } from '@/lib/jst';
 
 /** Parent lead / pool item — same lifecycle as projects (not Trello columns). */
@@ -102,6 +103,7 @@ export interface TaskPoolItemRecord {
   github_links: unknown;
   source_storage_urls: unknown;
   initial_document_urls: unknown;
+  published_links: unknown;
   upwork_connection_fee: number;
   convert_fee: number;
   transfer_fee: number;
@@ -243,8 +245,8 @@ export function parseLabeledLinks(raw: unknown, legacyUrl: string | null | undef
 }
 
 export function serializeLabeledLinks(links: LabeledLink[]): LabeledLink[] {
-  return links
-    .map((l) => ({ label: l.label.trim(), url: l.url.trim() }))
+  return (links ?? [])
+    .map((l) => ({ label: l.label.trim(), url: normalizeExternalUrl(l.url.trim()) }))
     .filter((l) => l.url);
 }
 

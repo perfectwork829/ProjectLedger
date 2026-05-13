@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -14,6 +15,8 @@ import { formatBirthday, normalizeIdentityDocuments } from '@/lib/identityDocume
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import ModuleSearchBar from '@/components/ModuleSearchBar';
+import { ClientLinkedProjectsSection } from '@/components/ClientLinkedProjectsSection';
+import { ClientLinkedTasksSection } from '@/components/ClientLinkedTasksSection';
 import { CLIENT_SEARCH_COLUMNS } from '@/lib/supabaseSearch';
 import { filterItemsBySearch } from '@/lib/clientSearch';
 
@@ -165,6 +168,7 @@ function DefaultAvatar({ name, sex, size = 'lg' }: { name: string; sex?: string 
 
 export default function Clients() {
   const { toast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [clients, setClients] = useState<ClientItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<View>('types');
@@ -182,6 +186,25 @@ export default function Clients() {
     })();
   }, []);
 
+  useEffect(() => {
+    if (loading) return;
+    const id = searchParams.get('client');
+    if (!id) return;
+    const c = clients.find((x) => x.id === id);
+    if (!c) {
+      toast({
+        title: 'Client not found',
+        description: 'The link may be outdated or you may not have access to this client.',
+        variant: 'destructive',
+      });
+      setSearchParams({}, { replace: true });
+      return;
+    }
+    setView('detail');
+    setSelectedId(c.id);
+    setSelectedType(c.client_type);
+  }, [loading, clients, searchParams, setSearchParams, toast]);
+
   const searchFilteredClients = useMemo(
     () => filterItemsBySearch(clients, searchInput, CLIENT_SEARCH_COLUMNS),
     [clients, searchInput],
@@ -195,8 +218,18 @@ export default function Clients() {
   const selectedClient = selectedId ? clients.find(c => c.id === selectedId) : null;
   const typeLabel = selectedType ? (CLIENT_TYPES_MAP[selectedType]?.label || selectedType) : '';
 
-  const goToTypes = () => { setView('types'); setSelectedType(null); setSelectedId(null); };
-  const goToList = (type: string) => { setView('list'); setSelectedType(type); setSelectedId(null); };
+  const goToTypes = () => {
+    setSearchParams({}, { replace: true });
+    setView('types');
+    setSelectedType(null);
+    setSelectedId(null);
+  };
+  const goToList = (type: string) => {
+    setSearchParams({}, { replace: true });
+    setView('list');
+    setSelectedType(type);
+    setSelectedId(null);
+  };
   const goToDetail = (id: string) => { setView('detail'); setSelectedId(id); };
 
   const parseLanguages = (val: string | null): LangEntry[] => {
@@ -325,7 +358,21 @@ export default function Clients() {
 
         {c.skills && <DetailSection icon={Star} title="Skills"><div className="flex flex-wrap gap-2">{c.skills.split(',').map((s, i) => <Badge key={i} variant="secondary" className="text-sm font-normal">{s.trim()}</Badge>)}</div></DetailSection>}
         {c.achievements && <DetailSection icon={Star} title="Achievements"><div className="prose prose-sm max-w-none text-foreground/80 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5" dangerouslySetInnerHTML={{ __html: c.achievements }} /></DetailSection>}
-        {c.project_history && <DetailSection icon={Briefcase} title="Project History"><div className="prose prose-sm max-w-none text-foreground/80 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5" dangerouslySetInnerHTML={{ __html: c.project_history }} /></DetailSection>}
+        <DetailSection icon={Briefcase} title="Project history">
+          <div className="space-y-4">
+            <ClientLinkedProjectsSection clientId={c.id} projectsBasePath="/dashboard/projects" emptyState="hidden" />
+            <ClientLinkedTasksSection clientId={c.id} tasksBasePath="/dashboard/tasks" emptyState="hidden" />
+            {c.project_history ? (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-1">Additional notes</p>
+                <div
+                  className="prose prose-sm max-w-none text-foreground/80 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5"
+                  dangerouslySetInnerHTML={{ __html: c.project_history }}
+                />
+              </div>
+            ) : null}
+          </div>
+        </DetailSection>
 
         <Separator />
 

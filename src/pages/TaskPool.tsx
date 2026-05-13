@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
@@ -43,6 +43,8 @@ import {
 import { formatJstYmdFromIso } from '@/lib/jst';
 import PoolSubtaskKanban from '@/components/PoolSubtaskKanban';
 import PoolSubtaskDetailDialog from '@/components/PoolSubtaskDetailDialog';
+import { LabeledLinksListWithCopy } from '@/components/LabeledLinksListWithCopy';
+import { CopyDescriptionButton } from '@/components/CopyDescriptionButton';
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from '@/components/ui/carousel';
 import {
   AlertDialog,
@@ -54,12 +56,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { ArrowLeft, ArrowUpDown, Trash2 } from 'lucide-react';
+import { ArrowLeft, ArrowUpDown, Pencil, Trash2 } from 'lucide-react';
 import { PRIORITY_BADGE_CLASS, PRIORITY_OPTIONS, PRIORITY_RANK, taskDescriptionPreview } from '@/lib/taskPriority';
 
 export default function TaskPool() {
   const { user, hasRole } = useAuth();
   const { toast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const filterClientId = searchParams.get('client');
 
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<TaskPoolItemRecord[]>([]);
@@ -93,6 +97,9 @@ export default function TaskPool() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
   const [newChat, setNewChat] = useState('');
+  const [editingChatId, setEditingChatId] = useState<string | null>(null);
+  const [editingChatText, setEditingChatText] = useState('');
+  const [chatSaving, setChatSaving] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newAssignee, setNewAssignee] = useState('');
   const [newSubtaskColumn, setNewSubtaskColumn] = useState<PoolSubtaskStatus>('todo');
@@ -136,6 +143,12 @@ export default function TaskPool() {
   }, [selectedId]);
 
   useEffect(() => {
+    setEditingChatId(null);
+    setEditingChatText('');
+    setChatSaving(false);
+  }, [selectedId]);
+
+  useEffect(() => {
     let cancelled = false;
     (async () => {
       if (!selectedId) {
@@ -164,13 +177,24 @@ export default function TaskPool() {
     };
   }, [selectedId]);
 
+  useEffect(() => {
+    const tid = searchParams.get('task');
+    if (!tid || items.length === 0) return;
+    if (items.some((p) => p.id === tid)) setSelectedId(tid);
+  }, [searchParams, items]);
+
+  const itemsForClientFilter = useMemo(() => {
+    if (!filterClientId) return items;
+    return items.filter((p) => p.client_id === filterClientId);
+  }, [items, filterClientId]);
+
   const searchFiltered = useMemo(() => {
     const q = searchInput.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter((p) =>
+    if (!q) return itemsForClientFilter;
+    return itemsForClientFilter.filter((p) =>
       [p.name, p.description, p.task_source, p.main_stack, p.skillset_csv, p.tags_csv, p.status].filter(Boolean).join(' ').toLowerCase().includes(q),
     );
-  }, [items, searchInput]);
+  }, [itemsForClientFilter, searchInput]);
 
   const now = useMemo(() => new Date(), [items.length, searchInput, listFilter]);
   const thisPeriod = useMemo(() => getPeriodBoundsForDate(now), [now]);
@@ -329,6 +353,42 @@ export default function TaskPool() {
     setNewChat('');
   };
 
+  const beginChatEdit = (msg: PoolChatMessage) => {
+    setEditingChatId(msg.id);
+    setEditingChatText(msg.message);
+  };
+
+  const cancelChatEdit = () => {
+    setEditingChatId(null);
+    setEditingChatText('');
+    setChatSaving(false);
+  };
+
+  const saveChatEdit = async () => {
+    if (!editingChatId) return;
+    const message = editingChatText.trim();
+    if (!message) {
+      toast({ title: 'Message is required', variant: 'destructive' });
+      return;
+    }
+    setChatSaving(true);
+    const res = await supabase.from('task_pool_chat_messages').update({ message }).eq('id', editingChatId).select('*').maybeSingle();
+    setChatSaving(false);
+    if (res.error) {
+      toast({ title: 'Edit failed', description: res.error?.message, variant: 'destructive' });
+      return;
+    }
+    if (res.data) {
+      const updated = res.data as PoolChatMessage;
+      setMessages((prev) => prev.map((m) => (m.id === editingChatId ? updated : m)));
+    } else {
+      setMessages((prev) => prev.map((m) => (m.id === editingChatId ? { ...m, message } : m)));
+    }
+    setEditingChatId(null);
+    setEditingChatText('');
+    toast({ title: 'Message updated' });
+  };
+
   const addSubtask = async () => {
     if (!selected || !newTitle.trim()) return;
     const res = await supabase
@@ -428,6 +488,27 @@ export default function TaskPool() {
 
   return (
     <div className="space-y-6">
+      {filterClientId ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-sm">
+          <span className="text-muted-foreground">
+            Showing task pool leads linked to this client only
+            {(() => {
+              const c = clients.find((x) => x.id === filterClientId);
+              return c ? (
+                <span className="font-medium text-foreground">
+                  {' '}
+                  · {c.first_name} {c.last_name}
+                  {c.company_name ? ` (${c.company_name})` : ''}
+                </span>
+              ) : null;
+            })()}
+            .
+          </span>
+          <Button type="button" variant="outline" size="sm" onClick={() => setSearchParams({}, { replace: true })}>
+            Clear filters
+          </Button>
+        </div>
+      ) : null}
       {!selectedId ? (
         <>
           <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -813,12 +894,6 @@ export default function TaskPool() {
                     <Badge>{taskPoolItemStatusLabel(selected.status)}</Badge>
                   )}
                 </div>
-                <div
-                  className="prose prose-sm max-w-none text-muted-foreground mt-1 break-words [overflow-wrap:anywhere] [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5 [&_a]:text-primary [&_a]:break-all"
-                  dangerouslySetInnerHTML={{
-                    __html: selected.description?.trim() ? selected.description : '<p>No description.</p>',
-                  }}
-                />
                 {selected.main_stack ? <Badge className="mt-2 capitalize">{selected.main_stack.replace('_', ' ')}</Badge> : null}
                 {selected.task_source ? (
                   <Badge variant="outline" className="mt-2 ml-2 capitalize">
@@ -832,8 +907,15 @@ export default function TaskPool() {
                     </Link>
                   </p>
                 ) : null}
-                <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                  <span>Client: {clientLabel(selected)}</span>
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                  <span className="inline-flex flex-wrap items-center gap-1.5">
+                    <span>Client: {clientLabel(selected)}</span>
+                    {selected.client_id ? (
+                      <Link to={`/dashboard/clients?client=${selected.client_id}`} className="font-medium text-primary hover:underline">
+                        View in Clients
+                      </Link>
+                    ) : null}
+                  </span>
                   <span>Account: {accountLabel(selected)}</span>
                   <span>Deadline: {selected.deadline ? new Date(selected.deadline).toLocaleDateString() : 'N/A'}</span>
                   <span>Received: {formatJstYmdFromIso(selected.task_received_at)}</span>
@@ -927,9 +1009,10 @@ export default function TaskPool() {
                         </Badge>
                       ))}
                   </div>
-                  <TaskPoolMultiLinks title="Source storage" links={parseLabeledLinks(selected.source_storage_urls, selected.source_storage_url, 'Storage')} />
-                  <TaskPoolMultiLinks title="GitHub" links={parseLabeledLinks(selected.github_links, selected.github_url, 'GitHub')} />
-                  <TaskPoolMultiLinks title="Initial documents" links={parseLabeledLinks(selected.initial_document_urls, selected.initial_document_url, 'Document')} />
+                  <LabeledLinksListWithCopy title="Source storage" links={parseLabeledLinks(selected.source_storage_urls, selected.source_storage_url, 'Storage')} />
+                  <LabeledLinksListWithCopy title="GitHub" links={parseLabeledLinks(selected.github_links, selected.github_url, 'GitHub')} />
+                  <LabeledLinksListWithCopy title="Initial documents" links={parseLabeledLinks(selected.initial_document_urls, selected.initial_document_url, 'Document')} />
+                  <LabeledLinksListWithCopy title="Published / store links" links={parseLabeledLinks(selected.published_links, null, 'Link')} emptyHint="No published links yet — edit this pool item and use the highlighted block under GitHub." />
                   <TaskPoolCredentials metadata={selected.metadata_json} />
                 </TabsContent>
 
@@ -981,8 +1064,39 @@ export default function TaskPool() {
                   <div className="space-y-2 max-h-[320px] overflow-auto">
                     {selectedMessages.map((m) => (
                       <div key={m.id} className="rounded border p-3">
-                        <p className="text-sm whitespace-pre-line">{m.message}</p>
+                        {editingChatId === m.id ? (
+                          <div className="space-y-2">
+                            <Textarea
+                              value={editingChatText}
+                              onChange={(e) => setEditingChatText(e.target.value)}
+                              rows={4}
+                              className="text-sm"
+                            />
+                            <div className="flex gap-2">
+                              <Button size="sm" onClick={saveChatEdit} disabled={chatSaving}>
+                                {chatSaving ? 'Saving…' : 'Save'}
+                              </Button>
+                              <Button size="sm" variant="outline" onClick={cancelChatEdit} disabled={chatSaving}>
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-sm whitespace-pre-line">{m.message}</p>
+                        )}
                         <p className="mt-1 text-xs text-muted-foreground">{new Date(m.created_at).toLocaleString()}</p>
+                        {editingChatId !== m.id ? (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="mt-1 h-7 w-7"
+                            onClick={() => beginChatEdit(m)}
+                            title="Edit message"
+                            aria-label="Edit message"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                        ) : null}
                       </div>
                     ))}
                     {selectedMessages.length === 0 && <p className="text-sm text-muted-foreground">No messages yet.</p>}
@@ -1032,6 +1146,18 @@ export default function TaskPool() {
                   />
                 </TabsContent>
               </Tabs>
+              <div className="mt-4 rounded-lg border p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-medium text-foreground">Description</p>
+                  <CopyDescriptionButton description={selected.description} />
+                </div>
+                <div
+                  className="prose prose-sm mt-2 max-w-none text-muted-foreground break-words [overflow-wrap:anywhere] [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5 [&_a]:text-primary [&_a]:break-all"
+                  dangerouslySetInnerHTML={{
+                    __html: selected.description?.trim() ? selected.description : '<p>No description.</p>',
+                  }}
+                />
+              </div>
             </CardContent>
             ) : (
               <CardContent className="py-12 text-center text-muted-foreground">
@@ -1069,28 +1195,6 @@ export default function TaskPool() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
-  );
-}
-
-function TaskPoolMultiLinks({ title, links }: { title: string; links: { label: string; url: string }[] }) {
-  return (
-    <div className="rounded border p-3 bg-muted/20">
-      <p className="text-xs text-muted-foreground mb-2">{title}</p>
-      {links.length === 0 ? (
-        <p className="text-sm text-muted-foreground">N/A</p>
-      ) : (
-        <ul className="space-y-2">
-          {links.map((l, i) => (
-            <li key={`${l.url}-${i}`}>
-              <span className="text-xs font-medium">{l.label}: </span>
-              <a href={l.url} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline break-all">
-                {l.url}
-              </a>
-            </li>
-          ))}
-        </ul>
-      )}
     </div>
   );
 }

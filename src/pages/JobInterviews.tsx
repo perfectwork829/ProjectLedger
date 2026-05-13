@@ -4,6 +4,10 @@ import { supabase } from '@/lib/supabase';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { CalendarClock, Copy, ExternalLink } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import ModuleSearchBar from '@/components/ModuleSearchBar';
 import { ViewerTimezonePicker } from '@/components/ViewerTimezonePicker';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -14,9 +18,13 @@ import {
   nextCalendarDateKeyInZone,
   nextCalendarDayTitleInZone,
 } from '@/lib/interviewTimezone';
-import type { JobInterviewRow } from '@/lib/jobInterviews';
+import {
+  type JobInterviewRow,
+  filterJobInterviewsByScheduleAndMode,
+  jobInterviewRowsMatchingSearch,
+} from '@/lib/jobInterviews';
 import type { JobInterviewStageRow } from '@/lib/jobInterviewStages';
-import { getPipelineListCursor } from '@/lib/jobInterviewPipelineList';
+import { getPipelineListCursor, passesActivePipelineSlotClock } from '@/lib/jobInterviewPipelineList';
 
 interface PersonnelMini {
   id: string;
@@ -207,8 +215,14 @@ export default function JobInterviews() {
   const [personnel, setPersonnel] = useState<PersonnelMini[]>([]);
   const [stagesByInterview, setStagesByInterview] = useState<Record<string, JobInterviewStageRow[]>>({});
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [activePipelineOnly, setActivePipelineOnly] = useState(true);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
 
   const load = useCallback(async () => {
+    const { error: rpcErr } = await supabase.rpc('mark_past_job_interviews_failed');
+    if (rpcErr) console.warn('mark_past_job_interviews_failed:', rpcErr.message);
     const [{ data: pData, error: pErr }, { data: iData, error: iErr }] = await Promise.all([
       supabase.from('personnel').select('id, first_name, last_name'),
       supabase.from('job_interviews').select('*').order('scheduled_at', { ascending: true }),
@@ -252,11 +266,25 @@ export default function JobInterviews() {
 
   const map = useMemo(() => Object.fromEntries(personnel.map((p) => [p.id, p])), [personnel]);
 
+  const listRows = useMemo(() => {
+    const searched = jobInterviewRowsMatchingSearch(rows, search, map);
+    let out = filterJobInterviewsByScheduleAndMode(searched, {
+      activePipelineOnly,
+      scheduledFromYmd: dateFrom || undefined,
+      scheduledToYmd: dateTo || undefined,
+      viewerIana: viewerTz,
+    });
+    if (activePipelineOnly) {
+      out = out.filter((r) => passesActivePipelineSlotClock(r, stagesByInterview[r.id]));
+    }
+    return out;
+  }, [rows, search, map, activePipelineOnly, dateFrom, dateTo, viewerTz, stagesByInterview]);
+
   const { mainRows, tomorrowRows, tomorrowTitle } = useMemo(() => {
     const tomorrowKey = nextCalendarDateKeyInZone(viewerTz);
     const main: JobInterviewRow[] = [];
     const tomorrow: JobInterviewRow[] = [];
-    for (const r of rows) {
+    for (const r of listRows) {
       const cursor = getPipelineListCursor(stagesByInterview[r.id], r);
       const key = calendarDateKeyInZone(cursor.instant, viewerTz);
       (key === tomorrowKey ? tomorrow : main).push(r);
@@ -271,7 +299,7 @@ export default function JobInterviews() {
       tomorrowRows: tomorrow,
       tomorrowTitle: nextCalendarDayTitleInZone(viewerTz),
     };
-  }, [rows, stagesByInterview, viewerTz]);
+  }, [listRows, stagesByInterview, viewerTz]);
 
   if (loading) {
     return (
@@ -283,16 +311,43 @@ export default function JobInterviews() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight text-foreground">Job interviews</h2>
-          <p className="text-sm text-muted-foreground">
-            <strong>Current step</strong> is the next open pipeline round. <strong>Upcoming</strong> shows Step Zone with GMT offset, then
-            date and time, then Your time with GMT offset, then date and time in your display zone. <strong>Posting</strong> opens the job URL
-            when provided. <strong>Developer (for job)</strong>, <strong>Recruiter</strong>, and <strong>Caller</strong> open Personnel in a new browser tab. Tomorrow in {viewerTz} is split into its own section below.
-          </p>
-        </div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h2 className="text-2xl font-semibold tracking-tight text-foreground">Job interviews</h2>
         <ViewerTimezonePicker id="job-interviews-list-tz" />
+      </div>
+
+      <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/10 p-4 sm:flex-row sm:flex-wrap sm:items-end">
+        <ModuleSearchBar
+          value={search}
+          onChange={setSearch}
+          placeholder="Search title, source, status, developer, recruiter, caller…"
+          id="dashboard-job-interviews-search"
+          className="sm:min-w-[240px]"
+        />
+        <div className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2">
+          <Checkbox
+            id="dash-ji-active-only"
+            checked={activePipelineOnly}
+            onCheckedChange={(v) => setActivePipelineOnly(v === true)}
+          />
+          <Label htmlFor="dash-ji-active-only" className="cursor-pointer text-sm font-normal">
+            Active pipeline only
+          </Label>
+        </div>
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="space-y-1">
+            <Label htmlFor="dash-ji-from" className="text-xs text-muted-foreground">
+              From (scheduled day in {viewerTz})
+            </Label>
+            <Input id="dash-ji-from" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-[11rem]" />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="dash-ji-to" className="text-xs text-muted-foreground">
+              To
+            </Label>
+            <Input id="dash-ji-to" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-[11rem]" />
+          </div>
+        </div>
       </div>
 
       {rows.length === 0 ? (
@@ -301,6 +356,16 @@ export default function JobInterviews() {
             <CalendarClock className="mb-2 h-10 w-10 text-muted-foreground" />
             <p className="text-lg font-medium text-foreground">No interviews scheduled</p>
             <p className="mt-1 text-sm text-muted-foreground">Admins can add interviews under Admin → Job interviews.</p>
+          </CardContent>
+        </Card>
+      ) : listRows.length === 0 ? (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+            <CalendarClock className="mb-2 h-10 w-10 text-muted-foreground" />
+            <p className="text-lg font-medium text-foreground">No interviews match the current filters</p>
+            <p className="mt-1 max-w-md text-sm text-muted-foreground">
+              Try clearing search, widening the date range, or turning off “Active pipeline only” to include completed, failed, or closed rows.
+            </p>
           </CardContent>
         </Card>
       ) : (

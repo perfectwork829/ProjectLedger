@@ -27,7 +27,7 @@ import { Separator } from '@/components/ui/separator';
 import {
   Plus, Pencil, Trash2, ExternalLink, Eye, EyeOff, ChevronRight, ArrowLeft,
   Award, Star, Clock, Briefcase, GraduationCap, Trophy, MessageSquare,
-  Image, FolderKanban, MapPin, Shield, CreditCard, Mail, Phone,
+  Image, FolderKanban, MapPin, Shield, CreditCard, Mail, Phone, Copy,
   CheckCircle, XCircle, Github, Linkedin, Wallet,
 } from 'lucide-react';
 import FileUpload from '@/components/FileUpload';
@@ -44,6 +44,10 @@ import {
 import { formatBirthday } from '@/lib/identityDocuments';
 import { cn } from '@/lib/utils';
 import ModuleSearchBar from '@/components/ModuleSearchBar';
+import { CountrySelect } from '@/components/CountrySelect';
+import { TimezoneSelect } from '@/components/TimezoneSelect';
+import { canonicalCountryNameOrLegacy } from '@/lib/countries';
+import { canonicalTimezoneOrLegacy, suggestedTimezoneForCountry } from '@/lib/timezones';
 import { FREELANCING_ACCOUNT_SEARCH_COLUMNS } from '@/lib/supabaseSearch';
 import { filterItemsBySearch } from '@/lib/clientSearch';
 
@@ -113,8 +117,10 @@ const GENERIC_ACCOUNT_OPTIONS = [
   { value: 'microsoft_teams', label: 'Microsoft Teams' },
   { value: 'telegram', label: 'Telegram' },
   { value: 'whatsapp', label: 'WhatsApp' },
+  { value: 'discord', label: 'Discord' },
   { value: 'github', label: 'GitHub' },
   { value: 'dropbox', label: 'Dropbox' },
+  { value: 'general', label: 'General (other)' },
 ];
 
 const PLATFORMS: Record<string, { label: string; color: string; icon: string }> = {
@@ -130,8 +136,10 @@ const PLATFORMS: Record<string, { label: string; color: string; icon: string }> 
   microsoft_teams: { label: 'Microsoft Teams', color: 'bg-purple-600', icon: '👥' },
   telegram: { label: 'Telegram', color: 'bg-sky-500', icon: '✈️' },
   whatsapp: { label: 'WhatsApp', color: 'bg-green-600', icon: '💬' },
+  discord: { label: 'Discord', color: 'bg-indigo-600', icon: '🎮' },
   github: { label: 'GitHub', color: 'bg-neutral-800', icon: '🐙' },
   dropbox: { label: 'Dropbox', color: 'bg-blue-700', icon: '📦' },
+  general: { label: 'General', color: 'bg-slate-600', icon: '📌' },
 };
 
 const STATUS_OPTIONS = [
@@ -241,6 +249,14 @@ function DetailSection({ icon: Icon, title, children }: { icon: React.ElementTyp
 export default function AdminAccounts() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const copyText = async (text: string, kind?: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast({ title: 'Copied', description: kind ? `${kind} copied to clipboard.` : 'Copied to clipboard.' });
+    } catch {
+      toast({ title: 'Copy failed', variant: 'destructive' });
+    }
+  };
   const location = useLocation();
   const [accounts, setAccounts] = useState<FreelancingAccount[]>([]);
   const [paymentRecords, setPaymentRecords] = useState<PaymentAccount[]>([]);
@@ -256,7 +272,7 @@ export default function AdminAccounts() {
 
   const [accountHub, setAccountHub] = useState<AccountHub>('categories');
   const [view, setView] = useState<View>('platforms');
-  const [listViewMode, setListViewMode] = useState<'card' | 'list' | 'line' | 'table'>('card');
+  const [listViewMode, setListViewMode] = useState<'card' | 'list' | 'line' | 'table'>('table');
   const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [paymentView, setPaymentView] = useState<PaymentView>('list');
@@ -357,11 +373,11 @@ export default function AdminAccounts() {
       account_password: acc.account_password || '',
       payment_account_id: acc.payment_account_id || '',
       verified_status: acc.verified_status || false,
-      verified_date: acc.verified_date || '', timezone: acc.timezone || '',
+      verified_date: acc.verified_date || '', timezone: canonicalTimezoneOrLegacy(acc.timezone || ''),
       uploaded_id_card_url: acc.uploaded_id_card_url || '',
       disabled_at: acc.disabled_at || '',
       birthday: acc.birthday ? (acc.birthday.includes('T') ? acc.birthday.slice(0, 10) : acc.birthday) : '',
-      country: acc.country || '',
+      country: canonicalCountryNameOrLegacy(acc.country || ''),
       backup_codes: acc.backup_codes || '',
       authenticator_enabled: acc.authenticator_enabled || false,
       screenshot_urls: parseScreenshotUrls(acc.screenshot_urls),
@@ -616,6 +632,7 @@ export default function AdminAccounts() {
     setView('list');
     setSelectedPlatform(platform);
     setSelectedAccountId(null);
+    setListViewMode('table');
   };
   const goToDetail = (id: string) => {
     setView('detail');
@@ -741,15 +758,18 @@ export default function AdminAccounts() {
                   </div>
                   </>
                 )}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Timezone</Label>
-                    <Input value={form.timezone} onChange={(e) => set('timezone', e.target.value)} placeholder="e.g. America/New_York" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Country</Label>
-                    <Input value={form.country} onChange={(e) => set('country', e.target.value)} placeholder="Country" />
-                </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <CountrySelect
+                    label="Country"
+                    value={form.country}
+                    onChange={(country) =>
+                      setForm((prev) => {
+                        const suggested = suggestedTimezoneForCountry(country);
+                        return { ...prev, country, ...(suggested ? { timezone: suggested } : {}) };
+                      })
+                    }
+                  />
+                  <TimezoneSelect label="Timezone" value={form.timezone} onChange={(tz) => set('timezone', tz)} />
                 </div>
                 {freelancerMode && (
                 <div className="grid grid-cols-2 gap-4">
@@ -1132,7 +1152,19 @@ export default function AdminAccounts() {
               <Badge variant="secondary" className={statusColor[acc.status] || ''}>{acc.status.charAt(0).toUpperCase() + acc.status.slice(1)}</Badge>
               {acc.verified_status && <Badge variant="outline" className="gap-1 text-emerald-700 border-emerald-300"><CheckCircle className="h-3 w-3" /> Verified</Badge>}
             </div>
-            <p className="text-lg text-muted-foreground">@{acc.username}</p>
+            <div className="flex items-center gap-2">
+              <p className="text-lg text-muted-foreground">@{acc.username}</p>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="h-8 w-8 shrink-0"
+                onClick={() => void copyText(acc.username, 'Username')}
+                title="Copy username"
+              >
+                <Copy className="h-3.5 w-3.5 text-muted-foreground" />
+              </Button>
+            </div>
             {acc.profile_title && <p className="text-base text-foreground/80">{acc.profile_title}</p>}
             <p className="text-xs text-muted-foreground">Created {new Date(acc.created_at).toLocaleString()}</p>
           </div>
@@ -1203,11 +1235,58 @@ export default function AdminAccounts() {
         {(fullAddress || acc.timezone || (accFreelancer && acc.anydesk_id) || acc.country || acc.birthday) && (
           <DetailSection icon={MapPin} title={accFreelancer ? 'Location & Access' : 'Location'}>
             <div className="space-y-1">
-              <InfoRow label="Birthday" value={formatBirthday(acc.birthday)} />
-              <InfoRow label="Country" value={acc.country} />
-              <InfoRow label="Address" value={fullAddress || null} />
-              <InfoRow label="Timezone" value={acc.timezone} />
-              {accFreelancer && <InfoRow label="AnyDesk ID" value={acc.anydesk_id} />}
+              {formatBirthday(acc.birthday) && (
+                <div className="flex gap-3 py-1 items-center">
+                  <span className="text-sm font-medium text-muted-foreground min-w-[140px]">Birthday</span>
+                  <span className="text-sm text-foreground/80 flex-1 min-w-0">{formatBirthday(acc.birthday)}</span>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="h-7 w-7 shrink-0"
+                    onClick={() => void copyText(formatBirthday(acc.birthday)!, 'Birthday')}
+                    title="Copy birthday"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              )}
+              {acc.country && (
+                <div className="flex gap-3 py-1 items-center">
+                  <span className="text-sm font-medium text-muted-foreground min-w-[140px]">Country</span>
+                  <span className="text-sm text-foreground/80 flex-1 min-w-0">{acc.country}</span>
+                  <Button type="button" size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => void copyText(acc.country!, 'Country')} title="Copy country">
+                    <Copy className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              )}
+              {fullAddress && (
+                <div className="flex gap-3 py-1 items-center">
+                  <span className="text-sm font-medium text-muted-foreground min-w-[140px]">Address</span>
+                  <span className="text-sm text-foreground/80 flex-1 min-w-0 break-words">{fullAddress}</span>
+                  <Button type="button" size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => void copyText(fullAddress, 'Address')} title="Copy address">
+                    <Copy className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              )}
+              {acc.timezone && (
+                <div className="flex gap-3 py-1 items-center">
+                  <span className="text-sm font-medium text-muted-foreground min-w-[140px]">Timezone</span>
+                  <span className="text-sm text-foreground/80 flex-1 min-w-0">{acc.timezone}</span>
+                  <Button type="button" size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => void copyText(acc.timezone!, 'Timezone')} title="Copy timezone">
+                    <Copy className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              )}
+              {accFreelancer && acc.anydesk_id && (
+                <div className="flex gap-3 py-1 items-center">
+                  <span className="text-sm font-medium text-muted-foreground min-w-[140px]">AnyDesk ID</span>
+                  <span className="text-sm text-foreground/80 flex-1 min-w-0 font-mono">{acc.anydesk_id}</span>
+                  <Button type="button" size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => void copyText(acc.anydesk_id!, 'AnyDesk ID')} title="Copy AnyDesk ID">
+                    <Copy className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              )}
             </div>
           </DetailSection>
         )}
@@ -1217,24 +1296,97 @@ export default function AdminAccounts() {
             <div className="space-y-2">
               <InfoRow label="Verified" value={acc.verified_status ? 'Yes' : 'No'} />
               <InfoRow label="Verified Date" value={acc.verified_date ? new Date(acc.verified_date).toLocaleDateString() : null} />
-              {acc.uploaded_id_card_url && <div className="pt-1"><span className="text-sm font-medium text-muted-foreground">ID Card:</span><img src={acc.uploaded_id_card_url} alt="Uploaded ID" className="mt-2 rounded-lg border max-h-48 object-contain" /></div>}
+              {acc.uploaded_id_card_url && (
+                <div className="pt-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-medium text-muted-foreground">ID Card</span>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7"
+                      onClick={() => void copyText(acc.uploaded_id_card_url!, 'ID card URL')}
+                      title="Copy ID card URL"
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                  <img src={acc.uploaded_id_card_url} alt="Uploaded ID" className="mt-2 rounded-lg border max-h-48 object-contain" />
+                </div>
+              )}
             </div>
           </DetailSection>
         )}
 
         <DetailSection icon={ExternalLink} title="Links">
-          <div className="flex flex-wrap gap-4">
-            {acc.profile_url && <a href={acc.profile_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"><ExternalLink className="h-4 w-4" />{acc.platform === 'github' ? 'GitHub' : 'Profile'}</a>}
-            {accFreelancer && acc.github_url && acc.platform !== 'github' && <a href={acc.github_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"><Github className="h-4 w-4" />GitHub</a>}
-            {accFreelancer && acc.linkedin_url && <a href={acc.linkedin_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"><Linkedin className="h-4 w-4" />LinkedIn</a>}
-            {accFreelancer && acc.portfolio_url && <a href={acc.portfolio_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"><ExternalLink className="h-4 w-4" />Portfolio</a>}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            {acc.profile_url && (
+              <div className="inline-flex items-center gap-1">
+                <a href={acc.profile_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline">
+                  <ExternalLink className="h-4 w-4" />
+                  {acc.platform === 'github' ? 'GitHub' : 'Profile'}
+                </a>
+                <Button type="button" size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={() => void copyText(acc.profile_url!, 'Profile URL')} title="Copy profile URL">
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            )}
+            {accFreelancer && acc.github_url && acc.platform !== 'github' && (
+              <div className="inline-flex items-center gap-1">
+                <a href={acc.github_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
+                  <Github className="h-4 w-4" />
+                  GitHub
+                </a>
+                <Button type="button" size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={() => void copyText(acc.github_url!, 'GitHub URL')} title="Copy GitHub URL">
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            )}
+            {accFreelancer && acc.linkedin_url && (
+              <div className="inline-flex items-center gap-1">
+                <a href={acc.linkedin_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
+                  <Linkedin className="h-4 w-4" />
+                  LinkedIn
+                </a>
+                <Button type="button" size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={() => void copyText(acc.linkedin_url!, 'LinkedIn URL')} title="Copy LinkedIn URL">
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            )}
+            {accFreelancer && acc.portfolio_url && (
+              <div className="inline-flex items-center gap-1">
+                <a href={acc.portfolio_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
+                  <ExternalLink className="h-4 w-4" />
+                  Portfolio
+                </a>
+                <Button type="button" size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={() => void copyText(acc.portfolio_url!, 'Portfolio URL')} title="Copy portfolio URL">
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            )}
           </div>
         </DetailSection>
 
         <DetailSection icon={Mail} title="Contact">
-          <div className="flex flex-wrap gap-6">
-            {acc.connected_email && <span className="flex items-center gap-2 text-sm text-foreground/80"><Mail className="h-4 w-4 text-muted-foreground" />{acc.connected_email}</span>}
-            {acc.telephone && <span className="flex items-center gap-2 text-sm text-foreground/80"><Phone className="h-4 w-4 text-muted-foreground" />{acc.telephone}</span>}
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:gap-x-6 sm:gap-y-2">
+            {acc.connected_email && (
+              <div className="flex min-w-0 max-w-full items-center gap-1 text-sm text-foreground/80">
+                <Mail className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 break-all">{acc.connected_email}</span>
+                <Button type="button" size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={() => void copyText(acc.connected_email!, 'Email')} title="Copy email">
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            )}
+            {acc.telephone && (
+              <div className="flex items-center gap-1 text-sm text-foreground/80">
+                <Phone className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <span>{acc.telephone}</span>
+                <Button type="button" size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={() => void copyText(acc.telephone!, 'Phone')} title="Copy phone">
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            )}
           </div>
         </DetailSection>
 
@@ -1243,10 +1395,28 @@ export default function AdminAccounts() {
           <div className="space-y-1">
             <InfoRow label="Payment Type" value={acc.connected_payment_type?.replace('_', ' ') || null} />
               {linkedPayment && (
-                <InfoRow
-                  label="Linked payment account"
-                  value={`${paymentProviderLabel(linkedPayment.provider)} — ${linkedPayment.label || '—'}${linkedPayment.account_identifier ? ` (${linkedPayment.account_identifier})` : ''}`}
-                />
+                <div className="flex gap-3 py-1 items-start">
+                  <span className="text-sm font-medium text-muted-foreground min-w-[140px]">Linked payment account</span>
+                  <span className="text-sm text-foreground/80 flex-1 min-w-0 break-words">
+                    {paymentProviderLabel(linkedPayment.provider)} — {linkedPayment.label || '—'}
+                    {linkedPayment.account_identifier ? ` (${linkedPayment.account_identifier})` : ''}
+                  </span>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="h-7 w-7 shrink-0"
+                    onClick={() =>
+                      void copyText(
+                        `${paymentProviderLabel(linkedPayment.provider)} — ${linkedPayment.label || '—'}${linkedPayment.account_identifier ? ` (${linkedPayment.account_identifier})` : ''}`,
+                        'Linked payment',
+                      )
+                    }
+                    title="Copy linked payment summary"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
               )}
           </div>
         </DetailSection>
@@ -1257,14 +1427,40 @@ export default function AdminAccounts() {
             <InfoRow label="Authenticator (2FA)" value={acc.authenticator_enabled ? 'Enabled' : 'Off'} />
             {acc.backup_codes && (
               <div className="mt-2">
-                <p className="text-xs font-medium text-muted-foreground mb-1">Backup codes</p>
+                <div className="mb-1 flex items-center gap-2">
+                  <p className="text-xs font-medium text-muted-foreground">Backup codes</p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 gap-1 px-2 text-xs"
+                    onClick={() => void copyText(acc.backup_codes!, 'Backup codes')}
+                  >
+                    <Copy className="h-3 w-3" />
+                    Copy all
+                  </Button>
+                </div>
                 <pre className="text-xs bg-muted p-3 rounded-md whitespace-pre-wrap font-mono">{acc.backup_codes}</pre>
               </div>
             )}
           </DetailSection>
         )}
 
-        {acc.notes && (<><Separator /><div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Notes</p><p className="text-sm text-foreground/80 whitespace-pre-line">{acc.notes}</p></div></>)}
+        {acc.notes && (
+          <>
+            <Separator />
+            <div>
+              <div className="mb-1 flex items-center gap-2">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Notes</p>
+                <Button type="button" size="sm" variant="outline" className="h-7 gap-1 px-2 text-xs" onClick={() => void copyText(acc.notes!, 'Notes')}>
+                  <Copy className="h-3 w-3" />
+                  Copy
+                </Button>
+              </div>
+              <p className="text-sm text-foreground/80 whitespace-pre-line">{acc.notes}</p>
+            </div>
+          </>
+        )}
       </div>
     );
   };
@@ -1317,10 +1513,42 @@ export default function AdminAccounts() {
         <Separator />
         <DetailSection icon={CreditCard} title="Payout identity">
           <div className="space-y-1">
-            <InfoRow label="Identifier" value={p.account_identifier} />
-            <InfoRow label="Email" value={p.email} />
-            <InfoRow label="Full name" value={p.full_name} />
-            <InfoRow label="Phone" value={p.connected_phone} />
+            {p.account_identifier && (
+              <div className="flex gap-3 py-1 items-center">
+                <span className="text-sm font-medium text-muted-foreground min-w-[140px]">Identifier</span>
+                <span className="text-sm text-foreground/80 flex-1 min-w-0 break-all font-mono">{p.account_identifier}</span>
+                <Button type="button" size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => void copyText(p.account_identifier!, 'Identifier')} title="Copy identifier">
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            )}
+            {p.email && (
+              <div className="flex gap-3 py-1 items-center">
+                <span className="text-sm font-medium text-muted-foreground min-w-[140px]">Email</span>
+                <span className="text-sm text-foreground/80 flex-1 min-w-0 break-all">{p.email}</span>
+                <Button type="button" size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => void copyText(p.email!, 'Email')} title="Copy email">
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            )}
+            {p.full_name && (
+              <div className="flex gap-3 py-1 items-center">
+                <span className="text-sm font-medium text-muted-foreground min-w-[140px]">Full name</span>
+                <span className="text-sm text-foreground/80 flex-1 min-w-0">{p.full_name}</span>
+                <Button type="button" size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => void copyText(p.full_name!, 'Full name')} title="Copy full name">
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            )}
+            {p.connected_phone && (
+              <div className="flex gap-3 py-1 items-center">
+                <span className="text-sm font-medium text-muted-foreground min-w-[140px]">Phone</span>
+                <span className="text-sm text-foreground/80 flex-1 min-w-0">{p.connected_phone}</span>
+                <Button type="button" size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => void copyText(p.connected_phone!, 'Phone')} title="Copy phone">
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            )}
             {p.purchase_way && (
               <InfoRow label="Purchase way" value={p.purchase_way === 'broker' ? 'Broker' : 'Real man'} />
             )}
@@ -1328,39 +1556,81 @@ export default function AdminAccounts() {
         </DetailSection>
         {p.payment_details && (
           <DetailSection icon={FolderKanban} title="Payment details">
-            <p className="text-sm whitespace-pre-line text-foreground/80">{p.payment_details}</p>
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-sm whitespace-pre-line text-foreground/80 flex-1 min-w-0">{p.payment_details}</p>
+              <Button type="button" size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={() => void copyText(p.payment_details!, 'Payment details')} title="Copy payment details">
+                <Copy className="h-3.5 w-3.5" />
+              </Button>
+            </div>
           </DetailSection>
         )}
         {(p.address || p.city || p.state || p.zip) && (
           <DetailSection icon={MapPin} title="Address">
-            <InfoRow label="Line" value={p.address} />
-            <InfoRow
-              label="City / State / ZIP"
-              value={[p.city, p.state, p.zip].filter(Boolean).join(', ') || null}
-            />
+            {p.address && (
+              <div className="flex gap-3 py-1 items-center">
+                <span className="text-sm font-medium text-muted-foreground min-w-[140px]">Line</span>
+                <span className="text-sm text-foreground/80 flex-1 min-w-0 break-words">{p.address}</span>
+                <Button type="button" size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => void copyText(p.address!, 'Address line')} title="Copy address line">
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            )}
+            {([p.city, p.state, p.zip].filter(Boolean).join(', ') || null) && (
+              <div className="flex gap-3 py-1 items-center">
+                <span className="text-sm font-medium text-muted-foreground min-w-[140px]">City / State / ZIP</span>
+                <span className="text-sm text-foreground/80 flex-1 min-w-0">{[p.city, p.state, p.zip].filter(Boolean).join(', ')}</span>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="h-7 w-7 shrink-0"
+                  onClick={() => void copyText([p.city, p.state, p.zip].filter(Boolean).join(', '), 'City / State / ZIP')}
+                  title="Copy city, state, ZIP"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            )}
           </DetailSection>
         )}
         {(p.id_card_drive_url || p.backup_info || p.credentials_note) && (
           <DetailSection icon={Shield} title="Documents & recovery">
             {p.id_card_drive_url && (
-              <a
-                href={p.id_card_drive_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
-              >
-                <ExternalLink className="h-4 w-4" /> ID card (Google Drive)
-              </a>
+              <div className="inline-flex items-center gap-1">
+                <a
+                  href={p.id_card_drive_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                >
+                  <ExternalLink className="h-4 w-4" /> ID card (Google Drive)
+                </a>
+                <Button type="button" size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={() => void copyText(p.id_card_drive_url!, 'Drive URL')} title="Copy Drive URL">
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
+              </div>
             )}
             {p.backup_info && (
               <div className="mt-3">
-                <p className="text-xs font-medium text-muted-foreground">Backup info</p>
+                <div className="mb-1 flex items-center gap-2">
+                  <p className="text-xs font-medium text-muted-foreground">Backup info</p>
+                  <Button type="button" size="sm" variant="outline" className="h-7 gap-1 px-2 text-xs" onClick={() => void copyText(p.backup_info!, 'Backup info')}>
+                    <Copy className="h-3 w-3" />
+                    Copy
+                  </Button>
+                </div>
                 <p className="text-sm whitespace-pre-line">{p.backup_info}</p>
               </div>
             )}
             {p.credentials_note && (
               <div className="mt-3">
-                <p className="text-xs font-medium text-muted-foreground">Credentials note (vault ref)</p>
+                <div className="mb-1 flex items-center gap-2">
+                  <p className="text-xs font-medium text-muted-foreground">Credentials note (vault ref)</p>
+                  <Button type="button" size="sm" variant="outline" className="h-7 gap-1 px-2 text-xs" onClick={() => void copyText(p.credentials_note!, 'Credentials note')}>
+                    <Copy className="h-3 w-3" />
+                    Copy
+                  </Button>
+                </div>
                 <p className="text-sm whitespace-pre-line">{p.credentials_note}</p>
               </div>
             )}
@@ -1373,7 +1643,13 @@ export default function AdminAccounts() {
           <>
             <Separator />
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Notes</p>
+              <div className="mb-1 flex items-center gap-2">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Notes</p>
+                <Button type="button" size="sm" variant="outline" className="h-7 gap-1 px-2 text-xs" onClick={() => void copyText(p.notes!, 'Notes')}>
+                  <Copy className="h-3 w-3" />
+                  Copy
+                </Button>
+              </div>
               <p className="text-sm whitespace-pre-line text-foreground/80">{p.notes}</p>
             </div>
           </>
@@ -1783,7 +2059,7 @@ export default function AdminAccounts() {
             <div className="overflow-x-auto rounded-lg border bg-card">
               <table className="min-w-full text-sm">
                 <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
-                  <tr><th className="px-3 py-2">Username</th><th className="px-3 py-2">Platform</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Score</th><th className="px-3 py-2"></th></tr>
+                  <tr><th className="px-3 py-2">Username</th><th className="px-3 py-2">Platform</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Score</th><th className="px-3 py-2 text-right">Actions</th></tr>
                 </thead>
                 <tbody>
                   {filteredAccounts.map((acc) => (
@@ -1792,7 +2068,22 @@ export default function AdminAccounts() {
                       <td className="px-3 py-2">{(PLATFORMS[acc.platform] || PLATFORMS.other).label}</td>
                       <td className="px-3 py-2">{acc.status}</td>
                       <td className="px-3 py-2">{acc.job_success_score != null ? `${acc.job_success_score}%` : '-'}</td>
-                      <td className="px-3 py-2 text-right"><Button size="icon" variant="ghost" onClick={() => openEdit(acc)}><Pencil className="h-4 w-4" /></Button></td>
+                      <td className="px-3 py-2 text-right whitespace-nowrap">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          title="Copy username"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void copyText(acc.username, 'Username');
+                          }}
+                        >
+                          <Copy className="h-4 w-4" />
+                        </Button>
+                        <Button size="icon" variant="ghost" onClick={(e) => { e.stopPropagation(); openEdit(acc); }} title="Edit">
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

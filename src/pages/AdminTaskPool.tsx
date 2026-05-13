@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -23,6 +23,8 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import ModuleSearchBar from '@/components/ModuleSearchBar';
+import { LabeledLinksEditor } from '@/components/LabeledLinksEditor';
+import { LabeledLinksListWithCopy } from '@/components/LabeledLinksListWithCopy';
 import { CloudGoogleDriveUpload } from '@/components/CloudGoogleDriveUpload';
 import { CloudBoxUpload } from '@/components/CloudBoxUpload';
 import { CountrySelect } from '@/components/CountrySelect';
@@ -81,6 +83,7 @@ import {
 } from '@/lib/jst';
 import { RichTextEditor } from '@/components/RichTextEditor';
 import { TagChipsInput } from '@/components/TagChipsInput';
+import { CopyDescriptionButton } from '@/components/CopyDescriptionButton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import PoolSubtaskKanban from '@/components/PoolSubtaskKanban';
 import PoolSubtaskDetailDialog from '@/components/PoolSubtaskDetailDialog';
@@ -119,6 +122,7 @@ const emptyForm = {
   githubLinks: [] as LabeledLink[],
   sourceStorageLinks: [] as LabeledLink[],
   initialDocLinks: [] as LabeledLink[],
+  publishedLinks: [] as LabeledLink[],
   taskReceivedAt: '',
   deadline: '',
   budgetType: 'fixed' as 'fixed' | 'hourly',
@@ -171,6 +175,8 @@ function credentialsFromMetadata(metadata: Record<string, unknown> | null | unde
 export default function AdminTaskPool() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const filterClientId = searchParams.get('client');
 
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<TaskPoolItemRecord[]>([]);
@@ -213,6 +219,9 @@ export default function AdminTaskPool() {
   const [newSubtaskAssignee, setNewSubtaskAssignee] = useState('');
   const [newSubtaskColumn, setNewSubtaskColumn] = useState<PoolSubtaskStatus>('todo');
   const [newChat, setNewChat] = useState('');
+  const [editingChatId, setEditingChatId] = useState<string | null>(null);
+  const [editingChatText, setEditingChatText] = useState('');
+  const [chatSaving, setChatSaving] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<PendingDel | null>(null);
   const [subtaskDetailId, setSubtaskDetailId] = useState<string | null>(null);
   const [accrualDialog, setAccrualDialog] = useState<null | {
@@ -311,7 +320,19 @@ export default function AdminTaskPool() {
   }, [items, selectedId]);
 
   useEffect(() => {
+    const tid = searchParams.get('task');
+    if (!tid || items.length === 0) return;
+    if (items.some((p) => p.id === tid)) setSelectedId(tid);
+  }, [searchParams, items]);
+
+  useEffect(() => {
     setSubtaskDetailId(null);
+  }, [selectedId]);
+
+  useEffect(() => {
+    setEditingChatId(null);
+    setEditingChatText('');
+    setChatSaving(false);
   }, [selectedId]);
 
   useEffect(() => {
@@ -343,10 +364,15 @@ export default function AdminTaskPool() {
     };
   }, [selectedId]);
 
+  const itemsForClientFilter = useMemo(() => {
+    if (!filterClientId) return items;
+    return items.filter((p) => p.client_id === filterClientId);
+  }, [items, filterClientId]);
+
   const searchFilteredItems = useMemo(() => {
     const q = searchInput.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter((p) => {
+    if (!q) return itemsForClientFilter;
+    return itemsForClientFilter.filter((p) => {
       const client = clients.find((c) => c.id === p.client_id);
       const account = accounts.find((a) => a.id === p.account_id);
       const blob = [
@@ -361,13 +387,14 @@ export default function AdminTaskPool() {
         p.client_name_override,
         client ? `${client.first_name} ${client.last_name}` : '',
         account ? `${account.platform} ${account.username}` : '',
+        ...parseLabeledLinks(p.published_links, null, 'Link').flatMap((l) => [l.label, l.url]),
       ]
         .filter(Boolean)
         .join(' ')
         .toLowerCase();
       return blob.includes(q);
     });
-  }, [items, searchInput, clients, accounts]);
+  }, [itemsForClientFilter, searchInput, clients, accounts]);
 
   const now = useMemo(() => new Date(), [items.length, searchInput, listFilter]);
   const thisPeriod = useMemo(() => getPeriodBoundsForDate(now), [now]);
@@ -519,6 +546,7 @@ export default function AdminTaskPool() {
     const gh = parseLabeledLinks(row.github_links, row.github_url, 'GitHub');
     const st = parseLabeledLinks(row.source_storage_urls, row.source_storage_url, 'Storage');
     const doc = parseLabeledLinks(row.initial_document_urls, row.initial_document_url, 'Document');
+    const published = parseLabeledLinks(row.published_links, null, 'Link');
     setForm({
       name: row.name,
       description: row.description || '',
@@ -548,6 +576,7 @@ export default function AdminTaskPool() {
       githubLinks: gh,
       sourceStorageLinks: st,
       initialDocLinks: doc,
+      publishedLinks: published,
       taskReceivedAt: row.task_received_at ? isoToDatetimeLocalInJst(row.task_received_at) : '',
       deadline: row.deadline ? isoToDatetimeLocalInJst(row.deadline) : '',
       budgetType: row.budget_type,
@@ -612,6 +641,7 @@ export default function AdminTaskPool() {
 
     const gh = serializeLabeledLinks(form.githubLinks);
     const docs = serializeLabeledLinks(form.initialDocLinks);
+    const published = serializeLabeledLinks(form.publishedLinks ?? []);
     const existing = editingId ? items.find((i) => i.id === editingId) : null;
 
     const upworkConnectionFee = form.upworkConnectionFee ? Number(form.upworkConnectionFee) : 0;
@@ -715,6 +745,7 @@ export default function AdminTaskPool() {
       github_links: gh,
       source_storage_urls: storageLinks,
       initial_document_urls: docs,
+      published_links: published,
       task_received_at: form.taskReceivedAt ? datetimeLocalJstToIso(form.taskReceivedAt) : null,
       deadline: form.deadline ? datetimeLocalJstToIso(form.deadline) : null,
       budget_type: form.budgetType,
@@ -1023,6 +1054,42 @@ export default function AdminTaskPool() {
     setNewChat('');
   };
 
+  const beginChatEdit = (msg: PoolChatMessage) => {
+    setEditingChatId(msg.id);
+    setEditingChatText(msg.message);
+  };
+
+  const cancelChatEdit = () => {
+    setEditingChatId(null);
+    setEditingChatText('');
+    setChatSaving(false);
+  };
+
+  const saveChatEdit = async () => {
+    if (!editingChatId) return;
+    const message = editingChatText.trim();
+    if (!message) {
+      toast({ title: 'Message is required', variant: 'destructive' });
+      return;
+    }
+    setChatSaving(true);
+    const res = await supabase.from('task_pool_chat_messages').update({ message }).eq('id', editingChatId).select('*').maybeSingle();
+    setChatSaving(false);
+    if (res.error) {
+      toast({ title: 'Edit failed', description: res.error?.message, variant: 'destructive' });
+      return;
+    }
+    if (res.data) {
+      const updated = res.data as PoolChatMessage;
+      setMessages((prev) => prev.map((m) => (m.id === editingChatId ? updated : m)));
+    } else {
+      setMessages((prev) => prev.map((m) => (m.id === editingChatId ? { ...m, message } : m)));
+    }
+    setEditingChatId(null);
+    setEditingChatText('');
+    toast({ title: 'Message updated' });
+  };
+
   const deleteChatMessage = async (id: string) => {
     const res = await supabase.from('task_pool_chat_messages').delete().eq('id', id);
     if (res.error) {
@@ -1065,6 +1132,27 @@ export default function AdminTaskPool() {
 
   return (
     <div className="space-y-6">
+      {filterClientId ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-sm">
+          <span className="text-muted-foreground">
+            Showing task pool leads linked to this client only
+            {(() => {
+              const c = clients.find((x) => x.id === filterClientId);
+              return c ? (
+                <span className="font-medium text-foreground">
+                  {' '}
+                  · {c.first_name} {c.last_name}
+                  {c.company_name ? ` (${c.company_name})` : ''}
+                </span>
+              ) : null;
+            })()}
+            .
+          </span>
+          <Button type="button" variant="outline" size="sm" onClick={() => setSearchParams({}, { replace: true })}>
+            Clear filters
+          </Button>
+        </div>
+      ) : null}
       {accrualDueItems.length > 0 ? (
         <Alert className="border-amber-500/40 bg-amber-500/5">
           <AlertTriangle className="h-4 w-4 text-amber-600" />
@@ -1204,9 +1292,8 @@ export default function AdminTaskPool() {
               {sortedItems.map((row, idx) => (
                 <Card
                   key={row.id}
-                  className="cursor-pointer transition-all hover:border-primary/40 hover:shadow-md"
+                  className="overflow-hidden transition-all hover:border-primary/40 hover:shadow-md"
                   style={{ borderLeft: `4px solid ${row.priority === 'critical' ? '#dc2626' : row.priority === 'high' ? '#ea580c' : row.priority === 'medium' ? '#2563eb' : '#64748b'}` }}
-                  onClick={() => setSelectedId(row.id)}
                   draggable
                   onDragStart={(e) => {
                     setDraggingTaskId(row.id);
@@ -1223,7 +1310,7 @@ export default function AdminTaskPool() {
                   }}
                   onDragEnd={() => setDraggingTaskId(null)}
                 >
-                  <CardContent className="p-4">
+                  <CardContent className="cursor-pointer p-4" onClick={() => setSelectedId(row.id)}>
                     <div className="flex items-start justify-between gap-2">
                       <p className="font-medium text-foreground line-clamp-2">#{idx + 1} {row.name}</p>
                       <div className="flex flex-col items-end gap-1 shrink-0">
@@ -1262,6 +1349,17 @@ export default function AdminTaskPool() {
                       {taskDescriptionPreview(row.description, 20)}
                     </p>
                   </CardContent>
+                  {row.client_id ? (
+                    <div className="border-t border-border bg-muted/25 px-4 py-1.5">
+                      <Link
+                        to={`/admin/clients?client=${row.client_id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="text-xs font-medium text-primary hover:underline"
+                      >
+                        Open linked client in Clients
+                      </Link>
+                    </div>
+                  ) : null}
                 </Card>
               ))}
             </div>
@@ -1478,10 +1576,6 @@ export default function AdminTaskPool() {
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                 <CardTitle className="text-xl">{selected.name}</CardTitle>
-                <div
-                  className="prose prose-sm max-w-none text-muted-foreground mt-1 break-words [overflow-wrap:anywhere] [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5 [&_a]:text-primary [&_a]:break-all"
-                  dangerouslySetInnerHTML={{ __html: selected.description?.trim() ? selected.description : '<p>No description.</p>' }}
-                />
                     <div className="mt-2 flex flex-wrap items-center gap-2">
                       <Select value={selected.status} onValueChange={(v) => updateDetailStatus(v)}>
                         <SelectTrigger className="w-[160px] h-8 text-xs">
@@ -1569,7 +1663,21 @@ export default function AdminTaskPool() {
 
                   <TabsContent value="overview" className="space-y-4">
                     <div className="grid gap-3 sm:grid-cols-2">
-                      <InfoCard icon={FolderKanban} title="Client" value={poolClientLabel(selected)} />
+                      <InfoCard
+                        icon={FolderKanban}
+                        title="Client"
+                        value={poolClientLabel(selected)}
+                        action={
+                          selected.client_id ? (
+                            <Link
+                              to={`/admin/clients?client=${selected.client_id}`}
+                              className="mt-2 inline-flex text-xs font-medium text-primary hover:underline"
+                            >
+                              Open in Clients
+                            </Link>
+                          ) : undefined
+                        }
+                      />
                       <InfoCard icon={Link2} title="Account" value={poolAccountLabel(selected)} />
                       <InfoCard icon={Clock} title="Deadline" value={selected.deadline ? formatIsoInJst(selected.deadline) : 'Not set'} />
                       <InfoCard
@@ -1810,9 +1918,10 @@ export default function AdminTaskPool() {
                       </div>
                     </div>
                     <div className="space-y-3">
-                      <MultiLinkField title="Source storage" links={parseLabeledLinks(selected.source_storage_urls, selected.source_storage_url, 'Storage')} />
-                      <MultiLinkField title="GitHub" links={parseLabeledLinks(selected.github_links, selected.github_url, 'GitHub')} />
-                      <MultiLinkField title="Initial documents" links={parseLabeledLinks(selected.initial_document_urls, selected.initial_document_url, 'Document')} />
+                      <LabeledLinksListWithCopy title="Source storage" links={parseLabeledLinks(selected.source_storage_urls, selected.source_storage_url, 'Storage')} />
+                      <LabeledLinksListWithCopy title="GitHub" links={parseLabeledLinks(selected.github_links, selected.github_url, 'GitHub')} />
+                      <LabeledLinksListWithCopy title="Initial documents" links={parseLabeledLinks(selected.initial_document_urls, selected.initial_document_url, 'Document')} />
+                      <LabeledLinksListWithCopy title="Published / store links" links={parseLabeledLinks(selected.published_links, null, 'Link')} emptyHint="No published links yet — edit this pool item and use the highlighted block under GitHub." />
                     </div>
                     <div className="space-y-2">
                       <p className="text-sm font-medium">Credentials</p>
@@ -1887,22 +1996,53 @@ export default function AdminTaskPool() {
                       {selectedMessages.map((m) => (
                         <div key={m.id} className="rounded border p-3">
                           <div className="flex items-start justify-between gap-3">
-                            <p className="text-sm whitespace-pre-line">{m.message}</p>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 shrink-0 text-destructive"
-                              onClick={() =>
-                                setPendingDelete({
-                                  kind: 'chat',
-                                  id: m.id,
-                                  preview: m.message.length > 120 ? `${m.message.slice(0, 120)}…` : m.message,
-                                })
-                              }
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                            {editingChatId === m.id ? (
+                              <div className="w-full space-y-2">
+                                <Textarea value={editingChatText} onChange={(e) => setEditingChatText(e.target.value)} rows={4} className="text-sm" />
+                                <div className="flex gap-2">
+                                  <Button size="sm" onClick={saveChatEdit} disabled={chatSaving}>
+                                    {chatSaving ? 'Saving…' : 'Save'}
+                                  </Button>
+                                  <Button size="sm" variant="outline" onClick={cancelChatEdit} disabled={chatSaving}>
+                                    Cancel
+                                  </Button>
+                                </div>
+                              </div>
+                            ) : (
+                              <>
+                                <p className="text-sm whitespace-pre-line flex-1">{m.message}</p>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7"
+                                    onClick={() => beginChatEdit(m)}
+                                    title="Edit message"
+                                    aria-label="Edit message"
+                                  >
+                                    <Pencil className="h-4 w-4" />
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7 text-destructive"
+                                    onClick={() =>
+                                      setPendingDelete({
+                                        kind: 'chat',
+                                        id: m.id,
+                                        preview: m.message.length > 120 ? `${m.message.slice(0, 120)}…` : m.message,
+                                      })
+                                    }
+                                    title="Delete message"
+                                    aria-label="Delete message"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                              </>
+                            )}
                           </div>
                           <p className="mt-1 text-xs text-muted-foreground">{new Date(m.created_at).toLocaleString()}</p>
                         </div>
@@ -1957,6 +2097,16 @@ export default function AdminTaskPool() {
                     />
                   </TabsContent>
                 </Tabs>
+                <div className="mt-4 rounded-lg border p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-medium text-foreground">Description</p>
+                    <CopyDescriptionButton description={selected.description} />
+                  </div>
+                  <div
+                    className="prose prose-sm mt-2 max-w-none text-muted-foreground break-words [overflow-wrap:anywhere] [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5 [&_a]:text-primary [&_a]:break-all"
+                    dangerouslySetInnerHTML={{ __html: selected.description?.trim() ? selected.description : '<p>No description.</p>' }}
+                  />
+                </div>
               </CardContent>
               </>
             ) : (
@@ -2045,7 +2195,10 @@ export default function AdminTaskPool() {
               <Input value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} />
             </div>
             <div className="space-y-2 md:col-span-2">
-              <Label>Description</Label>
+              <div className="flex items-center justify-between gap-2">
+                <Label>Description</Label>
+                <CopyDescriptionButton description={form.description} />
+              </div>
               <RichTextEditor
                 value={form.description}
                 onChange={(val) => setForm((p) => ({ ...p, description: val }))}
@@ -2445,6 +2598,17 @@ export default function AdminTaskPool() {
                 newRowLabel="GitHub"
               />
             </div>
+            <div className="space-y-2 md:col-span-2 rounded-md border border-primary/20 bg-primary/5 p-3">
+              <Label>Published / live site / app store links</Label>
+              <p className="text-xs text-muted-foreground mt-1">Website, Google Play, App Store, or other public links (optional).</p>
+              <div className="mt-2">
+                <LabeledLinksEditor
+                  links={form.publishedLinks}
+                  onChange={(links) => setForm((p) => ({ ...p, publishedLinks: links }))}
+                  newRowLabel="Link"
+                />
+              </div>
+            </div>
             <div className="space-y-2">
               <Label>Storage type</Label>
               <Select value={form.sourceStorageType} onValueChange={(v) => setForm((p) => ({ ...p, sourceStorageType: v }))}>
@@ -2622,74 +2786,17 @@ export default function AdminTaskPool() {
   );
 }
 
-function LabeledLinksEditor({
-  links,
-  onChange,
-  newRowLabel,
+function InfoCard({
+  icon: Icon,
+  title,
+  value,
+  action,
 }: {
-  links: LabeledLink[];
-  onChange: (v: LabeledLink[]) => void;
-  newRowLabel: string;
+  icon: React.ElementType;
+  title: string;
+  value: string;
+  action?: React.ReactNode;
 }) {
-  return (
-    <div className="space-y-2">
-      {links.map((link, i) => (
-        <div key={i} className="flex flex-wrap gap-2 items-center">
-          <Input
-            className="max-w-[140px]"
-            placeholder="Label"
-            value={link.label}
-            onChange={(e) => {
-              const n = [...links];
-              n[i] = { ...n[i], label: e.target.value };
-              onChange(n);
-            }}
-          />
-          <Input
-            className="flex-1 min-w-[200px]"
-            placeholder="https://…"
-            value={link.url}
-            onChange={(e) => {
-              const n = [...links];
-              n[i] = { ...n[i], url: e.target.value };
-              onChange(n);
-            }}
-          />
-          <Button type="button" size="icon" variant="outline" onClick={() => onChange(links.filter((_, j) => j !== i))}>
-            <Trash2 className="h-4 w-4" />
-          </Button>
-        </div>
-      ))}
-      <Button type="button" size="sm" variant="secondary" onClick={() => onChange([...links, { label: newRowLabel, url: '' }])}>
-        Add link
-      </Button>
-    </div>
-  );
-}
-
-function MultiLinkField({ title, links }: { title: string; links: LabeledLink[] }) {
-  return (
-    <div className="rounded border p-3 bg-muted/20">
-      <p className="text-xs text-muted-foreground mb-2">{title}</p>
-      {links.length === 0 ? (
-        <p className="text-sm text-muted-foreground">N/A</p>
-      ) : (
-        <ul className="space-y-2">
-          {links.map((l, i) => (
-            <li key={`${l.url}-${i}`}>
-              <span className="text-xs font-medium text-foreground">{l.label}: </span>
-              <a href={l.url} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline break-all">
-                {l.url}
-              </a>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-function InfoCard({ icon: Icon, title, value }: { icon: React.ElementType; title: string; value: string }) {
   return (
     <div className="rounded border p-3 bg-muted/20">
       <p className="text-xs text-muted-foreground flex items-center gap-1">
@@ -2697,6 +2804,7 @@ function InfoCard({ icon: Icon, title, value }: { icon: React.ElementType; title
         {title}
       </p>
       <p className="text-sm font-medium text-foreground mt-1">{value}</p>
+      {action}
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
+import { CopyDescriptionButton } from '@/components/CopyDescriptionButton';
 import {
   coercePoolSubtaskStatus,
   poolSubtaskBoardLabel,
@@ -78,7 +79,10 @@ export default function PoolSubtaskDetailDialog({ open, onOpenChange, task, pers
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="pool-subtask-detail-desc">Description</Label>
+              <div className="flex items-center justify-between gap-2">
+                <Label htmlFor="pool-subtask-detail-desc">Description</Label>
+                <CopyDescriptionButton description={description} />
+              </div>
               <Textarea
                 id="pool-subtask-detail-desc"
                 value={description}

@@ -77,3 +77,17 @@ export function getPipelineListCursor(
     usingMainInterviewSlot: true,
   };
 }
+
+/**
+ * Same clock as the job interview list "Upcoming" column: first incomplete stage time, else main slot.
+ * Used with status (scheduled | in_progress) for "Active pipeline only". Excludes past instants and fully-done pipelines.
+ */
+export function passesActivePipelineSlotClock(
+  interview: { scheduled_at: string; interview_timezone: string },
+  stages: JobInterviewStageRow[] | undefined,
+  nowMs: number = Date.now(),
+): boolean {
+  const c = getPipelineListCursor(stages, interview);
+  if (c.stepType === 'done') return false;
+  return c.instant.getTime() >= nowMs;
+}

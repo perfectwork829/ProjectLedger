@@ -17,9 +17,11 @@ export const GENERIC_ACCOUNT_PLATFORM_VALUES = [
   'microsoft_teams',
   'telegram',
   'whatsapp',
+  'discord',
   'outlook',
   'github',
   'dropbox',
+  'general',
 ] as const;
 
 export type GenericAccountPlatformValue = (typeof GENERIC_ACCOUNT_PLATFORM_VALUES)[number];

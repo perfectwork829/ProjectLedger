@@ -46,6 +46,7 @@ export interface ProjectRecord {
   github_links: unknown;
   source_storage_urls: unknown;
   initial_document_urls: unknown;
+  published_links: unknown;
   deadline: string | null;
   budget_type: ProjectBudgetType;
   budget_amount: number | null;
@@ -76,6 +77,7 @@ export interface ProjectTask {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  published_links: unknown;
 }
 
 export interface ProjectChatMessage {

@@ -14,6 +14,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Plus, Pencil, Trash2, CalendarClock } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
 import ModuleSearchBar from '@/components/ModuleSearchBar';
 import { TimezoneSelect } from '@/components/TimezoneSelect';
@@ -24,7 +25,13 @@ import {
   utcInstantFromDeveloperWallClock,
 } from '@/lib/interviewTimezone';
 import { formatInTimeZone } from 'date-fns-tz';
-import type { JobInterviewRow } from '@/lib/jobInterviews';
+import {
+  type JobInterviewRow,
+  filterJobInterviewsByScheduleAndMode,
+  jobInterviewRowsMatchingSearch,
+} from '@/lib/jobInterviews';
+import type { JobInterviewStageRow } from '@/lib/jobInterviewStages';
+import { passesActivePipelineSlotClock } from '@/lib/jobInterviewPipelineList';
 import { seedInitialRecruiterStage } from '@/lib/jobInterviewSeed';
 
 const JOB_SOURCES = [
@@ -50,6 +57,7 @@ const STATUSES = [
   { value: 'offer', label: 'Offer' },
   { value: 'rejected', label: 'Rejected' },
   { value: 'withdrawn', label: 'Withdrawn' },
+  { value: 'failed', label: 'Failed' },
 ] as const;
 
 interface PersonnelMini {
@@ -96,9 +104,13 @@ export default function AdminJobInterviews() {
     return () => window.removeEventListener('benchhub-viewer-timezone', onTz);
   }, []);
   const [rows, setRows] = useState<JobInterviewRow[]>([]);
+  const [stagesByInterview, setStagesByInterview] = useState<Record<string, JobInterviewStageRow[]>>({});
   const [personnel, setPersonnel] = useState<PersonnelMini[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [activePipelineOnly, setActivePipelineOnly] = useState(true);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
@@ -108,6 +120,8 @@ export default function AdminJobInterviews() {
   const set = useCallback((k: string, v: string) => setForm((p) => ({ ...p, [k]: v })), []);
 
   const load = useCallback(async () => {
+    const { error: rpcErr } = await supabase.rpc('mark_past_job_interviews_failed');
+    if (rpcErr) console.warn('mark_past_job_interviews_failed:', rpcErr.message);
     const [{ data: pData, error: pErr }, { data: iData, error: iErr }] = await Promise.all([
       supabase.from('personnel').select('id, first_name, last_name, timezone, role').order('last_name'),
       supabase.from('job_interviews').select('*').order('scheduled_at', { ascending: true }),
@@ -115,7 +129,30 @@ export default function AdminJobInterviews() {
     if (pErr) toast({ title: 'Failed to load personnel', description: pErr.message, variant: 'destructive' });
     else setPersonnel((pData || []) as PersonnelMini[]);
     if (iErr) toast({ title: 'Failed to load interviews', description: iErr.message, variant: 'destructive' });
-    else setRows((iData || []) as JobInterviewRow[]);
+    else {
+      const list = (iData || []) as JobInterviewRow[];
+      setRows(list);
+      if (list.length) {
+        const ids = list.map((r) => r.id);
+        const { data: stData, error: stErr } = await supabase
+          .from('job_interview_stages')
+          .select('*')
+          .in('interview_id', ids)
+          .order('sort_order', { ascending: true });
+        if (stErr) {
+          setStagesByInterview({});
+        } else {
+          const by: Record<string, JobInterviewStageRow[]> = {};
+          for (const s of (stData || []) as JobInterviewStageRow[]) {
+            if (!by[s.interview_id]) by[s.interview_id] = [];
+            by[s.interview_id].push(s);
+          }
+          setStagesByInterview(by);
+        }
+      } else {
+        setStagesByInterview({});
+      }
+    }
     setLoading(false);
   }, [toast]);
 
@@ -129,28 +166,23 @@ export default function AdminJobInterviews() {
 
   const personnelMap = useMemo(() => Object.fromEntries(personnel.map((p) => [p.id, p])), [personnel]);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((r) => {
-      const developerForJob = personnelMap[r.developer_personnel_id];
-      const recruiterMini = r.recruiter_personnel_id ? personnelMap[r.recruiter_personnel_id] : undefined;
-      const callerMini = r.caller_personnel_id ? personnelMap[r.caller_personnel_id] : undefined;
-      const blob = [
-        r.job_title,
-        r.job_source,
-        r.description,
-        r.job_posting_url,
-        developerForJob && personnelName(developerForJob),
-        recruiterMini && personnelName(recruiterMini),
-        callerMini && personnelName(callerMini),
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      return blob.includes(q);
+  const searchedRows = useMemo(
+    () => jobInterviewRowsMatchingSearch(rows, search, personnelMap),
+    [rows, search, personnelMap],
+  );
+
+  const visibleRows = useMemo(() => {
+    let out = filterJobInterviewsByScheduleAndMode(searchedRows, {
+      activePipelineOnly,
+      scheduledFromYmd: dateFrom || undefined,
+      scheduledToYmd: dateTo || undefined,
+      viewerIana: viewerTz,
     });
-  }, [rows, search, personnelMap]);
+    if (activePipelineOnly) {
+      out = out.filter((r) => passesActivePipelineSlotClock(r, stagesByInterview[r.id]));
+    }
+    return out;
+  }, [searchedRows, activePipelineOnly, dateFrom, dateTo, viewerTz, stagesByInterview]);
 
   const dualPreview = useMemo(() => {
     if (!form.dateYmd || !form.timeHm || !form.interview_timezone) return null;
@@ -312,30 +344,65 @@ export default function AdminJobInterviews() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+      <div className="space-y-3">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight text-foreground">Job interviews</h2>
-          <p className="text-sm text-muted-foreground">
-            Pick a <strong>developer (for job)</strong>; the slot defaults to their personnel timezone. Alerts show{' '}
-            <strong>developer local time</strong> and <strong>your time</strong> ({viewerTz}).
+          <p className="mt-1 text-sm text-muted-foreground">
+            Slots use the developer&apos;s personnel timezone; previews use <strong>your time</strong> ({viewerTz}).
           </p>
         </div>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <ModuleSearchBar value={search} onChange={setSearch} placeholder="Search title, source, developer, recruiter, caller…" id="job-interviews-search" />
-          <Button onClick={openCreate} className="gap-2 shrink-0">
+        <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/10 p-3 sm:flex-row sm:flex-wrap sm:items-end">
+          <ModuleSearchBar
+            value={search}
+            onChange={setSearch}
+            placeholder="Search title, source, status, developer, recruiter, caller…"
+            id="job-interviews-search"
+            className="min-w-0 flex-1 sm:min-w-[12rem] sm:max-w-md"
+          />
+          <Button onClick={openCreate} className="h-10 shrink-0 gap-2">
             <Plus className="h-4 w-4" />
             New interview
           </Button>
+          <div className="flex h-10 items-center gap-2 rounded-md border border-border bg-background px-3">
+            <Checkbox
+              id="admin-ji-active-only"
+              checked={activePipelineOnly}
+              onCheckedChange={(v) => setActivePipelineOnly(v === true)}
+            />
+            <Label htmlFor="admin-ji-active-only" className="cursor-pointer whitespace-nowrap text-sm font-normal leading-none">
+              Active pipeline only
+            </Label>
+          </div>
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="grid gap-1">
+              <Label htmlFor="admin-ji-from" className="text-xs text-muted-foreground">
+                From ({viewerTz})
+              </Label>
+              <Input id="admin-ji-from" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="h-10 w-[11rem]" />
+            </div>
+            <div className="grid gap-1">
+              <Label htmlFor="admin-ji-to" className="text-xs text-muted-foreground">
+                To
+              </Label>
+              <Input id="admin-ji-to" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="h-10 w-[11rem]" />
+            </div>
+          </div>
         </div>
       </div>
 
-      {filtered.length === 0 ? (
+      {visibleRows.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">
             <CalendarClock className="mb-2 h-10 w-10 text-muted-foreground" />
-            <p className="text-lg font-medium text-foreground">{search.trim() ? 'No matching interviews' : 'No interviews yet'}</p>
-            <p className="mt-1 text-sm text-muted-foreground">Add one to track dates in the developer&apos;s timezone.</p>
-            {!search.trim() && (
+            <p className="text-lg font-medium text-foreground">
+              {rows.length === 0 ? 'No interviews yet' : 'No interviews match the current filters'}
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {rows.length === 0
+                ? 'Add one to track dates in the developer&apos;s timezone.'
+                : 'Try clearing search, widening the date range, or turning off “Active pipeline only” to see completed, failed, or closed rows.'}
+            </p>
+            {rows.length === 0 && (
               <Button variant="outline" className="mt-4 gap-2" onClick={openCreate}>
                 <Plus className="h-4 w-4" />
                 New interview
@@ -359,7 +426,7 @@ export default function AdminJobInterviews() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r) => {
+              {visibleRows.map((r) => {
                 const developerForJob = personnelMap[r.developer_personnel_id];
                 const recruiterPerson = r.recruiter_personnel_id ? personnelMap[r.recruiter_personnel_id] : undefined;
                 const callerPerson = r.caller_personnel_id ? personnelMap[r.caller_personnel_id] : undefined;
@@ -424,7 +491,7 @@ export default function AdminJobInterviews() {
                       <Badge variant="outline">{r.job_source || '—'}</Badge>
                     </td>
                     <td className="px-3 py-2 align-top">
-                      <Badge variant="secondary">{r.status}</Badge>
+                      <Badge variant={r.status === 'failed' ? 'destructive' : 'secondary'}>{r.status}</Badge>
                     </td>
                     <td className="px-3 py-2 align-top">
                       <div className="flex flex-wrap gap-2">

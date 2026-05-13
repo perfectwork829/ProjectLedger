@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
@@ -24,12 +25,17 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { PanelLeftClose, PanelLeftOpen, Trash2 } from 'lucide-react';
+import { CopyDescriptionButton } from '@/components/CopyDescriptionButton';
+import { LabeledLinksListWithCopy, UrlFieldWithCopy } from '@/components/LabeledLinksListWithCopy';
+import { parseLabeledLinks } from '@/lib/taskPool';
 
 const TASK_STATUS_OPTIONS = ['todo', 'in_progress', 'review', 'done', 'blocked'] as const;
 
 export default function Projects() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const filterClientId = searchParams.get('client');
 
   const [loading, setLoading] = useState(true);
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
@@ -73,11 +79,27 @@ export default function Projects() {
 
   useEffect(() => { fetchAll(); }, []);
 
+  useEffect(() => {
+    const pid = searchParams.get('project');
+    if (!pid || projects.length === 0) return;
+    if (projects.some((p) => p.id === pid)) setSelectedProjectId(pid);
+  }, [searchParams, projects]);
+
   const filteredProjects = useMemo(() => {
+    let list = projects;
+    if (filterClientId) {
+      list = list.filter((p) => p.client_id === filterClientId);
+    }
     const q = searchInput.trim().toLowerCase();
-    if (!q) return projects;
-    return projects.filter((p) => [p.name, p.description, p.project_source, p.main_stack, p.skillset_csv, p.tags_csv, p.status, p.priority].filter(Boolean).join(' ').toLowerCase().includes(q));
-  }, [projects, searchInput]);
+    if (!q) return list;
+    return list.filter((p) =>
+      [p.name, p.description, p.project_source, p.main_stack, p.skillset_csv, p.tags_csv, p.status, p.priority]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [projects, searchInput, filterClientId]);
 
   const stackTree = useMemo(() => {
     const grouped = filteredProjects.reduce<Record<string, ProjectRecord[]>>((acc, p) => {
@@ -217,6 +239,28 @@ export default function Projects() {
         </div>
       </div>
 
+      {filterClientId ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-sm">
+          <span className="text-muted-foreground">
+            Showing projects linked to this client only
+            {(() => {
+              const c = clients.find((x) => x.id === filterClientId);
+              return c ? (
+                <span className="font-medium text-foreground">
+                  {' '}
+                  · {c.first_name} {c.last_name}
+                  {c.company_name ? ` (${c.company_name})` : ''}
+                </span>
+              ) : null;
+            })()}
+            .
+          </span>
+          <Button type="button" variant="outline" size="sm" onClick={() => setSearchParams({}, { replace: true })}>
+            Clear filters
+          </Button>
+        </div>
+      ) : null}
+
       <div
         className={`grid gap-4 ${
           showCategoriesPanel && showProjectsPanel ? 'lg:grid-cols-4' : showCategoriesPanel || showProjectsPanel ? 'lg:grid-cols-3' : 'lg:grid-cols-1'
@@ -275,21 +319,35 @@ export default function Projects() {
             <CardHeader><CardTitle className="text-base">Projects ({displayProjects.length})</CardTitle></CardHeader>
             <CardContent className="space-y-2 max-h-[70vh] overflow-auto">
               {displayProjects.map((project) => (
-                <button
+                <div
                   key={project.id}
-                  type="button"
-                  onClick={() => setSelectedProjectId(project.id)}
-                  className={`w-full rounded border p-3 text-left transition hover:border-primary/40 ${selectedProjectId === project.id ? 'border-primary bg-primary/5' : 'border-border'}`}
+                  className={`w-full overflow-hidden rounded border transition hover:border-primary/40 ${selectedProjectId === project.id ? 'border-primary bg-primary/5' : 'border-border'}`}
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="font-medium text-foreground line-clamp-1">{project.name}</p>
-                    <Badge variant="secondary" className="capitalize">{project.status}</Badge>
-                  </div>
-                  {project.project_source ? <p className="mt-1 text-xs text-muted-foreground capitalize">Project source(from): {project.project_source.replace('_', ' ')}</p> : null}
-                  {project.main_stack ? <p className="mt-1 text-xs text-primary/90 capitalize">Stack: {project.main_stack.replace('_', ' ')}</p> : null}
-                  <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{project.description || 'No description'}</p>
-                  <p className="mt-2 text-xs text-muted-foreground">{clientLabel(project)}</p>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedProjectId(project.id)}
+                    className="w-full p-3 text-left"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="font-medium text-foreground line-clamp-1">{project.name}</p>
+                      <Badge variant="secondary" className="capitalize">{project.status}</Badge>
+                    </div>
+                    {project.project_source ? <p className="mt-1 text-xs text-muted-foreground capitalize">Project source(from): {project.project_source.replace('_', ' ')}</p> : null}
+                    {project.main_stack ? <p className="mt-1 text-xs text-primary/90 capitalize">Stack: {project.main_stack.replace('_', ' ')}</p> : null}
+                    <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{project.description || 'No description'}</p>
+                    <p className="mt-2 text-xs text-muted-foreground">{clientLabel(project)}</p>
+                  </button>
+                  {project.client_id ? (
+                    <div className="border-t border-border bg-muted/25 px-3 py-1.5">
+                      <Link
+                        to={`/dashboard/clients?client=${project.client_id}`}
+                        className="text-xs font-medium text-primary hover:underline"
+                      >
+                        Open linked client in Clients
+                      </Link>
+                    </div>
+                  ) : null}
+                </div>
               ))}
               {displayProjects.length === 0 && <p className="text-sm text-muted-foreground">No projects found.</p>}
             </CardContent>
@@ -303,11 +361,21 @@ export default function Projects() {
             <CardContent className="pt-6">
               <div className="mb-4">
                 <h3 className="text-xl font-semibold">{selectedProject.name}</h3>
-                <p className="text-sm text-muted-foreground mt-1">{selectedProject.description}</p>
+                <div className="mt-1 flex items-start justify-between gap-2">
+                  <p className="text-sm text-muted-foreground flex-1 min-w-0">{selectedProject.description || 'No description added.'}</p>
+                  <CopyDescriptionButton description={selectedProject.description} />
+                </div>
                 {selectedProject.main_stack ? <Badge className="mt-2 capitalize">{selectedProject.main_stack.replace('_', ' ')}</Badge> : null}
                 {selectedProject.project_source ? <Badge variant="outline" className="mt-2 ml-2 capitalize">Project source(from): {selectedProject.project_source.replace('_', ' ')}</Badge> : null}
-                <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                  <span>Client: {clientLabel(selectedProject)}</span>
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                  <span className="inline-flex flex-wrap items-center gap-1.5">
+                    <span>Client: {clientLabel(selectedProject)}</span>
+                    {selectedProject.client_id ? (
+                      <Link to={`/dashboard/clients?client=${selectedProject.client_id}`} className="font-medium text-primary hover:underline">
+                        View in Clients
+                      </Link>
+                    ) : null}
+                  </span>
                   <span>Account: {accountLabel(selectedProject)}</span>
                   <span>Deadline: {selectedProject.deadline ? new Date(selectedProject.deadline).toLocaleDateString() : 'N/A'}</span>
                 </div>
@@ -324,9 +392,19 @@ export default function Projects() {
                 <TabsContent value="overview" className="space-y-3">
                   <div className="flex flex-wrap gap-2">{(selectedProject.skillset_csv || '').split(',').map((s) => s.trim()).filter(Boolean).map((skill) => <Badge key={skill}>{skill}</Badge>)}</div>
                   <div className="flex flex-wrap gap-2">{(selectedProject.tags_csv || '').split(',').map((s) => s.trim()).filter(Boolean).map((tag) => <Badge key={tag} variant="outline">{tag}</Badge>)}</div>
-                  <InfoLink label="Source code storage" url={selectedProject.source_storage_url} />
-                  <InfoLink label="GitHub link" url={selectedProject.github_url} />
-                  <InfoLink label="Initial document" url={selectedProject.initial_document_url} />
+                  <div className="space-y-3">
+                    <UrlFieldWithCopy label="Source code storage" url={selectedProject.source_storage_url} />
+                    <UrlFieldWithCopy label="GitHub link" url={selectedProject.github_url} />
+                    <UrlFieldWithCopy label="Initial document" url={selectedProject.initial_document_url} />
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-sm font-semibold">Published / live site / app store</p>
+                    <LabeledLinksListWithCopy
+                      title=""
+                      links={parseLabeledLinks(selectedProject.published_links, null, 'Link')}
+                      emptyHint="No published links yet. Ask your admin to add them (Admin → Projects → Edit), or check the Tasks tab for project-wide links once they exist."
+                    />
+                  </div>
                   <ProjectCredentials metadata={selectedProject.metadata_json} />
                   <div className="space-y-2">
                     <p className="text-sm font-medium">Source files (from Task promotion)</p>
@@ -385,6 +463,18 @@ export default function Projects() {
                 </TabsContent>
 
                 <TabsContent value="tasks" className="space-y-3">
+                  {selectedProject ? (
+                    <div className="rounded-lg border bg-muted/25 p-3 space-y-2">
+                      <p className="text-sm font-semibold">Project-wide published links</p>
+                      <p className="text-xs text-muted-foreground">These are the same links as on the Overview tab. Per-task links appear under each task when present.</p>
+                      <LabeledLinksListWithCopy
+                        embedded
+                        title=""
+                        links={parseLabeledLinks(selectedProject.published_links, null, 'Link')}
+                        emptyHint="No project-wide links yet. They appear here and on Overview once an admin adds them."
+                      />
+                    </div>
+                  ) : null}
                   <div className="grid gap-2 sm:grid-cols-[1fr_220px_auto]">
                     <Input value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)} placeholder="Task title" />
                     <Select value={newTaskAssignee || 'none'} onValueChange={(v) => setNewTaskAssignee(v === 'none' ? '' : v)}>
@@ -398,9 +488,17 @@ export default function Projects() {
                   </div>
                   <div className="space-y-2">
                     {selectedTasks.map((task) => (
-                      <div key={task.id} className="rounded border p-3 flex items-center justify-between gap-3">
-                        <p className="font-medium text-sm">{task.title}</p>
-                        <div className="flex items-center gap-2">
+                      <div key={task.id} className="rounded border p-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium text-sm">{task.title}</p>
+                          <LabeledLinksListWithCopy
+                            embedded
+                            title="Published links (this task)"
+                            links={parseLabeledLinks(task.published_links, null, 'Link')}
+                            emptyHint="No links for this task yet."
+                          />
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
                           <Select value={task.status} onValueChange={(v) => updateTaskStatus(task, v)}>
                             <SelectTrigger className="w-[150px]"><SelectValue /></SelectTrigger>
                             <SelectContent>
@@ -445,15 +543,6 @@ export default function Projects() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
-  );
-}
-
-function InfoLink({ label, url }: { label: string; url: string | null }) {
-  return (
-    <div className="rounded border p-3 bg-muted/20">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      {url ? <a href={url} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline break-all">{url}</a> : <p className="text-sm text-muted-foreground">N/A</p>}
     </div>
   );
 }

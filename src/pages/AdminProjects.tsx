@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -43,6 +44,12 @@ import {
 } from '@/lib/projects';
 import { Calendar, MessageSquare, PanelLeftClose, PanelLeftOpen, Pencil, Plus, Trash2, FolderKanban, Link2, Clock } from 'lucide-react';
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from '@/components/ui/carousel';
+import { LabeledLinksEditor } from '@/components/LabeledLinksEditor';
+import { LabeledLinksListWithCopy, UrlFieldWithCopy } from '@/components/LabeledLinksListWithCopy';
+import { CopyDescriptionButton } from '@/components/CopyDescriptionButton';
+import { TagChipsInput } from '@/components/TagChipsInput';
+import type { LabeledLink } from '@/lib/taskPool';
+import { parseLabeledLinks, serializeLabeledLinks } from '@/lib/taskPool';
 
 const STATUS_OPTIONS = ['planning', 'active', 'blocked', 'qa', 'completed', 'cancelled'] as const;
 const PRIORITY_OPTIONS = ['low', 'medium', 'high', 'critical'] as const;
@@ -60,8 +67,8 @@ const emptyForm = {
   description: '',
   projectSource: '',
   mainStack: '',
-  skillsetCsv: '',
-  tagsCsv: '',
+  skillsetTags: [] as string[],
+  tagsTags: [] as string[],
   status: 'planning',
   priority: 'medium',
   clientId: '',
@@ -80,6 +87,7 @@ const emptyForm = {
   budgetAmount: '',
   currency: 'USD',
   githubUrl: '',
+  publishedLinks: [] as LabeledLink[],
   screenshotUrls: [] as string[],
 };
 
@@ -114,6 +122,8 @@ function credentialsFromMetadata(metadata: Record<string, unknown> | null | unde
 export default function AdminProjects() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const filterClientId = searchParams.get('client');
 
   const [loading, setLoading] = useState(true);
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
@@ -139,6 +149,8 @@ export default function AdminProjects() {
   const [newTaskAssignee, setNewTaskAssignee] = useState('');
   const [newChat, setNewChat] = useState('');
   const [pendingDelete, setPendingDelete] = useState<PendingProjectDelete | null>(null);
+  const [taskPublishedEdit, setTaskPublishedEdit] = useState<null | { id: string; title: string; links: LabeledLink[] }>(null);
+  const [savingTaskLinks, setSavingTaskLinks] = useState(false);
 
   const fetchAll = async () => {
     setLoading(true);
@@ -170,10 +182,20 @@ export default function AdminProjects() {
     fetchAll();
   }, []);
 
+  useEffect(() => {
+    const pid = searchParams.get('project');
+    if (!pid || projects.length === 0) return;
+    if (projects.some((p) => p.id === pid)) setSelectedProjectId(pid);
+  }, [searchParams, projects]);
+
   const filteredProjects = useMemo(() => {
+    let list = projects;
+    if (filterClientId) {
+      list = list.filter((p) => p.client_id === filterClientId);
+    }
     const q = searchInput.trim().toLowerCase();
-    if (!q) return projects;
-    return projects.filter((p) => {
+    if (!q) return list;
+    return list.filter((p) => {
       const client = clients.find((c) => c.id === p.client_id);
       const account = accounts.find((a) => a.id === p.account_id);
       const blob = [
@@ -190,6 +212,7 @@ export default function AdminProjects() {
         p.client_timezone,
         p.github_url,
         p.source_storage_url,
+        ...parseLabeledLinks(p.published_links, null, 'Link').flatMap((l) => [l.label, l.url]),
         client ? `${client.first_name} ${client.last_name} ${client.company_name || ''}` : '',
         account ? `${account.platform} ${account.username}` : '',
       ]
@@ -198,7 +221,7 @@ export default function AdminProjects() {
         .toLowerCase();
       return blob.includes(q);
     });
-  }, [projects, searchInput, clients, accounts]);
+  }, [projects, searchInput, clients, accounts, filterClientId]);
 
   const stackTree = useMemo(() => {
     const grouped = filteredProjects.reduce<Record<string, ProjectRecord[]>>((acc, p) => {
@@ -233,8 +256,14 @@ export default function AdminProjects() {
       description: project.description || '',
       projectSource: project.project_source || '',
       mainStack: project.main_stack || '',
-      skillsetCsv: project.skillset_csv || '',
-      tagsCsv: project.tags_csv || '',
+      skillsetTags: (project.skillset_csv || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
+      tagsTags: (project.tags_csv || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
       status: project.status,
       priority: project.priority,
       clientId: project.client_id || '',
@@ -253,6 +282,7 @@ export default function AdminProjects() {
       budgetAmount: project.budget_amount?.toString() || '',
       currency: project.currency || 'USD',
       githubUrl: project.github_url || '',
+      publishedLinks: parseLabeledLinks(project.published_links, null, 'Link'),
       screenshotUrls: screenshots.filter((s) => s.project_id === project.id).map((s) => s.image_url),
     });
     setDialogOpen(true);
@@ -280,6 +310,7 @@ export default function AdminProjects() {
     const normalizedMetadata = { ...metadata } as Record<string, unknown>;
     if (credentialRows.length > 0) normalizedMetadata.credentials = credentialRows;
     else delete normalizedMetadata.credentials;
+    const published = serializeLabeledLinks(form.publishedLinks ?? []);
     setSaving(true);
     const payload = {
       user_id: user?.id || null,
@@ -287,8 +318,8 @@ export default function AdminProjects() {
       description: form.description.trim() || null,
       project_source: form.projectSource.trim() || null,
       main_stack: form.mainStack || null,
-      skillset_csv: toCsv(form.skillsetCsv.split(',')) || null,
-      tags_csv: toCsv(form.tagsCsv.split(',')) || null,
+      skillset_csv: toCsv(form.skillsetTags) || null,
+      tags_csv: toCsv(form.tagsTags) || null,
       status: form.status,
       priority: form.priority,
       client_id: form.clientId || null,
@@ -306,6 +337,7 @@ export default function AdminProjects() {
       budget_amount: form.budgetAmount ? Number(form.budgetAmount) : null,
       currency: form.currency.trim() || 'USD',
       github_url: form.githubUrl.trim() || null,
+      published_links: published,
       updated_at: new Date().toISOString(),
     };
 
@@ -373,6 +405,26 @@ export default function AdminProjects() {
     setNewTaskTitle('');
     setNewTaskAssignee('');
     setTasks((prev) => [res.data as ProjectTask, ...prev]);
+  };
+
+  const saveTaskPublishedLinks = async () => {
+    if (!taskPublishedEdit) return;
+    setSavingTaskLinks(true);
+    const serialized = serializeLabeledLinks(taskPublishedEdit.links);
+    const res = await supabase
+      .from('project_tasks')
+      .update({ published_links: serialized, updated_at: new Date().toISOString() })
+      .eq('id', taskPublishedEdit.id)
+      .select('*')
+      .maybeSingle();
+    setSavingTaskLinks(false);
+    if (res.error || !res.data) {
+      toast({ title: 'Save failed', description: res.error?.message || 'Unknown error', variant: 'destructive' });
+      return;
+    }
+    setTasks((prev) => prev.map((t) => (t.id === taskPublishedEdit.id ? (res.data as ProjectTask) : t)));
+    setTaskPublishedEdit(null);
+    toast({ title: 'Published links saved' });
   };
 
   const updateTaskStatus = async (task: ProjectTask, status: string) => {
@@ -485,6 +537,28 @@ export default function AdminProjects() {
         </div>
       </div>
 
+      {filterClientId ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-sm">
+          <span className="text-muted-foreground">
+            Showing projects linked to this client only
+            {(() => {
+              const c = clients.find((x) => x.id === filterClientId);
+              return c ? (
+                <span className="font-medium text-foreground">
+                  {' '}
+                  · {c.first_name} {c.last_name}
+                  {c.company_name ? ` (${c.company_name})` : ''}
+                </span>
+              ) : null;
+            })()}
+            .
+          </span>
+          <Button type="button" variant="outline" size="sm" onClick={() => setSearchParams({}, { replace: true })}>
+            Clear filters
+          </Button>
+        </div>
+      ) : null}
+
       <div
         className={`grid gap-4 ${
           showCategoriesPanel && showProjectsPanel ? 'lg:grid-cols-4' : showCategoriesPanel || showProjectsPanel ? 'lg:grid-cols-3' : 'lg:grid-cols-1'
@@ -543,29 +617,43 @@ export default function AdminProjects() {
             <CardHeader><CardTitle className="text-base">Projects ({displayProjects.length})</CardTitle></CardHeader>
             <CardContent className="space-y-2 max-h-[70vh] overflow-auto">
               {displayProjects.map((project) => (
-                <button
+                <div
                   key={project.id}
-                  type="button"
-                  onClick={() => setSelectedProjectId(project.id)}
-                  className={`w-full rounded border p-3 text-left transition hover:border-primary/40 ${selectedProjectId === project.id ? 'border-primary bg-primary/5' : 'border-border'}`}
+                  className={`w-full overflow-hidden rounded border transition hover:border-primary/40 ${selectedProjectId === project.id ? 'border-primary bg-primary/5' : 'border-border'}`}
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="font-medium text-foreground line-clamp-1">{project.name}</p>
-                    <Badge variant="secondary" className="capitalize">{project.status}</Badge>
-                  </div>
-                  {project.project_source ? <p className="mt-1 text-xs text-muted-foreground capitalize">Project source(from): {project.project_source.replace('_', ' ')}</p> : null}
-                  {project.main_stack ? <p className="mt-1 text-xs text-primary/90 capitalize">Stack: {project.main_stack.replace('_', ' ')}</p> : null}
-                  <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{project.description || 'No description'}</p>
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {(project.tags_csv || '').split(',').map((t) => t.trim()).filter(Boolean).slice(0, 3).map((tag) => (
-                      <Badge key={tag} variant="outline" className="text-[10px]">{tag}</Badge>
-                    ))}
-                  </div>
-                  <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
-                    <span>{projectClientLabel(project)}</span>
-                    <span>{project.deadline ? new Date(project.deadline).toLocaleDateString() : 'No deadline'}</span>
-                  </div>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedProjectId(project.id)}
+                    className="w-full p-3 text-left"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="font-medium text-foreground line-clamp-1">{project.name}</p>
+                      <Badge variant="secondary" className="capitalize">{project.status}</Badge>
+                    </div>
+                    {project.project_source ? <p className="mt-1 text-xs text-muted-foreground capitalize">Project source(from): {project.project_source.replace('_', ' ')}</p> : null}
+                    {project.main_stack ? <p className="mt-1 text-xs text-primary/90 capitalize">Stack: {project.main_stack.replace('_', ' ')}</p> : null}
+                    <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{project.description || 'No description'}</p>
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {(project.tags_csv || '').split(',').map((t) => t.trim()).filter(Boolean).slice(0, 3).map((tag) => (
+                        <Badge key={tag} variant="outline" className="text-[10px]">{tag}</Badge>
+                      ))}
+                    </div>
+                    <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
+                      <span>{projectClientLabel(project)}</span>
+                      <span>{project.deadline ? new Date(project.deadline).toLocaleDateString() : 'No deadline'}</span>
+                    </div>
+                  </button>
+                  {project.client_id ? (
+                    <div className="border-t border-border bg-muted/25 px-3 py-1.5">
+                      <Link
+                        to={`/admin/clients?client=${project.client_id}`}
+                        className="text-xs font-medium text-primary hover:underline"
+                      >
+                        Open linked client in Clients
+                      </Link>
+                    </div>
+                  ) : null}
+                </div>
               ))}
               {displayProjects.length === 0 && <p className="text-sm text-muted-foreground">No projects found.</p>}
             </CardContent>
@@ -581,7 +669,10 @@ export default function AdminProjects() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <CardTitle className="text-xl">{selectedProject.name}</CardTitle>
-                    <p className="text-sm text-muted-foreground mt-1">{selectedProject.description || 'No description added.'}</p>
+                    <div className="mt-1 flex items-start justify-between gap-2">
+                      <p className="text-sm text-muted-foreground flex-1 min-w-0">{selectedProject.description || 'No description added.'}</p>
+                      <CopyDescriptionButton description={selectedProject.description} />
+                    </div>
                     {selectedProject.main_stack ? <Badge className="mt-2 capitalize">{selectedProject.main_stack.replace('_', ' ')}</Badge> : null}
                     {selectedProject.project_source ? <Badge variant="outline" className="mt-2 ml-2 capitalize">Project source(from): {selectedProject.project_source.replace('_', ' ')}</Badge> : null}
                   </div>
@@ -609,7 +700,21 @@ export default function AdminProjects() {
 
                   <TabsContent value="overview" className="space-y-4">
                     <div className="grid gap-3 sm:grid-cols-2">
-                      <InfoCard icon={FolderKanban} title="Client" value={projectClientLabel(selectedProject)} />
+                      <InfoCard
+                        icon={FolderKanban}
+                        title="Client"
+                        value={projectClientLabel(selectedProject)}
+                        action={
+                          selectedProject.client_id ? (
+                            <Link
+                              to={`/admin/clients?client=${selectedProject.client_id}`}
+                              className="mt-2 inline-flex text-xs font-medium text-primary hover:underline"
+                            >
+                              Open in Clients
+                            </Link>
+                          ) : undefined
+                        }
+                      />
                       <InfoCard icon={Link2} title="Account" value={projectAccountLabel(selectedProject)} />
                       <InfoCard icon={Clock} title="Deadline" value={selectedProject.deadline ? new Date(selectedProject.deadline).toLocaleString() : 'Not set'} />
                       <InfoCard icon={Calendar} title="Budget" value={selectedProject.budget_amount ? `${selectedProject.currency} ${selectedProject.budget_amount} (${selectedProject.budget_type})` : 'Not set'} />
@@ -619,9 +724,17 @@ export default function AdminProjects() {
                       <div className="flex flex-wrap gap-1.5">{(selectedProject.skillset_csv || '').split(',').map((s) => s.trim()).filter(Boolean).map((skill) => <Badge key={skill} variant="secondary">{skill}</Badge>)}</div>
                     </div>
                     <div className="grid gap-3 sm:grid-cols-2">
-                      <LinkField label="Source Storage" url={selectedProject.source_storage_url} />
-                      <LinkField label="GitHub" url={selectedProject.github_url} />
-                      <LinkField label="Initial Document" url={selectedProject.initial_document_url} />
+                      <UrlFieldWithCopy label="Source Storage" url={selectedProject.source_storage_url} />
+                      <UrlFieldWithCopy label="GitHub" url={selectedProject.github_url} />
+                      <UrlFieldWithCopy label="Initial Document" url={selectedProject.initial_document_url} />
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-sm font-semibold">Published / live site / app store</p>
+                      <LabeledLinksListWithCopy
+                        title=""
+                        links={parseLabeledLinks(selectedProject.published_links, null, 'Link')}
+                        emptyHint="No published links yet. Click Edit on this project and use the highlighted “Published / live site / app store links” section (under GitHub)."
+                      />
                     </div>
                     <div className="space-y-2">
                       <p className="text-sm font-medium">Source files (from Task promotion)</p>
@@ -724,6 +837,20 @@ export default function AdminProjects() {
                   </TabsContent>
 
                   <TabsContent value="tasks" className="space-y-3">
+                    {selectedProject ? (
+                      <div className="rounded-lg border bg-muted/25 p-3 space-y-2">
+                        <p className="text-sm font-semibold">Project-wide published links</p>
+                        <p className="text-xs text-muted-foreground">
+                          Same links as on the Overview tab. Use per-task links below for URLs that belong to a single task.
+                        </p>
+                        <LabeledLinksListWithCopy
+                          embedded
+                          title=""
+                          links={parseLabeledLinks(selectedProject.published_links, null, 'Link')}
+                          emptyHint="No project-wide links yet. Add them via Edit on this project (highlighted block under GitHub)."
+                        />
+                      </div>
+                    ) : null}
                     <div className="grid gap-2 sm:grid-cols-[1fr_220px_auto]">
                       <Input value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)} placeholder="Task title" />
                       <Select value={newTaskAssignee || 'none'} onValueChange={(v) => setNewTaskAssignee(v === 'none' ? '' : v)}>
@@ -741,12 +868,34 @@ export default function AdminProjects() {
                       {selectedTasks.map((task) => {
                         const assignee = personnel.find((p) => p.id === task.assignee_personnel_id);
                         return (
-                          <div key={task.id} className="rounded border p-3 flex items-center justify-between gap-3">
-                            <div>
+                          <div key={task.id} className="rounded border p-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="min-w-0 flex-1">
                               <p className="font-medium text-sm">{task.title}</p>
                               <p className="text-xs text-muted-foreground">{assignee ? `${assignee.first_name} ${assignee.last_name}` : 'Unassigned'}</p>
+                          <LabeledLinksListWithCopy
+                            embedded
+                            title="Published links (this task)"
+                            links={parseLabeledLinks(task.published_links, null, 'Link')}
+                            emptyHint="No links for this task — click the chain icon to add."
+                          />
                             </div>
                             <div className="flex items-center gap-2">
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="outline"
+                                className="h-8 w-8 shrink-0"
+                                title="Edit published links"
+                                onClick={() =>
+                                  setTaskPublishedEdit({
+                                    id: task.id,
+                                    title: task.title,
+                                    links: parseLabeledLinks(task.published_links, null, 'Link'),
+                                  })
+                                }
+                              >
+                                <Link2 className="h-4 w-4" />
+                              </Button>
                               <Select value={task.status} onValueChange={(v) => updateTaskStatus(task, v)}>
                                 <SelectTrigger className="w-[150px]"><SelectValue /></SelectTrigger>
                                 <SelectContent>
@@ -782,7 +931,13 @@ export default function AdminProjects() {
           <DialogHeader><DialogTitle>{editingId ? 'Edit project' : 'Create project'}</DialogTitle></DialogHeader>
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2 md:col-span-2"><Label>Project name *</Label><Input value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} /></div>
-            <div className="space-y-2 md:col-span-2"><Label>Description</Label><Textarea value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} /></div>
+            <div className="space-y-2 md:col-span-2">
+              <div className="flex items-center justify-between gap-2">
+                <Label>Description</Label>
+                <CopyDescriptionButton description={form.description} />
+              </div>
+              <Textarea value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} />
+            </div>
             <div className="space-y-2">
               <Label>Project source(from)</Label>
               <Input
@@ -812,8 +967,12 @@ export default function AdminProjects() {
               </datalist>
               <p className="text-xs text-muted-foreground">Choose a suggestion or type your own new stack name.</p>
             </div>
-            <div className="space-y-2"><Label>Skillset (comma separated)</Label><Input value={form.skillsetCsv} onChange={(e) => setForm((p) => ({ ...p, skillsetCsv: e.target.value }))} /></div>
-            <div className="space-y-2"><Label>Tags (comma separated)</Label><Input value={form.tagsCsv} onChange={(e) => setForm((p) => ({ ...p, tagsCsv: e.target.value }))} /></div>
+            <div className="space-y-2 md:col-span-2">
+              <TagChipsInput label="Skillset" values={form.skillsetTags} onChange={(next) => setForm((p) => ({ ...p, skillsetTags: next }))} />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <TagChipsInput label="Tags" values={form.tagsTags} onChange={(next) => setForm((p) => ({ ...p, tagsTags: next }))} />
+            </div>
 
             <div className="space-y-2"><Label>Status</Label><Select value={form.status} onValueChange={(v) => setForm((p) => ({ ...p, status: v }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{STATUS_OPTIONS.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></div>
             <div className="space-y-2"><Label>Priority</Label><Select value={form.priority} onValueChange={(v) => setForm((p) => ({ ...p, priority: v }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{PRIORITY_OPTIONS.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></div>
@@ -850,6 +1009,17 @@ export default function AdminProjects() {
 
             <div className="space-y-2"><Label>Currency</Label><Input value={form.currency} onChange={(e) => setForm((p) => ({ ...p, currency: e.target.value }))} /></div>
             <div className="space-y-2"><Label>GitHub link</Label><Input value={form.githubUrl} onChange={(e) => setForm((p) => ({ ...p, githubUrl: e.target.value }))} placeholder="https://github.com/..." /></div>
+            <div className="space-y-2 md:col-span-2 rounded-md border border-primary/20 bg-primary/5 p-3">
+              <Label>Published / live site / app store links</Label>
+              <p className="text-xs text-muted-foreground mt-1">Website, Google Play, App Store, etc. (optional)</p>
+              <div className="mt-2">
+                <LabeledLinksEditor
+                  links={form.publishedLinks}
+                  onChange={(links) => setForm((p) => ({ ...p, publishedLinks: links }))}
+                  newRowLabel="Link"
+                />
+              </div>
+            </div>
 
             <div className="space-y-2"><Label>Source storage type</Label><Select value={form.sourceStorageType} onValueChange={(v) => setForm((p) => ({ ...p, sourceStorageType: v }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{SOURCE_STORAGE_PROVIDER_OPTIONS.map((provider) => <SelectItem key={provider} value={provider}>{provider}</SelectItem>)}</SelectContent></Select></div>
             <div className="space-y-2"><Label>Source storage URL *</Label><Input value={form.sourceStorageUrl} onChange={(e) => setForm((p) => ({ ...p, sourceStorageUrl: e.target.value }))} placeholder="Drive folder link" /></div>
@@ -944,6 +1114,32 @@ export default function AdminProjects() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={!!taskPublishedEdit} onOpenChange={(open) => !open && setTaskPublishedEdit(null)}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-auto">
+          <DialogHeader>
+            <DialogTitle>Published links — {taskPublishedEdit?.title}</DialogTitle>
+          </DialogHeader>
+          {taskPublishedEdit ? (
+            <>
+              <p className="text-xs text-muted-foreground">Website, app store listings, or other public URLs.</p>
+              <LabeledLinksEditor
+                links={taskPublishedEdit.links}
+                onChange={(links) => setTaskPublishedEdit((prev) => (prev ? { ...prev, links } : prev))}
+                newRowLabel="Link"
+              />
+              <div className="flex justify-end gap-2 pt-2">
+                <Button type="button" variant="outline" onClick={() => setTaskPublishedEdit(null)}>
+                  Cancel
+                </Button>
+                <Button type="button" onClick={saveTaskPublishedLinks} disabled={savingTaskLinks}>
+                  {savingTaskLinks ? 'Saving…' : 'Save'}
+                </Button>
+              </div>
+            </>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
       <AlertDialog open={!!pendingDelete} onOpenChange={(open) => !open && setPendingDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -982,25 +1178,22 @@ export default function AdminProjects() {
   );
 }
 
-function InfoCard({ icon: Icon, title, value }: { icon: React.ElementType; title: string; value: string }) {
+function InfoCard({
+  icon: Icon,
+  title,
+  value,
+  action,
+}: {
+  icon: React.ElementType;
+  title: string;
+  value: string;
+  action?: React.ReactNode;
+}) {
   return (
     <div className="rounded border p-3 bg-muted/20">
       <p className="text-xs text-muted-foreground flex items-center gap-1"><Icon className="h-3.5 w-3.5" />{title}</p>
       <p className="text-sm font-medium text-foreground mt-1">{value}</p>
+      {action}
     </div>
   );
 }
-
-function LinkField({ label, url }: { label: string; url: string | null }) {
-  return (
-    <div className="rounded border p-3 bg-muted/20">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      {url ? (
-        <a href={url} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline break-all">{url}</a>
-      ) : (
-        <p className="text-sm text-muted-foreground">N/A</p>
-      )}
-    </div>
-  );
-}
-
