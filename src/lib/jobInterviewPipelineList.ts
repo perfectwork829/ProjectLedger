@@ -91,3 +91,20 @@ export function passesActivePipelineSlotClock(
   if (c.stepType === 'done') return false;
   return c.instant.getTime() >= nowMs;
 }
+
+/**
+ * If the row is still `scheduled` / `in_progress` but the pipeline says otherwise, return the status to persist.
+ * — All stages completed → `completed` (no longer "open").
+ * — Next open step's clock is in the past → `failed`.
+ */
+export function deriveStaleJobInterviewStatusFix(
+  interview: { scheduled_at: string; interview_timezone: string; status: string },
+  stages: JobInterviewStageRow[] | undefined,
+  nowMs: number = Date.now(),
+): 'failed' | 'completed' | null {
+  if (interview.status !== 'scheduled' && interview.status !== 'in_progress') return null;
+  const c = getPipelineListCursor(stages, interview);
+  if (c.stepType === 'done') return 'completed';
+  if (c.instant.getTime() < nowMs) return 'failed';
+  return null;
+}

@@ -31,7 +31,7 @@ import {
   jobInterviewRowsMatchingSearch,
 } from '@/lib/jobInterviews';
 import type { JobInterviewStageRow } from '@/lib/jobInterviewStages';
-import { passesActivePipelineSlotClock } from '@/lib/jobInterviewPipelineList';
+import { passesActivePipelineSlotClock, deriveStaleJobInterviewStatusFix } from '@/lib/jobInterviewPipelineList';
 import { seedInitialRecruiterStage } from '@/lib/jobInterviewSeed';
 
 const JOB_SOURCES = [
@@ -128,10 +128,13 @@ export default function AdminJobInterviews() {
     ]);
     if (pErr) toast({ title: 'Failed to load personnel', description: pErr.message, variant: 'destructive' });
     else setPersonnel((pData || []) as PersonnelMini[]);
-    if (iErr) toast({ title: 'Failed to load interviews', description: iErr.message, variant: 'destructive' });
-    else {
-      const list = (iData || []) as JobInterviewRow[];
-      setRows(list);
+    if (iErr) {
+      toast({ title: 'Failed to load interviews', description: iErr.message, variant: 'destructive' });
+      setRows([]);
+      setStagesByInterview({});
+    } else {
+      let list = (iData || []) as JobInterviewRow[];
+      const by: Record<string, JobInterviewStageRow[]> = {};
       if (list.length) {
         const ids = list.map((r) => r.id);
         const { data: stData, error: stErr } = await supabase
@@ -139,19 +142,33 @@ export default function AdminJobInterviews() {
           .select('*')
           .in('interview_id', ids)
           .order('sort_order', { ascending: true });
-        if (stErr) {
-          setStagesByInterview({});
-        } else {
-          const by: Record<string, JobInterviewStageRow[]> = {};
-          for (const s of (stData || []) as JobInterviewStageRow[]) {
+        if (!stErr && stData) {
+          for (const s of stData as JobInterviewStageRow[]) {
             if (!by[s.interview_id]) by[s.interview_id] = [];
             by[s.interview_id].push(s);
           }
-          setStagesByInterview(by);
         }
-      } else {
-        setStagesByInterview({});
       }
+
+      const upd = new Date().toISOString();
+      const updates = list
+        .map((r) => {
+          const next = deriveStaleJobInterviewStatusFix(r, by[r.id]);
+          return next ? supabase.from('job_interviews').update({ status: next, updated_at: upd }).eq('id', r.id) : null;
+        })
+        .filter((p): p is NonNullable<typeof p> => p != null);
+
+      if (updates.length) {
+        const results = await Promise.all(updates);
+        const anyOk = results.some((r) => !r.error);
+        if (anyOk) {
+          const { data: refData } = await supabase.from('job_interviews').select('*').order('scheduled_at', { ascending: true });
+          if (refData) list = refData as JobInterviewRow[];
+        }
+      }
+
+      setRows(list);
+      setStagesByInterview(by);
     }
     setLoading(false);
   }, [toast]);
