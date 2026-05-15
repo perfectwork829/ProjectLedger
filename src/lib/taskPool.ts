@@ -100,6 +100,8 @@ export interface TaskPoolItemRecord {
   hourly_rate: number | null;
   weekly_hours_cap: number | null;
   hourly_last_ack_week_monday: string | null;
+  /** Hours confirmed for the week ending at `hourly_last_ack_week_monday` (Mon of that week). */
+  hourly_last_billable_hours: number | null;
   github_links: unknown;
   source_storage_urls: unknown;
   initial_document_urls: unknown;
@@ -338,6 +340,11 @@ export function needsHourlyWeekAck(row: TaskPoolItemRecord, now = new Date()): b
 
 export function taskPoolNeedsAccrualAck(row: TaskPoolItemRecord, now = new Date()): boolean {
   return needsRecurringPaymentAck(row, now) || needsHourlyWeekAck(row, now);
+}
+
+/** Last JST week was confirmed; allow correcting hours/fees for that accrual. */
+export function canEditLastHourlyAccrual(row: TaskPoolItemRecord): boolean {
+  return row.budget_type === 'hourly' && !!row.hourly_last_ack_week_monday;
 }
 
 /** DB RPC (SECURITY DEFINER): copies into `projects` and links `promoted_project_id`. Safe if already promoted. */

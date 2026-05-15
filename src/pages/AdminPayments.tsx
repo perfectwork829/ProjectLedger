@@ -20,7 +20,8 @@ import {
   type UnifiedPaymentRow,
   type TaskFinanceRow,
 } from '@/lib/payments';
-import { DollarSign, Plus, Trash2 } from 'lucide-react';
+import { DollarSign, Pencil, Plus, Trash2 } from 'lucide-react';
+import TaskAutoPaymentEditDialog from '@/components/TaskAutoPaymentEditDialog';
 
 const OUTGOING_CATEGORIES = [
   'Base fee',
@@ -55,6 +56,7 @@ export default function AdminPayments() {
   const [currency, setCurrency] = useState('USD');
   const [occurredAt, setOccurredAt] = useState(new Date().toISOString().slice(0, 16));
   const [note, setNote] = useState('');
+  const [editingTaskPayment, setEditingTaskPayment] = useState<PaymentEntryRecord | null>(null);
 
   const fetchAll = async () => {
     setLoading(true);
@@ -139,6 +141,13 @@ export default function AdminPayments() {
     fetchAll();
   };
 
+  const entryById = useMemo(() => Object.fromEntries(manualEntries.map((e) => [e.id, e])), [manualEntries]);
+
+  const openTaskPaymentEdit = (rowId: string) => {
+    const e = entryById[rowId];
+    if (e?.source_kind === 'task_auto' && e.pool_item_id) setEditingTaskPayment(e);
+  };
+
   const deleteManual = async (id: string) => {
     const res = await supabase.from('payment_entries').delete().eq('id', id);
     if (res.error) {
@@ -162,7 +171,9 @@ export default function AdminPayments() {
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-semibold tracking-tight text-foreground">Payments</h2>
-        <p className="text-sm text-muted-foreground">Manage incoming and outgoing cashflow per period (25th to 25th).</p>
+        <p className="text-sm text-muted-foreground">
+          Manage incoming and outgoing cashflow per period (25th to 25th). Task-linked payments (from confirmed accruals) can be edited to adjust hours, gross, fees, and net — the task withdrawn total stays in sync.
+        </p>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3">
@@ -286,11 +297,24 @@ export default function AdminPayments() {
                       <td className="px-3 py-2">{r.source_kind}</td>
                       <td className="px-3 py-2 text-muted-foreground">{r.note || '-'}</td>
                       <td className="px-3 py-2 text-right">
-                        {r.source_kind === 'manual' ? (
-                          <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => deleteManual(r.id)}>
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        ) : null}
+                        <div className="flex justify-end gap-1">
+                          {r.source_kind === 'task_auto' && entryById[r.id]?.pool_item_id ? (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7"
+                              title="Edit task payment"
+                              onClick={() => openTaskPaymentEdit(r.id)}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                          ) : null}
+                          {r.source_kind === 'manual' ? (
+                            <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => deleteManual(r.id)}>
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          ) : null}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -312,6 +336,11 @@ export default function AdminPayments() {
                   <p className={r.entry_type === 'incoming' ? 'shrink-0 text-sm text-emerald-600' : 'shrink-0 text-sm text-red-600'}>
                     {r.currency} {r.amount.toFixed(2)}
                   </p>
+                  {r.source_kind === 'task_auto' && entryById[r.id]?.pool_item_id ? (
+                    <Button size="icon" variant="ghost" className="h-7 w-7" title="Edit" onClick={() => openTaskPaymentEdit(r.id)}>
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                  ) : null}
                   {r.source_kind === 'manual' ? (
                     <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => deleteManual(r.id)}>
                       <Trash2 className="h-4 w-4" />
@@ -333,6 +362,11 @@ export default function AdminPayments() {
                 </div>
                 <div className="flex items-center gap-2">
                   <Badge variant={r.entry_type === 'incoming' ? 'default' : 'secondary'}>{r.entry_type}</Badge>
+                  {r.source_kind === 'task_auto' && entryById[r.id]?.pool_item_id ? (
+                    <Button size="icon" variant="ghost" className="h-7 w-7" title="Edit" onClick={() => openTaskPaymentEdit(r.id)}>
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                  ) : null}
                   {r.source_kind === 'manual' ? (
                     <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => deleteManual(r.id)}>
                       <Trash2 className="h-4 w-4" />
@@ -358,17 +392,31 @@ export default function AdminPayments() {
                   {r.currency} {r.amount.toFixed(2)}
                 </p>
                 <p className="line-clamp-2 text-xs text-muted-foreground">{r.note || '-'}</p>
-                {r.source_kind === 'manual' ? (
-                  <Button size="sm" variant="ghost" className="h-8 gap-2 px-2 text-destructive" onClick={() => deleteManual(r.id)}>
-                    <Trash2 className="h-4 w-4" />
-                    Delete
-                  </Button>
-                ) : null}
+                <div className="flex flex-wrap gap-2">
+                  {r.source_kind === 'task_auto' && entryById[r.id]?.pool_item_id ? (
+                    <Button size="sm" variant="outline" className="h-8 gap-2 px-2" onClick={() => openTaskPaymentEdit(r.id)}>
+                      <Pencil className="h-4 w-4" />
+                      Edit
+                    </Button>
+                  ) : null}
+                  {r.source_kind === 'manual' ? (
+                    <Button size="sm" variant="ghost" className="h-8 gap-2 px-2 text-destructive" onClick={() => deleteManual(r.id)}>
+                      <Trash2 className="h-4 w-4" />
+                      Delete
+                    </Button>
+                  ) : null}
+                </div>
               </CardContent>
             </Card>
           ))}
         </div>
       )}
+
+      <TaskAutoPaymentEditDialog
+        entry={editingTaskPayment}
+        onClose={() => setEditingTaskPayment(null)}
+        onSaved={() => void fetchAll()}
+      />
     </div>
   );
 }

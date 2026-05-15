@@ -56,6 +56,7 @@ import {
   poolSubtaskBoardLabel,
   taskPoolItemStatusLabel,
   taskPoolFixedMode,
+  canEditLastHourlyAccrual,
   type PoolSubtaskStatus,
   TaskPoolItemRecord,
   TaskPoolScreenshot,
@@ -64,11 +65,16 @@ import {
 } from '@/lib/taskPool';
 import {
   calcWithdrawnAmount,
+  computeTaskPoolWithdrawnOnSave,
+  computeTaskPoolWithdrawnPreview,
   getLastPeriodBounds,
   getPeriodBoundsForDate,
   getWeekBounds,
   isWithinRange,
+  parseHourlyHoursFromAccrualNote,
   summarizeTaskPool,
+  taskPoolFeesFromNumbers,
+  type TaskAutoPaymentSlice,
   type TaskPoolListFilter,
 } from '@/lib/taskPoolFinance';
 import { SOURCE_STORAGE_PROVIDER_OPTIONS } from '@/lib/projects';
@@ -226,26 +232,41 @@ export default function AdminTaskPool() {
   const [subtaskDetailId, setSubtaskDetailId] = useState<string | null>(null);
   const [accrualDialog, setAccrualDialog] = useState<null | {
     row: TaskPoolItemRecord;
-    kind: 'project' | 'recurring' | 'hourly' | 'milestone';
+    kind: 'project' | 'recurring' | 'hourly' | 'hourly-edit' | 'milestone';
     milestoneId?: string;
+    /** When editing last hourly week, the linked incoming payment row. */
+    hourlyPaymentEntryId?: string;
   }>(null);
   const [accrualHours, setAccrualHours] = useState('');
+  const [editTaskAutoPayments, setEditTaskAutoPayments] = useState<TaskAutoPaymentSlice[]>([]);
+
+  const formFees = useMemo(
+    () =>
+      taskPoolFeesFromNumbers({
+        upwork_connection_fee: form.upworkConnectionFee ? Number(form.upworkConnectionFee) : 0,
+        convert_fee: form.convertFee ? Number(form.convertFee) : 0,
+        transfer_fee: form.transferFee ? Number(form.transferFee) : 0,
+        upwork_fee: form.upworkFee ? Number(form.upworkFee) : 0,
+        withdraw_fee: form.withdrawFee ? Number(form.withdrawFee) : 0,
+      }),
+    [form.upworkConnectionFee, form.convertFee, form.transferFee, form.upworkFee, form.withdrawFee],
+  );
 
   const withdrawnPreview = useMemo(() => {
-    if (form.budgetType === 'fixed' && (form.fixedBudgetMode === 'project' || form.fixedBudgetMode === 'milestone')) {
-      if (!editingId) return 0;
-      const row = items.find((i) => i.id === editingId);
-      return Number(row?.withdrawn_amount ?? 0);
-    }
-    const accrualForm =
-      form.budgetType === 'hourly' || (form.budgetType === 'fixed' && form.fixedBudgetMode === 'recurring');
-    if (!accrualForm) return 0;
-    if (!editingId) return 0;
-    const row = items.find((i) => i.id === editingId);
-    if (!row) return 0;
-    if (!taskUsesAccrualPayments(row)) return 0;
-    return Number(row.withdrawn_amount ?? 0);
-  }, [form, editingId, items]);
+    const existing = editingId ? items.find((i) => i.id === editingId) : undefined;
+    return computeTaskPoolWithdrawnPreview(
+      {
+        budgetType: form.budgetType,
+        fixedBudgetMode: form.fixedBudgetMode,
+        budgetAmount: form.budgetAmount,
+        milestones: form.milestones,
+        hourlyRate: form.hourlyRate,
+      },
+      formFees,
+      existing,
+      editTaskAutoPayments,
+    );
+  }, [form, editingId, items, formFees, editTaskAutoPayments]);
 
   const hasPendingProjectPayment = (row: TaskPoolItemRecord): boolean => {
     if (row.budget_type !== 'fixed' || taskPoolFixedMode(row) !== 'project') return false;
@@ -534,6 +555,7 @@ export default function AdminTaskPool() {
 
   const openCreate = () => {
     setEditingId(null);
+    setEditTaskAutoPayments([]);
     setForm({
       ...emptyForm,
       sourceStorageLinks: [{ label: 'Storage', url: '' }],
@@ -541,8 +563,27 @@ export default function AdminTaskPool() {
     setDialogOpen(true);
   };
 
+  const loadTaskAutoPaymentsForEdit = async (poolId: string) => {
+    const { data } = await supabase
+      .from('payment_entries')
+      .select('id, amount, note, category')
+      .eq('pool_item_id', poolId)
+      .eq('entry_type', 'incoming')
+      .eq('source_kind', 'task_auto')
+      .order('occurred_at', { ascending: true });
+    setEditTaskAutoPayments(
+      (data || []).map((p) => ({
+        id: p.id,
+        amount: Number(p.amount ?? 0),
+        note: p.note,
+        category: String(p.category || ''),
+      })),
+    );
+  };
+
   const openEdit = (row: TaskPoolItemRecord) => {
     setEditingId(row.id);
+    void loadTaskAutoPaymentsForEdit(row.id);
     const gh = parseLabeledLinks(row.github_links, row.github_url, 'GitHub');
     const st = parseLabeledLinks(row.source_storage_urls, row.source_storage_url, 'Storage');
     const doc = parseLabeledLinks(row.initial_document_urls, row.initial_document_url, 'Document');
@@ -677,27 +718,48 @@ export default function AdminTaskPool() {
     const isAccrualForm =
       form.budgetType === 'hourly' || (form.budgetType === 'fixed' && form.fixedBudgetMode === 'recurring');
 
-    let withdrawn_amount = 0;
-    if (form.budgetType === 'fixed' && form.fixedBudgetMode === 'project') {
-      const wasProjectFixed = existing?.budget_type === 'fixed' && taskPoolFixedMode(existing) === 'project';
-      withdrawn_amount = wasProjectFixed ? Number(existing?.withdrawn_amount ?? 0) : 0;
-    } else if (form.budgetType === 'fixed' && form.fixedBudgetMode === 'milestone') {
-      const wasMilestone = existing?.budget_type === 'fixed' && taskPoolFixedMode(existing) === 'milestone';
-      if (!existing) withdrawn_amount = 0;
-      else if (!wasMilestone) withdrawn_amount = 0;
-      else withdrawn_amount = Number(existing.withdrawn_amount ?? 0);
-    } else if (isAccrualForm) {
-      const wasAccrual = existing ? taskUsesAccrualPayments(existing) : false;
-      if (!existing) {
-        withdrawn_amount = 0;
-      } else if (!wasAccrual) {
-        // Switched from one-shot fixed (or any non-accrual) to installment/hourly: do not carry over full-project net.
-        withdrawn_amount = 0;
-      } else {
-        withdrawn_amount = Number(existing.withdrawn_amount ?? 0);
-      }
-    } else if (existing) {
-      withdrawn_amount = Number(existing.withdrawn_amount ?? 0);
+    let hourlyPaymentSlices: { id: string; amount: number; note: string | null }[] | undefined;
+    if (form.budgetType === 'hourly' && editingId) {
+      const { data: payRows } = await supabase
+        .from('payment_entries')
+        .select('id, amount, note, category')
+        .eq('pool_item_id', editingId)
+        .eq('entry_type', 'incoming')
+        .eq('source_kind', 'task_auto');
+      hourlyPaymentSlices = (payRows || [])
+        .filter((p) => String(p.category || '').includes('hourly'))
+        .map((p) => ({ id: p.id, amount: Number(p.amount ?? 0), note: p.note }));
+    }
+
+    let withdrawn_amount = computeTaskPoolWithdrawnOnSave(
+      {
+        budgetType: form.budgetType,
+        fixedBudgetMode: form.fixedBudgetMode,
+        budgetAmount: form.budgetAmount,
+        milestones: form.milestones,
+        hourlyRate: form.hourlyRate,
+      },
+      {
+        upworkConnectionFee,
+        convertFee,
+        transferFee,
+        upworkFee,
+        withdrawFee,
+      },
+      existing ?? null,
+      milestoneRowsForSave,
+      hourlyPaymentSlices,
+    );
+
+    if (!existing && withdrawn_amount === 0) {
+      /* new row — keep 0 */
+    } else if (
+      isAccrualForm &&
+      existing &&
+      !taskUsesAccrualPayments(existing) &&
+      (form.budgetType === 'hourly' || form.fixedBudgetMode === 'recurring')
+    ) {
+      withdrawn_amount = 0;
     }
 
     const resolvedBudgetAmount =
@@ -801,11 +863,58 @@ export default function AdminTaskPool() {
       );
     }
 
+    if (form.budgetType === 'hourly' && editingId && hourlyPaymentSlices && hourlyPaymentSlices.length > 0) {
+      const rate = form.hourlyRate ? Number(form.hourlyRate) : Number(existing?.hourly_rate ?? 0);
+      for (const slice of hourlyPaymentSlices) {
+        const hours = parseHourlyHoursFromAccrualNote(slice.note);
+        if (hours == null || hours <= 0) continue;
+        const gross = hours * rate;
+        const net = calcWithdrawnAmount({
+          budgetAmount: gross,
+          upworkConnectionFee,
+          convertFee,
+          transferFee,
+          upworkFee,
+          withdrawFee,
+        });
+        if (Math.abs(net - slice.amount) > 0.0001) {
+          await supabase
+            .from('payment_entries')
+            .update({ amount: net, updated_at: new Date().toISOString() })
+            .eq('id', slice.id);
+        }
+      }
+    }
+
     setSaving(false);
     setDialogOpen(false);
     toast({ title: editingId ? 'Task updated' : 'Task created' });
     await refreshTaskPoolDataQuiet();
     await promoteIfNeeded(poolId, form.status);
+  };
+
+  const openEditLastHourlyAccrual = async (row: TaskPoolItemRecord) => {
+    const hoursDefault =
+      row.hourly_last_billable_hours != null
+        ? String(row.hourly_last_billable_hours)
+        : String(row.weekly_hours_cap ?? 40);
+    const { data: payRow } = await supabase
+      .from('payment_entries')
+      .select('id, note')
+      .eq('pool_item_id', row.id)
+      .eq('entry_type', 'incoming')
+      .eq('source_kind', 'task_auto')
+      .ilike('category', '%hourly%')
+      .order('occurred_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const parsed = payRow?.note ? parseHourlyHoursFromAccrualNote(payRow.note) : null;
+    setAccrualHours(parsed != null ? String(parsed) : hoursDefault);
+    setAccrualDialog({
+      row,
+      kind: 'hourly-edit',
+      hourlyPaymentEntryId: payRow?.id,
+    });
   };
 
   const submitAccrualConfirm = async () => {
@@ -877,6 +986,66 @@ export default function AdminTaskPool() {
       }
       noteExtra = `Fixed milestone · ${m.title}`;
       milestonesJsonPatch = ms.map((x) => (x.id === mid ? { ...x, confirmed_at: new Date().toISOString() } : x));
+    } else if (accrualDialog.kind === 'hourly-edit') {
+      const entryId = accrualDialog.hourlyPaymentEntryId;
+      if (!entryId) {
+        toast({ title: 'No hourly payment to edit', description: 'Could not find the linked payment entry.', variant: 'destructive' });
+        return;
+      }
+      const cap = Number(row.weekly_hours_cap ?? 40);
+      const hours = Math.min(Math.max(Number(accrualHours || 0), 0), cap);
+      const gross = hours * Number(row.hourly_rate ?? 0);
+      net = calcWithdrawnAmount({ budgetAmount: gross, ...fees });
+      const weekMon = row.hourly_last_ack_week_monday;
+      const weekLabel = weekMon ? addDaysToJstYmd(weekMon, 6) : formatJstYmd(new Date());
+      noteExtra = `Hourly (JST Mon–Sun) · ${hours}h × ${row.hourly_rate} · week ending ${weekLabel}`;
+
+      if (net <= 0) {
+        toast({ title: 'Net accrual is zero', description: 'Check hours and fees.', variant: 'destructive' });
+        return;
+      }
+
+      const { data: payRow, error: payFetchErr } = await supabase.from('payment_entries').select('amount').eq('id', entryId).single();
+      if (payFetchErr) {
+        toast({ title: 'Could not load payment', description: payFetchErr.message, variant: 'destructive' });
+        return;
+      }
+      const oldNet = Number(payRow?.amount ?? 0);
+      const newWithdrawn = Number(row.withdrawn_amount ?? 0) - oldNet + net;
+
+      const payUpd = await supabase
+        .from('payment_entries')
+        .update({
+          amount: net,
+          note: `${row.name} — ${noteExtra}`,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', entryId);
+      if (payUpd.error) {
+        toast({ title: 'Payment update failed', description: payUpd.error.message, variant: 'destructive' });
+        return;
+      }
+
+      const upd = await supabase
+        .from('task_pool_items')
+        .update({
+          withdrawn_amount: newWithdrawn,
+          hourly_last_billable_hours: hours,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', row.id)
+        .select('*')
+        .single();
+
+      if (upd.error || !upd.data) {
+        toast({ title: 'Task update failed', description: upd.error?.message, variant: 'destructive' });
+        return;
+      }
+
+      setAccrualDialog(null);
+      toast({ title: 'Hourly payment updated', description: `Withdrawn is now ${row.currency} ${newWithdrawn.toFixed(2)}.` });
+      setItems((prev) => prev.map((x) => (x.id === row.id ? (upd.data as TaskPoolItemRecord) : x)));
+      return;
     } else {
       const cap = Number(row.weekly_hours_cap ?? 40);
       const hours = Math.min(Math.max(Number(accrualHours || 0), 0), cap);
@@ -892,6 +1061,7 @@ export default function AdminTaskPool() {
     }
 
     const newWithdrawn = Number(row.withdrawn_amount ?? 0) + net;
+    const hourlyBillableHours = accrualDialog.kind === 'hourly' ? Math.min(Math.max(Number(accrualHours || 0), 0), Number(row.weekly_hours_cap ?? 40)) : null;
 
     const payRes = await supabase.from('payment_entries').insert({
       user_id: user.id,
@@ -923,6 +1093,9 @@ export default function AdminTaskPool() {
         withdrawn_amount: newWithdrawn,
         next_payment_due_at: accrualDialog.kind === 'recurring' ? nextDue : row.next_payment_due_at,
         hourly_last_ack_week_monday: accrualDialog.kind === 'hourly' ? hourlyAck : row.hourly_last_ack_week_monday,
+        ...(accrualDialog.kind === 'hourly' && hourlyBillableHours != null
+          ? { hourly_last_billable_hours: hourlyBillableHours }
+          : {}),
         ...(milestonesJsonPatch ? { milestones_json: milestonesJsonPatch } : {}),
         updated_at: new Date().toISOString(),
       })
@@ -1635,6 +1808,17 @@ export default function AdminTaskPool() {
                         {taskPoolFixedMode(selected) === 'milestone' ? 'Confirm next milestone' : 'Confirm accrual'}
                       </Button>
                     ) : null}
+                    {canEditLastHourlyAccrual(selected) ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="gap-1"
+                        onClick={() => void openEditLastHourlyAccrual(selected)}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                        Edit last week payment
+                      </Button>
+                    ) : null}
                     <Button size="sm" variant="outline" className="gap-1" onClick={() => openEdit(selected)}>
                       <Pencil className="h-3.5 w-3.5" />
                       Edit
@@ -2132,7 +2316,9 @@ export default function AdminTaskPool() {
       <AlertDialog open={!!accrualDialog} onOpenChange={(open) => !open && setAccrualDialog(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Confirm you received this payment?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {accrualDialog?.kind === 'hourly-edit' ? 'Edit last week hourly payment' : 'Confirm you received this payment?'}
+            </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-3 text-sm text-muted-foreground">
                 <p>
@@ -2168,10 +2354,18 @@ export default function AdminTaskPool() {
                     })()}
                   </p>
                 ) : null}
-                {accrualDialog?.kind === 'hourly' ? (
+                {accrualDialog?.kind === 'hourly' || accrualDialog?.kind === 'hourly-edit' ? (
                   <div className="space-y-2">
-                    <Label>Billable hours this week (max {accrualDialog.row.weekly_hours_cap ?? 40})</Label>
+                    <Label>
+                      Billable hours{accrualDialog.kind === 'hourly-edit' ? ' (last confirmed week)' : ' this week'} (max{' '}
+                      {accrualDialog.row.weekly_hours_cap ?? 40})
+                    </Label>
                     <Input type="number" value={accrualHours} onChange={(e) => setAccrualHours(e.target.value)} min={0} />
+                    {accrualDialog.kind === 'hourly-edit' ? (
+                      <p className="text-xs text-muted-foreground">
+                        Updates withdrawn and the linked incoming payment using current fee fields on this task.
+                      </p>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
@@ -2179,12 +2373,20 @@ export default function AdminTaskPool() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void submitAccrualConfirm()}>Yes, payment received</AlertDialogAction>
+            <AlertDialogAction onClick={() => void submitAccrualConfirm()}>
+              {accrualDialog?.kind === 'hourly-edit' ? 'Save changes' : 'Yes, payment received'}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <Dialog
+        open={dialogOpen}
+        onOpenChange={(open) => {
+          setDialogOpen(open);
+          if (!open) setEditTaskAutoPayments([]);
+        }}
+      >
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-auto">
           <DialogHeader>
             <DialogTitle>{editingId ? 'Edit task pool item' : 'Create task pool item'}</DialogTitle>
@@ -2584,10 +2786,12 @@ export default function AdminTaskPool() {
               <Input value={`${form.currency || 'USD'} ${withdrawnPreview.toFixed(2)}`} readOnly />
               <p className="text-xs text-muted-foreground">
                 {form.budgetType === 'fixed' && form.fixedBudgetMode === 'project'
-                  ? 'Project fixed: withdrawn stays unchanged until you confirm payment receipt.'
+                  ? 'Project fixed: preview is net after fees for the full contract; saved on confirm.'
                   : form.budgetType === 'fixed' && form.fixedBudgetMode === 'milestone'
-                    ? 'Milestone fixed: withdrawn increases when you confirm each milestone; fees apply per milestone payment.'
-                    : 'Accrual (recurring or hourly): total only goes up when you confirm each period; fees below apply to each accrual slice.'}
+                    ? 'Milestone: preview sums confirmed milestones after fees.'
+                    : form.budgetType === 'hourly'
+                      ? 'Hourly: preview recalculates all confirmed weekly payments using the fees and rate above (updates as you type).'
+                      : 'Recurring: preview sums each confirmed installment after fees.'}
               </p>
             </div>
             <div className="space-y-2 md:col-span-2">
