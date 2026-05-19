@@ -104,6 +104,7 @@ export interface AccountRef {
   username: string;
   country: string | null;
   timezone: string | null;
+  badge_status?: string | null;
 }
 
 export interface PersonnelRef {
@@ -116,7 +117,7 @@ export interface PersonnelRef {
 export async function loadProjectDependencies() {
   const [clientsRes, accountsRes, personnelRes] = await Promise.all([
     supabase.from('clients').select('id, first_name, last_name, company_name, country, timezone').order('first_name'),
-    supabase.from('freelancing_accounts').select('id, platform, username, country, timezone').order('platform'),
+    supabase.from('freelancing_accounts').select('id, platform, username, country, timezone, badge_status').order('platform'),
     supabase.from('personnel').select('id, first_name, last_name, role').order('first_name'),
   ]);
 

@@ -58,6 +58,9 @@ import {
 } from '@/components/ui/alert-dialog';
 import { ArrowLeft, ArrowUpDown, Pencil, Trash2 } from 'lucide-react';
 import { PRIORITY_BADGE_CLASS, PRIORITY_OPTIONS, PRIORITY_RANK, taskDescriptionPreview } from '@/lib/taskPriority';
+import { countPendingByPool, type TaskPoolAccrualPeriodRow } from '@/lib/taskPoolAccrualPeriods';
+import { fetchAllAccrualPeriods } from '@/lib/taskPoolAccrualService';
+import TaskPaymentDueBadge from '@/components/TaskPaymentDueBadge';
 
 export default function TaskPool() {
   const { user, hasRole } = useAuth();
@@ -105,6 +108,7 @@ export default function TaskPool() {
   const [newSubtaskColumn, setNewSubtaskColumn] = useState<PoolSubtaskStatus>('todo');
   const [taskDeleteConfirm, setTaskDeleteConfirm] = useState<{ id: string; title: string } | null>(null);
   const [subtaskDetailId, setSubtaskDetailId] = useState<string | null>(null);
+  const [accrualPeriods, setAccrualPeriods] = useState<TaskPoolAccrualPeriodRow[]>([]);
 
   const fetchAll = async () => {
     setLoading(true);
@@ -126,8 +130,15 @@ export default function TaskPool() {
     setClients(deps.clients);
     setAccounts(deps.accounts);
     setPersonnel(deps.personnel);
+    try {
+      setAccrualPeriods(await fetchAllAccrualPeriods());
+    } catch {
+      setAccrualPeriods([]);
+    }
     setLoading(false);
   };
+
+  const pendingCountByPool = useMemo(() => countPendingByPool(accrualPeriods), [accrualPeriods]);
 
   useEffect(() => {
     fetchAll();
@@ -626,9 +637,10 @@ export default function TaskPool() {
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between gap-2">
                       <p className="font-medium text-foreground line-clamp-2">#{idx + 1} {row.name}</p>
-                      <Badge variant="secondary" className="shrink-0">
-                        {taskPoolItemStatusLabel(row.status)}
-                      </Badge>
+                      <div className="flex flex-col items-end gap-1 shrink-0">
+                        <Badge variant="secondary">{taskPoolItemStatusLabel(row.status)}</Badge>
+                        <TaskPaymentDueBadge count={pendingCountByPool[row.id] ?? 0} />
+                      </div>
                     </div>
                     <Badge variant="outline" className={`mt-2 text-[10px] capitalize ${PRIORITY_BADGE_CLASS[row.priority] || ''}`}>
                       {row.priority}

@@ -42,12 +42,9 @@ import {
   PoolSubtask,
   promoteCompletedPoolItemToProject,
   serializeLabeledLinks,
-  taskPoolNeedsAccrualAck,
   taskUsesAccrualPayments,
   parseMilestones,
   sumMilestoneGross,
-  hasPendingMilestonePayment,
-  firstPendingMilestone,
   taskPoolContractGross,
   compareTaskPoolItemsWithinPriority,
   computeTaskPoolDragPatches,
@@ -96,6 +93,16 @@ import PoolSubtaskDetailDialog from '@/components/PoolSubtaskDetailDialog';
 import { AlertTriangle, ArrowLeft, ArrowUpDown, Calendar, MessageSquare, Pencil, Plus, Trash2, FolderKanban, Link2, Clock, ListTodo } from 'lucide-react';
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from '@/components/ui/carousel';
 import { PRIORITY_BADGE_CLASS, PRIORITY_OPTIONS, PRIORITY_RANK, taskDescriptionPreview } from '@/lib/taskPriority';
+import {
+  countPendingByPool,
+  type TaskPoolAccrualPeriodRow,
+} from '@/lib/taskPoolAccrualPeriods';
+import {
+  fetchAllAccrualPeriods,
+  syncAccrualPeriodsForTasks,
+} from '@/lib/taskPoolAccrualService';
+import TaskPaymentDueBadge from '@/components/TaskPaymentDueBadge';
+import TaskFinishPaymentDialog from '@/components/TaskFinishPaymentDialog';
 
 const MAIN_STACK_OPTIONS = ['angular', 'react', 'react_native', 'vue', 'nextjs', 'nodejs', 'laravel', 'django', 'flutter', 'other'] as const;
 const TASK_SOURCE_OPTIONS = ['upwork', 'freelancer', 'job_broker', 'linkedin', 'other_job_site', 'friend', 'discord_job_channel', 'telegram_channel', 'teams', 'facebook', 'github'] as const;
@@ -232,13 +239,13 @@ export default function AdminTaskPool() {
   const [subtaskDetailId, setSubtaskDetailId] = useState<string | null>(null);
   const [accrualDialog, setAccrualDialog] = useState<null | {
     row: TaskPoolItemRecord;
-    kind: 'project' | 'recurring' | 'hourly' | 'hourly-edit' | 'milestone';
-    milestoneId?: string;
-    /** When editing last hourly week, the linked incoming payment row. */
+    kind: 'hourly-edit';
     hourlyPaymentEntryId?: string;
   }>(null);
   const [accrualHours, setAccrualHours] = useState('');
   const [editTaskAutoPayments, setEditTaskAutoPayments] = useState<TaskAutoPaymentSlice[]>([]);
+  const [accrualPeriods, setAccrualPeriods] = useState<TaskPoolAccrualPeriodRow[]>([]);
+  const [finishDialog, setFinishDialog] = useState<{ task: TaskPoolItemRecord; newStatus: string } | null>(null);
 
   const formFees = useMemo(
     () =>
@@ -268,23 +275,20 @@ export default function AdminTaskPool() {
     );
   }, [form, editingId, items, formFees, editTaskAutoPayments]);
 
-  const hasPendingProjectPayment = (row: TaskPoolItemRecord): boolean => {
-    if (row.budget_type !== 'fixed' || taskPoolFixedMode(row) !== 'project') return false;
-    const targetNet = calcWithdrawnAmount({
-      budgetAmount: Number(row.budget_amount ?? 0),
-      upworkConnectionFee: Number(row.upwork_connection_fee ?? 0),
-      convertFee: Number(row.convert_fee ?? 0),
-      transferFee: Number(row.transfer_fee ?? 0),
-      upworkFee: Number(row.upwork_fee ?? 0),
-      withdrawFee: Number(row.withdraw_fee ?? 0),
-    });
-    return Number(row.withdrawn_amount ?? 0) + 0.0001 < targetNet;
-  };
+  const pendingCountByPool = useMemo(() => countPendingByPool(accrualPeriods), [accrualPeriods]);
 
-  const accrualDueItems = useMemo(
-    () => items.filter((t) => taskPoolNeedsAccrualAck(t) || hasPendingProjectPayment(t) || hasPendingMilestonePayment(t)),
-    [items],
-  );
+  const refreshAccrualPeriods = async (taskList: TaskPoolItemRecord[], accountList: typeof accounts) => {
+    try {
+      await syncAccrualPeriodsForTasks(
+        taskList,
+        accountList.map((a) => ({ id: a.id, badge_status: a.badge_status ?? null })),
+      );
+      const periods = await fetchAllAccrualPeriods();
+      setAccrualPeriods(periods);
+    } catch (e) {
+      console.error('Accrual period sync failed', e);
+    }
+  };
 
   const fetchAll = async () => {
     setLoading(true);
@@ -299,7 +303,8 @@ export default function AdminTaskPool() {
 
     if (itemsRes.error) toast({ title: 'Error loading task pool', description: itemsRes.error.message, variant: 'destructive' });
 
-    setItems((itemsRes.data || []) as TaskPoolItemRecord[]);
+    const loadedItems = (itemsRes.data || []) as TaskPoolItemRecord[];
+    setItems(loadedItems);
     setScreenshots((shotsRes.data || []) as TaskPoolScreenshot[]);
     setSourceFiles((filesRes.data || []) as TaskPoolSourceFile[]);
     setSubtasks((tasksRes.data || []) as PoolSubtask[]);
@@ -308,6 +313,7 @@ export default function AdminTaskPool() {
     setAccounts(deps.accounts);
     setPersonnel(deps.personnel);
     setLoading(false);
+    void refreshAccrualPeriods(loadedItems, deps.accounts);
   };
 
   /** Sync task pool data without full-page loading spinner. */
@@ -321,7 +327,8 @@ export default function AdminTaskPool() {
       loadProjectDependencies(),
     ]);
     if (itemsRes.error) toast({ title: 'Error refreshing task pool', description: itemsRes.error.message, variant: 'destructive' });
-    setItems((itemsRes.data || []) as TaskPoolItemRecord[]);
+    const loadedItems = (itemsRes.data || []) as TaskPoolItemRecord[];
+    setItems(loadedItems);
     setScreenshots((shotsRes.data || []) as TaskPoolScreenshot[]);
     setSourceFiles((filesRes.data || []) as TaskPoolSourceFile[]);
     setSubtasks((tasksRes.data || []) as PoolSubtask[]);
@@ -329,6 +336,7 @@ export default function AdminTaskPool() {
     setClients(deps.clients);
     setAccounts(deps.accounts);
     setPersonnel(deps.personnel);
+    void refreshAccrualPeriods(loadedItems, deps.accounts);
   };
 
   useEffect(() => {
@@ -495,6 +503,10 @@ export default function AdminTaskPool() {
 
   const updatePoolItemQuick = async (id: string, patch: Partial<Pick<TaskPoolItemRecord, 'priority' | 'status' | 'priority_order'>>) => {
     const row = items.find((x) => x.id === id);
+    if (patch.status === 'completed' && row && row.status !== 'completed') {
+      setFinishDialog({ task: row, newStatus: 'completed' });
+      return;
+    }
     let priority_order = patch.priority_order;
     if (patch.priority !== undefined && priority_order === undefined && row && patch.priority !== row.priority) {
       const maxO = items
@@ -918,7 +930,7 @@ export default function AdminTaskPool() {
   };
 
   const submitAccrualConfirm = async () => {
-    if (!accrualDialog || !user?.id) return;
+    if (!accrualDialog || accrualDialog.kind !== 'hourly-edit' || !user?.id) return;
     const row = items.find((i) => i.id === accrualDialog.row.id) ?? accrualDialog.row;
     const fees = {
       upworkConnectionFee: Number(row.upwork_connection_fee ?? 0),
@@ -929,64 +941,8 @@ export default function AdminTaskPool() {
     };
     let net = 0;
     let noteExtra = '';
-    let nextDue: string | null = row.next_payment_due_at;
-    let hourlyAck: string | null = row.hourly_last_ack_week_monday;
-    let milestonesJsonPatch: ReturnType<typeof parseMilestones> | null = null;
 
-    if (accrualDialog.kind === 'project') {
-      const full = Number(row.budget_amount ?? 0);
-      net = calcWithdrawnAmount({ budgetAmount: full, ...fees });
-      const already = Number(row.withdrawn_amount ?? 0);
-      net = Math.max(0, net - already);
-      noteExtra = 'Fixed project · one-time client payment confirmation (JST)';
-    } else if (accrualDialog.kind === 'recurring') {
-      const installment = Number(row.budget_amount ?? 0);
-      net = calcWithdrawnAmount({ budgetAmount: installment, ...fees });
-      if (!row.recurring_cadence || !row.next_payment_due_at) {
-        toast({ title: 'Task is missing cadence or due date', variant: 'destructive' });
-        return;
-      }
-      nextDue = advanceRecurringDueJstYmd(row.next_payment_due_at, row.recurring_cadence);
-      noteExtra = `Fixed ${row.recurring_cadence} · due ${row.next_payment_due_at} (JST)`;
-    } else if (accrualDialog.kind === 'milestone') {
-      const mid = accrualDialog.milestoneId;
-      if (!mid) {
-        toast({ title: 'Missing milestone', variant: 'destructive' });
-        return;
-      }
-      const ms = parseMilestones(row.milestones_json);
-      const m = ms.find((x) => x.id === mid);
-      if (!m || m.confirmed_at) {
-        toast({ title: 'Milestone unavailable', description: 'Already confirmed or removed.', variant: 'destructive' });
-        return;
-      }
-      const slice = Number(m.amount ?? 0);
-      if (slice <= 0) {
-        toast({ title: 'Milestone amount must be positive', variant: 'destructive' });
-        return;
-      }
-      net = calcWithdrawnAmount({ budgetAmount: slice, ...fees });
-      // Safety cap: do not allow withdrawn to exceed total net across all milestones.
-      const maxNet = ms.reduce(
-        (s, it) =>
-          s +
-          calcWithdrawnAmount({
-            budgetAmount: Number(it.amount ?? 0),
-            ...fees,
-          }),
-        0,
-      );
-      if (Number(row.withdrawn_amount ?? 0) + net > maxNet + 0.0001) {
-        toast({
-          title: 'Would exceed contract net',
-          description: `This confirmation would push withdrawn above the milestone-contract net cap (${row.currency} ${maxNet.toFixed(2)}).`,
-          variant: 'destructive',
-        });
-        return;
-      }
-      noteExtra = `Fixed milestone · ${m.title}`;
-      milestonesJsonPatch = ms.map((x) => (x.id === mid ? { ...x, confirmed_at: new Date().toISOString() } : x));
-    } else if (accrualDialog.kind === 'hourly-edit') {
+    if (accrualDialog.kind === 'hourly-edit') {
       const entryId = accrualDialog.hourlyPaymentEntryId;
       if (!entryId) {
         toast({ title: 'No hourly payment to edit', description: 'Could not find the linked payment entry.', variant: 'destructive' });
@@ -1045,72 +1001,7 @@ export default function AdminTaskPool() {
       setAccrualDialog(null);
       toast({ title: 'Hourly payment updated', description: `Withdrawn is now ${row.currency} ${newWithdrawn.toFixed(2)}.` });
       setItems((prev) => prev.map((x) => (x.id === row.id ? (upd.data as TaskPoolItemRecord) : x)));
-      return;
-    } else {
-      const cap = Number(row.weekly_hours_cap ?? 40);
-      const hours = Math.min(Math.max(Number(accrualHours || 0), 0), cap);
-      const gross = hours * Number(row.hourly_rate ?? 0);
-      net = calcWithdrawnAmount({ budgetAmount: gross, ...fees });
-      hourlyAck = addDaysToJstYmd(getJstMondayYmd(new Date()), -7);
-      noteExtra = `Hourly (JST Mon–Sun) · ${hours}h × ${row.hourly_rate} · week ending before ${formatJstYmd(new Date())}`;
     }
-
-    if (net <= 0) {
-      toast({ title: 'Net accrual is zero', description: 'Check amounts and fees.', variant: 'destructive' });
-      return;
-    }
-
-    const newWithdrawn = Number(row.withdrawn_amount ?? 0) + net;
-    const hourlyBillableHours = accrualDialog.kind === 'hourly' ? Math.min(Math.max(Number(accrualHours || 0), 0), Number(row.weekly_hours_cap ?? 40)) : null;
-
-    const payRes = await supabase.from('payment_entries').insert({
-      user_id: user.id,
-      entry_type: 'incoming',
-      category:
-        accrualDialog.kind === 'project'
-          ? 'Task pool (fixed project)'
-          : accrualDialog.kind === 'recurring'
-            ? 'Task pool (fixed installment)'
-            : accrualDialog.kind === 'milestone'
-              ? 'Task pool (fixed milestone)'
-              : 'Task pool (hourly)',
-      amount: net,
-      currency: row.currency || 'USD',
-      occurred_at: new Date().toISOString(),
-      note: `${row.name} — ${noteExtra}`,
-      source_kind: 'task_auto',
-      pool_item_id: row.id,
-      updated_at: new Date().toISOString(),
-    });
-    if (payRes.error) {
-      toast({ title: 'Payment entry failed', description: payRes.error.message, variant: 'destructive' });
-      return;
-    }
-
-    const upd = await supabase
-      .from('task_pool_items')
-      .update({
-        withdrawn_amount: newWithdrawn,
-        next_payment_due_at: accrualDialog.kind === 'recurring' ? nextDue : row.next_payment_due_at,
-        hourly_last_ack_week_monday: accrualDialog.kind === 'hourly' ? hourlyAck : row.hourly_last_ack_week_monday,
-        ...(accrualDialog.kind === 'hourly' && hourlyBillableHours != null
-          ? { hourly_last_billable_hours: hourlyBillableHours }
-          : {}),
-        ...(milestonesJsonPatch ? { milestones_json: milestonesJsonPatch } : {}),
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', row.id)
-      .select('*')
-      .single();
-
-    if (upd.error || !upd.data) {
-      toast({ title: 'Task update failed', description: upd.error?.message, variant: 'destructive' });
-      return;
-    }
-
-    setAccrualDialog(null);
-    toast({ title: 'Payment confirmed', description: `Recorded ${row.currency} ${net.toFixed(2)} incoming and updated withdrawn.` });
-    setItems((prev) => prev.map((x) => (x.id === row.id ? (upd.data as TaskPoolItemRecord) : x)));
   };
 
   const deletePoolItem = async (id: string) => {
@@ -1126,18 +1017,39 @@ export default function AdminTaskPool() {
 
   const updateDetailStatus = async (newStatus: string) => {
     if (!selected) return;
-    const res = await supabase
-      .from('task_pool_items')
-      .update({ status: newStatus, updated_at: new Date().toISOString() })
-      .eq('id', selected.id)
-      .select('*')
-      .single();
+    if (newStatus === 'completed' && selected.status !== 'completed') {
+      setFinishDialog({ task: selected, newStatus });
+      return;
+    }
+    await applyDetailStatus(selected.id, newStatus);
+  };
+
+  const applyDetailStatus = async (taskId: string, newStatus: string, finishedAt?: string) => {
+    const patch: Record<string, unknown> = {
+      status: newStatus,
+      updated_at: new Date().toISOString(),
+    };
+    if (finishedAt) patch.finished_at = finishedAt;
+    const res = await supabase.from('task_pool_items').update(patch).eq('id', taskId).select('*').single();
     if (res.error || !res.data) {
       toast({ title: 'Update failed', description: res.error?.message, variant: 'destructive' });
       return;
     }
-    setItems((prev) => prev.map((x) => (x.id === selected.id ? (res.data as TaskPoolItemRecord) : x)));
-    await promoteIfNeeded(selected.id, newStatus);
+    const updated = res.data as TaskPoolItemRecord;
+    setItems((prev) => prev.map((x) => (x.id === taskId ? updated : x)));
+    await promoteIfNeeded(taskId, newStatus);
+    void refreshAccrualPeriods(
+      items.map((x) => (x.id === taskId ? updated : x)),
+      accounts,
+    );
+  };
+
+  const confirmFinishTask = async () => {
+    if (!finishDialog) return;
+    const finishedAt = new Date().toISOString();
+    await applyDetailStatus(finishDialog.task.id, finishDialog.newStatus, finishedAt);
+    setFinishDialog(null);
+    toast({ title: 'Task completed', description: 'Confirm any due payments on the Payments page.' });
   };
 
   const addSubtask = async () => {
@@ -1326,52 +1238,6 @@ export default function AdminTaskPool() {
           </Button>
         </div>
       ) : null}
-      {accrualDueItems.length > 0 ? (
-        <Alert className="border-amber-500/40 bg-amber-500/5">
-          <AlertTriangle className="h-4 w-4 text-amber-600" />
-          <AlertTitle>Confirm accrual (JST)</AlertTitle>
-          <AlertDescription>
-            <p className="text-sm text-muted-foreground mb-2">
-              Confirm installments, milestones, one-off fixed payouts, or hourly weeks (Mon–Sun JST). Each confirmation increases <strong className="text-foreground">withdrawn</strong> on the task and adds an <strong className="text-foreground">incoming</strong> row in Payments.
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {accrualDueItems.map((t) => (
-                <Button
-                  key={t.id}
-                  type="button"
-                  size="sm"
-                  variant="secondary"
-                  className="gap-1"
-                  onClick={() => {
-                    if (t.budget_type === 'hourly') {
-                      setAccrualHours(String(t.weekly_hours_cap ?? 40));
-                      setAccrualDialog({ row: t, kind: 'hourly' });
-                    } else if (t.budget_type === 'fixed' && taskPoolFixedMode(t) === 'project') {
-                      setAccrualDialog({ row: t, kind: 'project' });
-                    } else if (t.budget_type === 'fixed' && taskPoolFixedMode(t) === 'milestone') {
-                      const m = firstPendingMilestone(t);
-                      if (m) setAccrualDialog({ row: t, kind: 'milestone', milestoneId: m.id });
-                    } else {
-                      setAccrualDialog({ row: t, kind: 'recurring' });
-                    }
-                  }}
-                >
-                  {t.name}
-                  <Badge variant="outline" className="text-[10px]">
-                    {t.budget_type === 'hourly'
-                      ? 'hourly'
-                      : taskPoolFixedMode(t) === 'project'
-                        ? 'project'
-                        : taskPoolFixedMode(t) === 'milestone'
-                          ? 'milestone'
-                          : t.recurring_cadence}
-                  </Badge>
-                </Button>
-              ))}
-            </div>
-          </AlertDescription>
-        </Alert>
-      ) : null}
       {!selectedId ? (
         <>
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -1488,11 +1354,7 @@ export default function AdminTaskPool() {
                       <p className="font-medium text-foreground line-clamp-2">#{idx + 1} {row.name}</p>
                       <div className="flex flex-col items-end gap-1 shrink-0">
                         <Badge variant="secondary">{taskPoolItemStatusLabel(row.status)}</Badge>
-                        {taskPoolNeedsAccrualAck(row) || hasPendingProjectPayment(row) || hasPendingMilestonePayment(row) ? (
-                          <Badge variant="destructive" className="text-[10px]">
-                            Accrual due
-                          </Badge>
-                        ) : null}
+                        <TaskPaymentDueBadge count={pendingCountByPool[row.id] ?? 0} />
                       </div>
                     </div>
                     <Badge variant="outline" className={`mt-2 text-[10px] capitalize ${PRIORITY_BADGE_CLASS[row.priority] || ''}`}>
@@ -1786,26 +1648,12 @@ export default function AdminTaskPool() {
                     ) : null}
                   </div>
                   <div className="flex flex-wrap gap-2 shrink-0">
-                    {taskPoolNeedsAccrualAck(selected) || hasPendingProjectPayment(selected) || hasPendingMilestonePayment(selected) ? (
-                      <Button
-                        size="sm"
-                        className="gap-1"
-                        onClick={() => {
-                          if (selected.budget_type === 'hourly') {
-                            setAccrualHours(String(selected.weekly_hours_cap ?? 40));
-                            setAccrualDialog({ row: selected, kind: 'hourly' });
-                          } else if (selected.budget_type === 'fixed' && taskPoolFixedMode(selected) === 'project') {
-                            setAccrualDialog({ row: selected, kind: 'project' });
-                          } else if (selected.budget_type === 'fixed' && taskPoolFixedMode(selected) === 'milestone') {
-                            const m = firstPendingMilestone(selected);
-                            if (m) setAccrualDialog({ row: selected, kind: 'milestone', milestoneId: m.id });
-                          } else {
-                            setAccrualDialog({ row: selected, kind: 'recurring' });
-                          }
-                        }}
-                      >
-                        <AlertTriangle className="h-3.5 w-3.5" />
-                        {taskPoolFixedMode(selected) === 'milestone' ? 'Confirm next milestone' : 'Confirm accrual'}
+                    {(pendingCountByPool[selected.id] ?? 0) > 0 ? (
+                      <Button size="sm" variant="secondary" className="gap-1" asChild>
+                        <Link to={`/admin/payments?task=${selected.id}`}>
+                          <AlertTriangle className="h-3.5 w-3.5" />
+                          Confirm payments ({pendingCountByPool[selected.id]})
+                        </Link>
                       </Button>
                     ) : null}
                     {canEditLastHourlyAccrual(selected) ? (
@@ -1906,7 +1754,7 @@ export default function AdminTaskPool() {
                     <div className="rounded-lg border p-3 space-y-2">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <p className="text-sm font-medium">Linked payments</p>
-                        <Link to="/admin/payments" className="text-sm text-primary hover:underline">
+                        <Link to={`/admin/payments?task=${selected.id}`} className="text-sm text-primary hover:underline">
                           Open Payments
                         </Link>
                       </div>
@@ -2040,13 +1888,8 @@ export default function AdminTaskPool() {
                                   ) : null}
                                 </div>
                                 {!m.confirmed_at && Number(m.amount) > 0 ? (
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => setAccrualDialog({ row: selected, kind: 'milestone', milestoneId: m.id })}
-                                  >
-                                    Confirm paid
+                                  <Button type="button" size="sm" variant="outline" asChild>
+                                    <Link to={`/admin/payments?task=${selected.id}`}>Confirm on Payments</Link>
                                   </Button>
                                 ) : null}
                               </li>
@@ -2316,69 +2159,32 @@ export default function AdminTaskPool() {
       <AlertDialog open={!!accrualDialog} onOpenChange={(open) => !open && setAccrualDialog(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>
-              {accrualDialog?.kind === 'hourly-edit' ? 'Edit last week hourly payment' : 'Confirm you received this payment?'}
-            </AlertDialogTitle>
+            <AlertDialogTitle>Edit last week hourly payment</AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-3 text-sm text-muted-foreground">
-                <p>
-                  {accrualDialog?.kind === 'milestone' ? (
-                    <>
-                      Confirm that the client paid this <strong className="text-foreground">milestone</strong> (gross). Net after your fee fields is
-                      added to <strong className="text-foreground">withdrawn</strong> and recorded as <strong className="text-foreground">incoming</strong>{' '}
-                      in Payments.
-                    </>
-                  ) : (
-                    <>
-                      Only confirm if the last <strong className="text-foreground">weekly / bi-weekly / monthly / hourly (Mon–Sun JST)</strong> amount
-                      or <strong className="text-foreground">one-off fixed</strong> payment was actually received. This will increase{' '}
-                      <strong className="text-foreground">withdrawn</strong> on the task and add a matching <strong className="text-foreground">incoming</strong>{' '}
-                      row in Payments.
-                    </>
-                  )}
-                </p>
-                {accrualDialog?.kind === 'milestone' && accrualDialog.milestoneId ? (
-                  <p className="text-foreground font-medium">
-                    {(() => {
-                      const m = parseMilestones(accrualDialog.row.milestones_json).find((x) => x.id === accrualDialog.milestoneId);
-                      if (!m) return 'Milestone';
-                      const net = calcWithdrawnAmount({
-                        budgetAmount: Number(m.amount),
-                        upworkConnectionFee: Number(accrualDialog.row.upwork_connection_fee ?? 0),
-                        convertFee: Number(accrualDialog.row.convert_fee ?? 0),
-                        transferFee: Number(accrualDialog.row.transfer_fee ?? 0),
-                        upworkFee: Number(accrualDialog.row.upwork_fee ?? 0),
-                        withdrawFee: Number(accrualDialog.row.withdraw_fee ?? 0),
-                      });
-                      return `${m.title}: ${accrualDialog.row.currency} ${Number(m.amount).toFixed(2)} gross → ${net.toFixed(2)} net to withdrawn`;
-                    })()}
-                  </p>
-                ) : null}
-                {accrualDialog?.kind === 'hourly' || accrualDialog?.kind === 'hourly-edit' ? (
-                  <div className="space-y-2">
-                    <Label>
-                      Billable hours{accrualDialog.kind === 'hourly-edit' ? ' (last confirmed week)' : ' this week'} (max{' '}
-                      {accrualDialog.row.weekly_hours_cap ?? 40})
-                    </Label>
-                    <Input type="number" value={accrualHours} onChange={(e) => setAccrualHours(e.target.value)} min={0} />
-                    {accrualDialog.kind === 'hourly-edit' ? (
-                      <p className="text-xs text-muted-foreground">
-                        Updates withdrawn and the linked incoming payment using current fee fields on this task.
-                      </p>
-                    ) : null}
-                  </div>
-                ) : null}
+                <p>Updates withdrawn and the linked incoming payment using current fee fields on this task.</p>
+                <div className="space-y-2">
+                  <Label>Billable hours (last confirmed week, max {accrualDialog?.row.weekly_hours_cap ?? 40})</Label>
+                  <Input type="number" value={accrualHours} onChange={(e) => setAccrualHours(e.target.value)} min={0} />
+                </div>
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void submitAccrualConfirm()}>
-              {accrualDialog?.kind === 'hourly-edit' ? 'Save changes' : 'Yes, payment received'}
-            </AlertDialogAction>
+            <AlertDialogAction onClick={() => void submitAccrualConfirm()}>Save changes</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <TaskFinishPaymentDialog
+        open={!!finishDialog}
+        onOpenChange={(open) => !open && setFinishDialog(null)}
+        task={finishDialog?.task ?? null}
+        pendingPeriods={finishDialog ? accrualPeriods.filter((p) => p.pool_item_id === finishDialog.task.id) : []}
+        onConfirmFinish={() => void confirmFinishTask()}
+      />
+
 
       <Dialog
         open={dialogOpen}
@@ -2753,7 +2559,7 @@ export default function AdminTaskPool() {
                   <Input type="number" value={form.weeklyHoursCap} onChange={(e) => setForm((p) => ({ ...p, weeklyHoursCap: e.target.value }))} />
                 </div>
                 <p className="text-xs text-muted-foreground md:col-span-2">
-                  Billing weeks follow Monday–Sunday in Asia/Tokyo. Withdrawn increases when you confirm each week from the accrual prompt.
+                  Billing weeks follow Monday–Sunday in Asia/Tokyo. Confirm due payments on the Payments page; withdrawn updates when each period is confirmed.
                 </p>
               </>
             ) : null}

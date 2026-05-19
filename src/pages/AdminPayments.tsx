@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
@@ -20,8 +21,21 @@ import {
   type UnifiedPaymentRow,
   type TaskFinanceRow,
 } from '@/lib/payments';
-import { DollarSign, Pencil, Plus, Trash2 } from 'lucide-react';
+import { CheckCircle2, Clock, Pencil, Plus, Trash2, X } from 'lucide-react';
 import TaskAutoPaymentEditDialog from '@/components/TaskAutoPaymentEditDialog';
+import AccrualPeriodConfirmDialog from '@/components/AccrualPeriodConfirmDialog';
+import type { TaskPoolItemRecord } from '@/lib/taskPool';
+import {
+  isPeriodPending,
+  normalizePoolItemId,
+  periodBelongsToPool,
+  type TaskPoolAccrualPeriodRow,
+} from '@/lib/taskPoolAccrualPeriods';
+import {
+  fetchAccrualPeriodsForPool,
+  fetchAllAccrualPeriods,
+  syncAccrualPeriodsForTasks,
+} from '@/lib/taskPoolAccrualService';
 
 const OUTGOING_CATEGORIES = [
   'Base fee',
@@ -43,6 +57,12 @@ const INCOMING_CATEGORIES = ['Other incoming', 'Friend transfer', 'Gift/Present'
 export default function AdminPayments() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const filterTaskId = useMemo(() => {
+    const q = new URLSearchParams(location.search);
+    return normalizePoolItemId(q.get('task') ?? searchParams.get('task'));
+  }, [location.search, searchParams]);
   const [loading, setLoading] = useState(true);
   const [manualEntries, setManualEntries] = useState<PaymentEntryRecord[]>([]);
   const [taskRows, setTaskRows] = useState<TaskFinanceRow[]>([]);
@@ -57,10 +77,28 @@ export default function AdminPayments() {
   const [occurredAt, setOccurredAt] = useState(new Date().toISOString().slice(0, 16));
   const [note, setNote] = useState('');
   const [editingTaskPayment, setEditingTaskPayment] = useState<PaymentEntryRecord | null>(null);
+  const [poolTasks, setPoolTasks] = useState<TaskPoolItemRecord[]>([]);
+  const [accrualPeriods, setAccrualPeriods] = useState<TaskPoolAccrualPeriodRow[]>([]);
+  const [taskScopedPeriods, setTaskScopedPeriods] = useState<TaskPoolAccrualPeriodRow[] | null>(null);
+  const [taskPeriodsLoading, setTaskPeriodsLoading] = useState(false);
+  const [confirmPeriod, setConfirmPeriod] = useState<TaskPoolAccrualPeriodRow | null>(null);
+
+  const loadTaskScopedPeriods = useCallback(async (poolId: string) => {
+    setTaskPeriodsLoading(true);
+    try {
+      const rows = await fetchAccrualPeriodsForPool(poolId);
+      setTaskScopedPeriods(rows);
+    } catch (e) {
+      console.error('Failed to load task accrual periods', e);
+      setTaskScopedPeriods([]);
+    } finally {
+      setTaskPeriodsLoading(false);
+    }
+  }, []);
 
   const fetchAll = async () => {
     setLoading(true);
-    const [manualRes, taskRes] = await Promise.all([
+    const [manualRes, taskRes, poolRes, accountsRes] = await Promise.all([
       supabase.from('payment_entries').select('*').order('occurred_at', { ascending: false }),
       supabase
         .from('task_pool_items')
@@ -68,23 +106,86 @@ export default function AdminPayments() {
           'id, name, currency, task_received_at, created_at, budget_type, fixed_budget_mode, withdrawn_amount, upwork_connection_fee, convert_fee, transfer_fee, upwork_fee, withdraw_fee',
         )
         .order('task_received_at', { ascending: false }),
+      supabase.from('task_pool_items').select('*').order('created_at', { ascending: false }),
+      supabase.from('freelancing_accounts').select('id, badge_status'),
     ]);
     if (manualRes.error) toast({ title: 'Error loading payment entries', description: manualRes.error.message, variant: 'destructive' });
     if (taskRes.error) toast({ title: 'Error loading task finances', description: taskRes.error.message, variant: 'destructive' });
     setManualEntries((manualRes.data || []) as PaymentEntryRecord[]);
     setTaskRows((taskRes.data || []) as TaskFinanceRow[]);
+    const poolItems = (poolRes.data || []) as TaskPoolItemRecord[];
+    setPoolTasks(poolItems);
+    const accounts = (accountsRes.data || []).map((a) => ({
+      id: a.id as string,
+      badge_status: (a.badge_status as string | null) ?? null,
+    }));
+    try {
+      await syncAccrualPeriodsForTasks(poolItems, accounts);
+      setAccrualPeriods(await fetchAllAccrualPeriods());
+      const taskFromUrl = normalizePoolItemId(new URLSearchParams(window.location.search).get('task'));
+      if (taskFromUrl) await loadTaskScopedPeriods(taskFromUrl);
+    } catch (e) {
+      console.error('Accrual sync failed', e);
+    }
     setLoading(false);
   };
 
   useEffect(() => {
-    fetchAll();
+    void fetchAll();
   }, []);
+
+  useEffect(() => {
+    if (!filterTaskId) {
+      setTaskScopedPeriods(null);
+      return;
+    }
+    void loadTaskScopedPeriods(filterTaskId);
+  }, [filterTaskId, loadTaskScopedPeriods]);
+
+  /** When `?task=` is set, only use periods loaded for that pool (never the global list). */
+  const accrualSource = filterTaskId ? (taskScopedPeriods ?? []) : accrualPeriods;
+
+  const allPendingPeriods = useMemo(
+    () => accrualPeriods.filter((p) => isPeriodPending(p)).sort((a, b) => a.due_confirm_on.localeCompare(b.due_confirm_on)),
+    [accrualPeriods],
+  );
+
+  const pendingPeriods = useMemo(() => {
+    const pending = accrualSource
+      .filter((p) => isPeriodPending(p))
+      .filter((p) => !filterTaskId || periodBelongsToPool(p, filterTaskId));
+    return pending.sort((a, b) => a.due_confirm_on.localeCompare(b.due_confirm_on));
+  }, [accrualSource, filterTaskId]);
+
+  const taskById = useMemo(() => {
+    const map: Record<string, TaskPoolItemRecord> = {};
+    for (const t of poolTasks) {
+      const key = normalizePoolItemId(t.id);
+      if (key) map[key] = t;
+    }
+    return map;
+  }, [poolTasks]);
+
+  const filterTask = filterTaskId ? taskById[filterTaskId] ?? poolTasks.find((t) => periodBelongsToPool({ pool_item_id: t.id }, filterTaskId)) ?? null : null;
+
+  const confirmPeriodTask = confirmPeriod
+    ? taskById[normalizePoolItemId(confirmPeriod.pool_item_id) ?? ''] ??
+      poolTasks.find((t) => periodBelongsToPool({ pool_item_id: t.id }, confirmPeriod.pool_item_id)) ??
+      null
+    : null;
 
   const allRows = useMemo<UnifiedPaymentRow[]>(() => {
     return [...buildTaskAutoRows(taskRows), ...normalizeManualRows(manualEntries)].sort(
       (a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime(),
     );
   }, [taskRows, manualEntries]);
+
+  const entryById = useMemo(() => Object.fromEntries(manualEntries.map((e) => [e.id, e])), [manualEntries]);
+
+  const rowsForTaskFilter = useMemo(() => {
+    if (!filterTaskId) return allRows;
+    return allRows.filter((r) => periodBelongsToPool({ pool_item_id: entryById[r.id]?.pool_item_id ?? '' }, filterTaskId));
+  }, [allRows, filterTaskId, entryById]);
 
   const now = new Date();
   const { thisPeriod, lastPeriod, yearStart, yearEnd } = getPaymentPeriods(now);
@@ -93,27 +194,42 @@ export default function AdminPayments() {
   const lastMonthLabel = `${prev.toLocaleString('en-US', { month: 'long' })}-${prev.getMonth() + 1}`;
   const yearLabel = `${now.getFullYear()}`;
 
+  const summarySource = filterTaskId ? rowsForTaskFilter : allRows;
+
   const thisSummary = useMemo(
-    () => summarizeRows(allRows.filter((r) => new Date(r.occurred_at) >= thisPeriod.start && new Date(r.occurred_at) < thisPeriod.end)),
-    [allRows, thisPeriod],
+    () =>
+      summarizeRows(
+        summarySource.filter((r) => new Date(r.occurred_at) >= thisPeriod.start && new Date(r.occurred_at) < thisPeriod.end),
+      ),
+    [summarySource, thisPeriod],
   );
   const lastSummary = useMemo(
-    () => summarizeRows(allRows.filter((r) => new Date(r.occurred_at) >= lastPeriod.start && new Date(r.occurred_at) < lastPeriod.end)),
-    [allRows, lastPeriod],
+    () =>
+      summarizeRows(
+        summarySource.filter((r) => new Date(r.occurred_at) >= lastPeriod.start && new Date(r.occurred_at) < lastPeriod.end),
+      ),
+    [summarySource, lastPeriod],
   );
   const yearSummary = useMemo(
-    () => summarizeRows(allRows.filter((r) => new Date(r.occurred_at) >= yearStart && new Date(r.occurred_at) < yearEnd)),
-    [allRows, yearStart, yearEnd],
+    () =>
+      summarizeRows(summarySource.filter((r) => new Date(r.occurred_at) >= yearStart && new Date(r.occurred_at) < yearEnd)),
+    [summarySource, yearStart, yearEnd],
   );
 
   const filteredRows = useMemo(
     () =>
-      filterRowsByMode(allRows, filter, now, {
+      filterRowsByMode(rowsForTaskFilter, filter, now, {
         start: customStart ? new Date(customStart) : null,
         end: customEnd ? new Date(new Date(customEnd).getFullYear(), new Date(customEnd).getMonth(), new Date(customEnd).getDate() + 1) : null,
       }),
-    [allRows, filter, now, customStart, customEnd],
+    [rowsForTaskFilter, filter, now, customStart, customEnd],
   );
+
+  const clearTaskFilter = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete('task');
+    setSearchParams(next, { replace: true });
+  };
 
   const addManualEntry = async () => {
     if (!amount || Number(amount) <= 0) {
@@ -140,8 +256,6 @@ export default function AdminPayments() {
     toast({ title: 'Entry added' });
     fetchAll();
   };
-
-  const entryById = useMemo(() => Object.fromEntries(manualEntries.map((e) => [e.id, e])), [manualEntries]);
 
   const openTaskPaymentEdit = (rowId: string) => {
     const e = entryById[rowId];
@@ -172,9 +286,76 @@ export default function AdminPayments() {
       <div>
         <h2 className="text-2xl font-semibold tracking-tight text-foreground">Payments</h2>
         <p className="text-sm text-muted-foreground">
-          Manage incoming and outgoing cashflow per period (25th to 25th). Task-linked payments (from confirmed accruals) can be edited to adjust hours, gross, fees, and net — the task withdrawn total stays in sync.
+          Manage incoming and outgoing cashflow per period (25th to 25th). Confirm due task accruals below; confirmed rows appear in the ledger and update task withdrawn totals.
         </p>
       </div>
+
+      {filterTaskId ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/25 bg-primary/5 px-3 py-2 text-sm">
+          <span className="text-muted-foreground">
+            Showing payments for{' '}
+            <span className="font-medium text-foreground">{filterTask?.name ?? 'this task'}</span>
+          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" variant="outline" size="sm" className="h-8 gap-1" asChild>
+              <Link to={`/admin/tasks?task=${filterTaskId}`}>Open task</Link>
+            </Button>
+            <Button type="button" variant="outline" size="sm" className="h-8 gap-1" onClick={clearTaskFilter}>
+              <X className="h-3.5 w-3.5" />
+              Show all tasks
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {filterTaskId || pendingPeriods.length > 0 ? (
+        <Card className="border-amber-500/30">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Clock className="h-4 w-4 text-amber-600" />
+              {filterTaskId
+                ? `Pending confirmations for ${filterTask?.name ?? 'task'} (${pendingPeriods.length})`
+                : `Pending payment confirmations (${pendingPeriods.length})`}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {taskPeriodsLoading && filterTaskId ? (
+              <p className="text-sm text-muted-foreground">Loading pending confirmations for this task…</p>
+            ) : pendingPeriods.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                {filterTaskId
+                  ? 'No pending confirmations for this task right now.'
+                  : 'No pending confirmations across all tasks.'}
+              </p>
+            ) : (
+              pendingPeriods.map((p) => {
+                const task =
+                  taskById[normalizePoolItemId(p.pool_item_id) ?? ''] ??
+                  poolTasks.find((t) => periodBelongsToPool({ pool_item_id: t.id }, p.pool_item_id));
+                return (
+                  <div
+                    key={p.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/60 bg-muted/20 px-3 py-2"
+                  >
+                    <div className="min-w-0">
+                      {!filterTaskId ? (
+                        <p className="text-sm font-medium text-foreground">{task?.name ?? 'Task'}</p>
+                      ) : null}
+                      <p className="text-xs text-muted-foreground">{p.label}</p>
+                      <p className="text-[11px] text-muted-foreground">Due (JST): {p.due_confirm_on}</p>
+                    </div>
+                    <Button size="sm" className="gap-1 shrink-0" onClick={() => setConfirmPeriod(p)}>
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      Confirm
+                    </Button>
+                  </div>
+                );
+              })
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
+
 
       <div className="grid gap-3 sm:grid-cols-3">
         <StatCard title={`This Month (${thisMonthLabel})`} summary={thisSummary} />
@@ -284,6 +465,15 @@ export default function AdminPayments() {
                   </tr>
                 </thead>
                 <tbody>
+                  {filteredRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                        {filterTaskId
+                          ? 'No payment entries linked to this task for the selected period.'
+                          : 'No entries for the selected period.'}
+                      </td>
+                    </tr>
+                  ) : null}
                   {filteredRows.map((r) => (
                     <tr key={r.id} className="border-t">
                       <td className="px-3 py-2">{new Date(r.occurred_at).toLocaleString()}</td>
@@ -416,6 +606,17 @@ export default function AdminPayments() {
         entry={editingTaskPayment}
         onClose={() => setEditingTaskPayment(null)}
         onSaved={() => void fetchAll()}
+      />
+
+      <AccrualPeriodConfirmDialog
+        open={!!confirmPeriod}
+        onOpenChange={(open) => !open && setConfirmPeriod(null)}
+        period={confirmPeriod}
+        task={confirmPeriodTask}
+        onConfirmed={() => {
+          void fetchAll();
+          if (filterTaskId) void loadTaskScopedPeriods(filterTaskId);
+        }}
       />
     </div>
   );

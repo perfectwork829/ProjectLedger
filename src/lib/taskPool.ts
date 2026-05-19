@@ -120,6 +120,8 @@ export interface TaskPoolItemRecord {
   priority_order?: number;
   promoted_project_id: string | null;
   promoted_at: string | null;
+  /** When the task was marked completed (JST-aware in UI). */
+  finished_at?: string | null;
   created_at: string;
   updated_at: string;
 }
