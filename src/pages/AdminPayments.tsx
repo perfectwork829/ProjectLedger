@@ -21,12 +21,13 @@ import {
   type UnifiedPaymentRow,
   type TaskFinanceRow,
 } from '@/lib/payments';
-import { CheckCircle2, Clock, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Pencil, Plus, Trash2, X } from 'lucide-react';
 import TaskAutoPaymentEditDialog from '@/components/TaskAutoPaymentEditDialog';
-import AccrualPeriodConfirmDialog from '@/components/AccrualPeriodConfirmDialog';
+import AccrualPeriodHandleDialog from '@/components/AccrualPeriodHandleDialog';
+import PaymentEntryDetailDialog from '@/components/PaymentEntryDetailDialog';
+import PaymentAccrualScheduleCard from '@/components/PaymentAccrualScheduleCard';
 import type { TaskPoolItemRecord } from '@/lib/taskPool';
 import {
-  isPeriodPending,
   normalizePoolItemId,
   periodBelongsToPool,
   type TaskPoolAccrualPeriodRow,
@@ -35,6 +36,7 @@ import {
   fetchAccrualPeriodsForPool,
   fetchAllAccrualPeriods,
   syncAccrualPeriodsForTasks,
+  cancelAccrualPeriod,
 } from '@/lib/taskPoolAccrualService';
 
 const OUTGOING_CATEGORIES = [
@@ -81,7 +83,8 @@ export default function AdminPayments() {
   const [accrualPeriods, setAccrualPeriods] = useState<TaskPoolAccrualPeriodRow[]>([]);
   const [taskScopedPeriods, setTaskScopedPeriods] = useState<TaskPoolAccrualPeriodRow[] | null>(null);
   const [taskPeriodsLoading, setTaskPeriodsLoading] = useState(false);
-  const [confirmPeriod, setConfirmPeriod] = useState<TaskPoolAccrualPeriodRow | null>(null);
+  const [selectedPeriod, setSelectedPeriod] = useState<TaskPoolAccrualPeriodRow | null>(null);
+  const [detailEntryId, setDetailEntryId] = useState<string | null>(null);
 
   const loadTaskScopedPeriods = useCallback(async (poolId: string) => {
     setTaskPeriodsLoading(true);
@@ -145,18 +148,6 @@ export default function AdminPayments() {
   /** When `?task=` is set, only use periods loaded for that pool (never the global list). */
   const accrualSource = filterTaskId ? (taskScopedPeriods ?? []) : accrualPeriods;
 
-  const allPendingPeriods = useMemo(
-    () => accrualPeriods.filter((p) => isPeriodPending(p)).sort((a, b) => a.due_confirm_on.localeCompare(b.due_confirm_on)),
-    [accrualPeriods],
-  );
-
-  const pendingPeriods = useMemo(() => {
-    const pending = accrualSource
-      .filter((p) => isPeriodPending(p))
-      .filter((p) => !filterTaskId || periodBelongsToPool(p, filterTaskId));
-    return pending.sort((a, b) => a.due_confirm_on.localeCompare(b.due_confirm_on));
-  }, [accrualSource, filterTaskId]);
-
   const taskById = useMemo(() => {
     const map: Record<string, TaskPoolItemRecord> = {};
     for (const t of poolTasks) {
@@ -168,9 +159,9 @@ export default function AdminPayments() {
 
   const filterTask = filterTaskId ? taskById[filterTaskId] ?? poolTasks.find((t) => periodBelongsToPool({ pool_item_id: t.id }, filterTaskId)) ?? null : null;
 
-  const confirmPeriodTask = confirmPeriod
-    ? taskById[normalizePoolItemId(confirmPeriod.pool_item_id) ?? ''] ??
-      poolTasks.find((t) => periodBelongsToPool({ pool_item_id: t.id }, confirmPeriod.pool_item_id)) ??
+  const selectedPeriodTask = selectedPeriod
+    ? taskById[normalizePoolItemId(selectedPeriod.pool_item_id) ?? ''] ??
+      poolTasks.find((t) => periodBelongsToPool({ pool_item_id: t.id }, selectedPeriod.pool_item_id)) ??
       null
     : null;
 
@@ -231,6 +222,27 @@ export default function AdminPayments() {
     setSearchParams(next, { replace: true });
   };
 
+  const refreshAfterAccrualChange = async () => {
+    await fetchAll();
+    if (filterTaskId) await loadTaskScopedPeriods(filterTaskId);
+  };
+
+  const handleCancelPeriod = async (period: TaskPoolAccrualPeriodRow) => {
+    try {
+      await cancelAccrualPeriod(period.id);
+      if (selectedPeriod?.id === period.id) setSelectedPeriod(null);
+      toast({ title: 'Payment item cancelled', description: 'Removed from the confirm list.' });
+      await refreshAfterAccrualChange();
+    } catch (e) {
+      toast({
+        title: 'Cancel failed',
+        description: e instanceof Error ? e.message : 'Unknown error',
+        variant: 'destructive',
+      });
+      throw e;
+    }
+  };
+
   const addManualEntry = async () => {
     if (!amount || Number(amount) <= 0) {
       toast({ title: 'Amount is required', variant: 'destructive' });
@@ -262,6 +274,17 @@ export default function AdminPayments() {
     if (e?.source_kind === 'task_auto' && e.pool_item_id) setEditingTaskPayment(e);
   };
 
+  const detailEntry = detailEntryId ? entryById[detailEntryId] ?? null : null;
+  const detailTask =
+    detailEntry?.pool_item_id
+      ? taskById[normalizePoolItemId(detailEntry.pool_item_id) ?? ''] ??
+        poolTasks.find((t) => periodBelongsToPool({ pool_item_id: t.id }, detailEntry.pool_item_id)) ??
+        null
+      : null;
+  const detailAccrualPeriod = detailEntry
+    ? accrualPeriods.find((p) => p.payment_entry_id === detailEntry.id) ?? null
+    : null;
+
   const deleteManual = async (id: string) => {
     const res = await supabase.from('payment_entries').delete().eq('id', id);
     if (res.error) {
@@ -286,7 +309,7 @@ export default function AdminPayments() {
       <div>
         <h2 className="text-2xl font-semibold tracking-tight text-foreground">Payments</h2>
         <p className="text-sm text-muted-foreground">
-          Manage incoming and outgoing cashflow per period (25th to 25th). Confirm due task accruals below; confirmed rows appear in the ledger and update task withdrawn totals.
+          Manage incoming and outgoing cashflow per period (25th to 25th). Use the task payment schedule for delayed, due, and upcoming accruals; confirmed rows appear in the ledger below. Click any entry for details.
         </p>
       </div>
 
@@ -308,54 +331,16 @@ export default function AdminPayments() {
         </div>
       ) : null}
 
-      {filterTaskId || pendingPeriods.length > 0 ? (
-        <Card className="border-amber-500/30">
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Clock className="h-4 w-4 text-amber-600" />
-              {filterTaskId
-                ? `Pending confirmations for ${filterTask?.name ?? 'task'} (${pendingPeriods.length})`
-                : `Pending payment confirmations (${pendingPeriods.length})`}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {taskPeriodsLoading && filterTaskId ? (
-              <p className="text-sm text-muted-foreground">Loading pending confirmations for this task…</p>
-            ) : pendingPeriods.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                {filterTaskId
-                  ? 'No pending confirmations for this task right now.'
-                  : 'No pending confirmations across all tasks.'}
-              </p>
-            ) : (
-              pendingPeriods.map((p) => {
-                const task =
-                  taskById[normalizePoolItemId(p.pool_item_id) ?? ''] ??
-                  poolTasks.find((t) => periodBelongsToPool({ pool_item_id: t.id }, p.pool_item_id));
-                return (
-                  <div
-                    key={p.id}
-                    className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/60 bg-muted/20 px-3 py-2"
-                  >
-                    <div className="min-w-0">
-                      {!filterTaskId ? (
-                        <p className="text-sm font-medium text-foreground">{task?.name ?? 'Task'}</p>
-                      ) : null}
-                      <p className="text-xs text-muted-foreground">{p.label}</p>
-                      <p className="text-[11px] text-muted-foreground">Due (JST): {p.due_confirm_on}</p>
-                    </div>
-                    <Button size="sm" className="gap-1 shrink-0" onClick={() => setConfirmPeriod(p)}>
-                      <CheckCircle2 className="h-3.5 w-3.5" />
-                      Confirm
-                    </Button>
-                  </div>
-                );
-              })
-            )}
-          </CardContent>
-        </Card>
-      ) : null}
-
+      <PaymentAccrualScheduleCard
+        periods={filterTaskId ? accrualSource : accrualPeriods}
+        poolTasks={poolTasks.map((t) => ({ id: t.id, name: t.name }))}
+        filterTaskId={filterTaskId}
+        filterTaskName={filterTask?.name ?? null}
+        loading={!!filterTaskId && taskPeriodsLoading}
+        canCancel
+        onPeriodSelect={setSelectedPeriod}
+        onPeriodCancel={handleCancelPeriod}
+      />
 
       <div className="grid gap-3 sm:grid-cols-3">
         <StatCard title={`This Month (${thisMonthLabel})`} summary={thisSummary} />
@@ -475,7 +460,11 @@ export default function AdminPayments() {
                     </tr>
                   ) : null}
                   {filteredRows.map((r) => (
-                    <tr key={r.id} className="border-t">
+                    <tr
+                      key={r.id}
+                      className="cursor-pointer border-t hover:bg-muted/30"
+                      onClick={() => setDetailEntryId(r.id)}
+                    >
                       <td className="px-3 py-2">{new Date(r.occurred_at).toLocaleString()}</td>
                       <td className="px-3 py-2">
                         <Badge variant={r.entry_type === 'incoming' ? 'default' : 'secondary'}>{r.entry_type}</Badge>
@@ -494,13 +483,24 @@ export default function AdminPayments() {
                               variant="ghost"
                               className="h-7 w-7"
                               title="Edit task payment"
-                              onClick={() => openTaskPaymentEdit(r.id)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openTaskPaymentEdit(r.id);
+                              }}
                             >
                               <Pencil className="h-4 w-4" />
                             </Button>
                           ) : null}
                           {r.source_kind === 'manual' ? (
-                            <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => deleteManual(r.id)}>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7 text-destructive"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteManual(r.id);
+                              }}
+                            >
                               <Trash2 className="h-4 w-4" />
                             </Button>
                           ) : null}
@@ -517,7 +517,11 @@ export default function AdminPayments() {
         <Card>
           <CardContent className="p-0">
             {filteredRows.map((r) => (
-              <div key={r.id} className="flex items-center justify-between gap-3 border-t px-3 py-2 first:border-t-0">
+              <div
+                key={r.id}
+                className="flex cursor-pointer items-center justify-between gap-3 border-t px-3 py-2 first:border-t-0 hover:bg-muted/30"
+                onClick={() => setDetailEntryId(r.id)}
+              >
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium">{r.category}</p>
                   <p className="text-xs text-muted-foreground">{new Date(r.occurred_at).toLocaleString()} · {r.source_kind}</p>
@@ -527,12 +531,29 @@ export default function AdminPayments() {
                     {r.currency} {r.amount.toFixed(2)}
                   </p>
                   {r.source_kind === 'task_auto' && entryById[r.id]?.pool_item_id ? (
-                    <Button size="icon" variant="ghost" className="h-7 w-7" title="Edit" onClick={() => openTaskPaymentEdit(r.id)}>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7"
+                      title="Edit"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openTaskPaymentEdit(r.id);
+                      }}
+                    >
                       <Pencil className="h-4 w-4" />
                     </Button>
                   ) : null}
                   {r.source_kind === 'manual' ? (
-                    <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => deleteManual(r.id)}>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7 text-destructive"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteManual(r.id);
+                      }}
+                    >
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   ) : null}
@@ -544,7 +565,7 @@ export default function AdminPayments() {
       ) : viewMode === 'list' ? (
         <div className="space-y-2">
           {filteredRows.map((r) => (
-            <Card key={r.id}>
+            <Card key={r.id} className="cursor-pointer transition-colors hover:bg-muted/20" onClick={() => setDetailEntryId(r.id)}>
               <CardContent className="flex items-center justify-between gap-3 p-3">
                 <div>
                   <p className="text-sm font-medium">{r.category}</p>
@@ -553,12 +574,29 @@ export default function AdminPayments() {
                 <div className="flex items-center gap-2">
                   <Badge variant={r.entry_type === 'incoming' ? 'default' : 'secondary'}>{r.entry_type}</Badge>
                   {r.source_kind === 'task_auto' && entryById[r.id]?.pool_item_id ? (
-                    <Button size="icon" variant="ghost" className="h-7 w-7" title="Edit" onClick={() => openTaskPaymentEdit(r.id)}>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7"
+                      title="Edit"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openTaskPaymentEdit(r.id);
+                      }}
+                    >
                       <Pencil className="h-4 w-4" />
                     </Button>
                   ) : null}
                   {r.source_kind === 'manual' ? (
-                    <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => deleteManual(r.id)}>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7 text-destructive"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteManual(r.id);
+                      }}
+                    >
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   ) : null}
@@ -570,7 +608,7 @@ export default function AdminPayments() {
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {filteredRows.map((r) => (
-            <Card key={r.id}>
+            <Card key={r.id} className="cursor-pointer transition-colors hover:bg-muted/20" onClick={() => setDetailEntryId(r.id)}>
               <CardContent className="space-y-2 p-4">
                 <div className="flex items-center justify-between">
                   <Badge variant={r.entry_type === 'incoming' ? 'default' : 'secondary'}>{r.entry_type}</Badge>
@@ -584,13 +622,29 @@ export default function AdminPayments() {
                 <p className="line-clamp-2 text-xs text-muted-foreground">{r.note || '-'}</p>
                 <div className="flex flex-wrap gap-2">
                   {r.source_kind === 'task_auto' && entryById[r.id]?.pool_item_id ? (
-                    <Button size="sm" variant="outline" className="h-8 gap-2 px-2" onClick={() => openTaskPaymentEdit(r.id)}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 gap-2 px-2"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openTaskPaymentEdit(r.id);
+                      }}
+                    >
                       <Pencil className="h-4 w-4" />
                       Edit
                     </Button>
                   ) : null}
                   {r.source_kind === 'manual' ? (
-                    <Button size="sm" variant="ghost" className="h-8 gap-2 px-2 text-destructive" onClick={() => deleteManual(r.id)}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 gap-2 px-2 text-destructive"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteManual(r.id);
+                      }}
+                    >
                       <Trash2 className="h-4 w-4" />
                       Delete
                     </Button>
@@ -602,21 +656,46 @@ export default function AdminPayments() {
         </div>
       )}
 
+      <PaymentEntryDetailDialog
+        open={!!detailEntry}
+        onOpenChange={(open) => !open && setDetailEntryId(null)}
+        entry={detailEntry}
+        taskName={detailTask?.name ?? null}
+        taskHref={detailTask ? `/admin/tasks?task=${detailTask.id}` : null}
+        accrualPeriod={detailAccrualPeriod}
+        onEdit={
+          detailEntry?.source_kind === 'task_auto' && detailEntry.pool_item_id
+            ? () => {
+                setDetailEntryId(null);
+                openTaskPaymentEdit(detailEntry.id);
+              }
+            : undefined
+        }
+        onDelete={
+          detailEntry?.source_kind === 'manual'
+            ? () => {
+                const id = detailEntry.id;
+                setDetailEntryId(null);
+                void deleteManual(id);
+              }
+            : undefined
+        }
+      />
+
       <TaskAutoPaymentEditDialog
         entry={editingTaskPayment}
         onClose={() => setEditingTaskPayment(null)}
         onSaved={() => void fetchAll()}
       />
 
-      <AccrualPeriodConfirmDialog
-        open={!!confirmPeriod}
-        onOpenChange={(open) => !open && setConfirmPeriod(null)}
-        period={confirmPeriod}
-        task={confirmPeriodTask}
-        onConfirmed={() => {
-          void fetchAll();
-          if (filterTaskId) void loadTaskScopedPeriods(filterTaskId);
-        }}
+      <AccrualPeriodHandleDialog
+        open={!!selectedPeriod}
+        onOpenChange={(open) => !open && setSelectedPeriod(null)}
+        period={selectedPeriod}
+        task={selectedPeriodTask}
+        taskHref={selectedPeriodTask ? `/admin/tasks?task=${selectedPeriodTask.id}` : null}
+        onConfirmed={() => void refreshAfterAccrualChange()}
+        onCancel={handleCancelPeriod}
       />
     </div>
   );

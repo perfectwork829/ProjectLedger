@@ -19,7 +19,8 @@ type Props = {
   onOpenChange: (open: boolean) => void;
   task: TaskPoolItemRecord | null;
   pendingPeriods: TaskPoolAccrualPeriodRow[];
-  onConfirmFinish: () => void;
+  canPromoteToProject?: boolean;
+  onConfirmFinish: (moveToProject: boolean) => void;
 };
 
 export default function TaskFinishPaymentDialog({
@@ -27,6 +28,7 @@ export default function TaskFinishPaymentDialog({
   onOpenChange,
   task,
   pendingPeriods,
+  canPromoteToProject = false,
   onConfirmFinish,
 }: Props) {
   const due = pendingPeriods.filter((p) => isPeriodPending(p));
@@ -42,6 +44,12 @@ export default function TaskFinishPaymentDialog({
                 <strong className="text-foreground">{task?.name}</strong> will be marked completed and
                 timestamped. You can still confirm any due payments on the Payments page.
               </p>
+              {canPromoteToProject ? (
+                <p>
+                  You can finish the task only, or also move it to <strong className="text-foreground">Projects</strong>{' '}
+                  now.
+                </p>
+              ) : null}
               {due.length > 0 ? (
                 <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
                   <p className="font-medium text-foreground mb-2">
@@ -70,9 +78,21 @@ export default function TaskFinishPaymentDialog({
             </div>
           </AlertDialogDescription>
         </AlertDialogHeader>
-        <AlertDialogFooter>
+        <AlertDialogFooter className={canPromoteToProject ? 'flex-col gap-2 sm:flex-row sm:justify-end' : undefined}>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirmFinish}>Mark completed</AlertDialogAction>
+          {canPromoteToProject ? (
+            <>
+              <AlertDialogAction
+                className="bg-secondary text-secondary-foreground hover:bg-secondary/80"
+                onClick={() => onConfirmFinish(false)}
+              >
+                Finish only
+              </AlertDialogAction>
+              <AlertDialogAction onClick={() => onConfirmFinish(true)}>Finish &amp; move to Projects</AlertDialogAction>
+            </>
+          ) : (
+            <AlertDialogAction onClick={() => onConfirmFinish(false)}>Mark completed</AlertDialogAction>
+          )}
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

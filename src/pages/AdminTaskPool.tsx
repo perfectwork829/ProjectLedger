@@ -25,8 +25,6 @@ import {
 import ModuleSearchBar from '@/components/ModuleSearchBar';
 import { LabeledLinksEditor } from '@/components/LabeledLinksEditor';
 import { LabeledLinksListWithCopy } from '@/components/LabeledLinksListWithCopy';
-import { CloudGoogleDriveUpload } from '@/components/CloudGoogleDriveUpload';
-import { CloudBoxUpload } from '@/components/CloudBoxUpload';
 import { CountrySelect } from '@/components/CountrySelect';
 import { canonicalCountryNameOrLegacy } from '@/lib/countries';
 import { TimezoneSelect } from '@/components/TimezoneSelect';
@@ -85,14 +83,22 @@ import {
   isoToDatetimeLocalInJst,
 } from '@/lib/jst';
 import { RichTextEditor } from '@/components/RichTextEditor';
+import { ReadmePanel, README_EDITOR_PLACEHOLDER } from '@/components/ReadmePanel';
 import { TagChipsInput } from '@/components/TagChipsInput';
 import { CopyDescriptionButton } from '@/components/CopyDescriptionButton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import PoolSubtaskKanban from '@/components/PoolSubtaskKanban';
 import PoolSubtaskDetailDialog from '@/components/PoolSubtaskDetailDialog';
 import { AlertTriangle, ArrowLeft, ArrowUpDown, Calendar, MessageSquare, Pencil, Plus, Trash2, FolderKanban, Link2, Clock, ListTodo } from 'lucide-react';
-import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from '@/components/ui/carousel';
 import { PRIORITY_BADGE_CLASS, PRIORITY_OPTIONS, PRIORITY_RANK, taskDescriptionPreview } from '@/lib/taskPriority';
+import ResolvedScreenshotCarousel from '@/components/ResolvedScreenshotCarousel';
+import { ScreenshotsDriveFolderField } from '@/components/ScreenshotsDriveFolderField';
+import {
+  SCREENSHOTS_DRIVE_FOLDER_META_KEY,
+  screenshotsFolderFromMetadata,
+  screenshotsToFormFields,
+  validateScreenshotsFolderUrl,
+} from '@/lib/screenshotDriveFolder';
 import {
   countPendingByPool,
   type TaskPoolAccrualPeriodRow,
@@ -103,6 +109,7 @@ import {
 } from '@/lib/taskPoolAccrualService';
 import TaskPaymentDueBadge from '@/components/TaskPaymentDueBadge';
 import TaskFinishPaymentDialog from '@/components/TaskFinishPaymentDialog';
+import TaskPromoteConfirmDialog from '@/components/TaskPromoteConfirmDialog';
 
 const MAIN_STACK_OPTIONS = ['angular', 'react', 'react_native', 'vue', 'nextjs', 'nodejs', 'laravel', 'django', 'flutter', 'other'] as const;
 const TASK_SOURCE_OPTIONS = ['upwork', 'freelancer', 'job_broker', 'linkedin', 'other_job_site', 'friend', 'discord_job_channel', 'telegram_channel', 'teams', 'facebook', 'github'] as const;
@@ -115,6 +122,7 @@ type PendingDel =
 const emptyForm = {
   name: '',
   description: '',
+  readme: '',
   taskSource: '',
   mainStack: '',
   skillsetTags: [] as string[],
@@ -153,7 +161,7 @@ const emptyForm = {
   withdrawFee: '',
   currency: 'USD',
   githubUrl: '',
-  screenshotUrls: [] as string[],
+  screenshotsDriveFolderUrl: '',
   sourceFileUrls: [] as string[],
 };
 
@@ -246,6 +254,7 @@ export default function AdminTaskPool() {
   const [editTaskAutoPayments, setEditTaskAutoPayments] = useState<TaskAutoPaymentSlice[]>([]);
   const [accrualPeriods, setAccrualPeriods] = useState<TaskPoolAccrualPeriodRow[]>([]);
   const [finishDialog, setFinishDialog] = useState<{ task: TaskPoolItemRecord; newStatus: string } | null>(null);
+  const [promoteConfirm, setPromoteConfirm] = useState<{ poolId: string; taskName: string } | null>(null);
 
   const formFees = useMemo(
     () =>
@@ -407,6 +416,7 @@ export default function AdminTaskPool() {
       const blob = [
         p.name,
         p.description,
+        p.readme,
         p.task_source,
         p.main_stack,
         p.skillset_csv,
@@ -525,9 +535,6 @@ export default function AdminTaskPool() {
       return;
     }
     setItems((prev) => prev.map((x) => (x.id === id ? (res.data as TaskPoolItemRecord) : x)));
-    if (patch.status === 'completed') {
-      await promoteIfNeeded(id, 'completed');
-    }
   };
 
   const applyDraggedPriority = async (target: TaskPoolItemRecord) => {
@@ -603,6 +610,7 @@ export default function AdminTaskPool() {
     setForm({
       name: row.name,
       description: row.description || '',
+      readme: row.readme || '',
       taskSource: row.task_source || '',
       mainStack: row.main_stack || '',
       skillsetTags: (row.skillset_csv || '')
@@ -652,7 +660,10 @@ export default function AdminTaskPool() {
       withdrawFee: Number(row.withdraw_fee ?? 0).toString(),
       currency: row.currency || 'USD',
       githubUrl: row.github_url || '',
-      screenshotUrls: screenshots.filter((s) => s.pool_item_id === row.id).map((s) => s.image_url),
+      ...screenshotsToFormFields(
+        screenshots.filter((s) => s.pool_item_id === row.id),
+        row.metadata_json,
+      ),
       sourceFileUrls: sourceFiles.filter((s) => s.pool_item_id === row.id).map((s) => s.file_url),
     });
     setDialogOpen(true);
@@ -795,11 +806,26 @@ export default function AdminTaskPool() {
     const normalizedMetadata = { ...metadata } as Record<string, unknown>;
     if (credentialRows.length > 0) normalizedMetadata.credentials = credentialRows;
     else delete normalizedMetadata.credentials;
+
+    try {
+      const folderUrl = validateScreenshotsFolderUrl(form.screenshotsDriveFolderUrl);
+      if (folderUrl) normalizedMetadata[SCREENSHOTS_DRIVE_FOLDER_META_KEY] = folderUrl;
+      else delete normalizedMetadata[SCREENSHOTS_DRIVE_FOLDER_META_KEY];
+    } catch (e) {
+      toast({
+        title: 'Screenshots folder invalid',
+        description: e instanceof Error ? e.message : 'Invalid folder link',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     setSaving(true);
     const payload = {
       user_id: user?.id || null,
       name: form.name.trim(),
       description: form.description.trim() || null,
+      readme: form.readme.trim() || null,
       task_source: form.taskSource.trim() || null,
       main_stack: form.mainStack || null,
       skillset_csv: toCsv(form.skillsetTags) || null,
@@ -854,15 +880,6 @@ export default function AdminTaskPool() {
     const poolId = saveResult.data.id as string;
 
     await supabase.from('task_pool_screenshots').delete().eq('pool_item_id', poolId);
-    if (form.screenshotUrls.length > 0) {
-      await supabase.from('task_pool_screenshots').insert(
-        form.screenshotUrls.map((url, index) => ({
-          pool_item_id: poolId,
-          image_url: url,
-          sort_order: index,
-        })),
-      );
-    }
 
     await supabase.from('task_pool_source_files').delete().eq('pool_item_id', poolId);
     if (form.sourceFileUrls.length > 0) {
@@ -902,7 +919,11 @@ export default function AdminTaskPool() {
     setDialogOpen(false);
     toast({ title: editingId ? 'Task updated' : 'Task created' });
     await refreshTaskPoolDataQuiet();
-    await promoteIfNeeded(poolId, form.status);
+    const newlyCompleted =
+      form.status === 'completed' && (existing?.status !== 'completed' || !editingId);
+    if (newlyCompleted && !existing?.promoted_project_id) {
+      setPromoteConfirm({ poolId, taskName: form.name.trim() });
+    }
   };
 
   const openEditLastHourlyAccrual = async (row: TaskPoolItemRecord) => {
@@ -1037,19 +1058,29 @@ export default function AdminTaskPool() {
     }
     const updated = res.data as TaskPoolItemRecord;
     setItems((prev) => prev.map((x) => (x.id === taskId ? updated : x)));
-    await promoteIfNeeded(taskId, newStatus);
     void refreshAccrualPeriods(
       items.map((x) => (x.id === taskId ? updated : x)),
       accounts,
     );
   };
 
-  const confirmFinishTask = async () => {
+  const confirmFinishTask = async (moveToProject: boolean) => {
     if (!finishDialog) return;
+    const { task } = finishDialog;
     const finishedAt = new Date().toISOString();
-    await applyDetailStatus(finishDialog.task.id, finishDialog.newStatus, finishedAt);
+    await applyDetailStatus(task.id, finishDialog.newStatus, finishedAt);
     setFinishDialog(null);
+    if (moveToProject && !task.promoted_project_id) {
+      await promoteIfNeeded(task.id, 'completed');
+    }
     toast({ title: 'Task completed', description: 'Confirm any due payments on the Payments page.' });
+  };
+
+  const confirmPromoteToProject = async () => {
+    if (!promoteConfirm) return;
+    const { poolId } = promoteConfirm;
+    setPromoteConfirm(null);
+    await promoteIfNeeded(poolId, 'completed');
   };
 
   const addSubtask = async () => {
@@ -1244,7 +1275,8 @@ export default function AdminTaskPool() {
             <div>
               <h2 className="text-2xl font-semibold tracking-tight text-foreground">Task pool</h2>
               <p className="text-sm text-muted-foreground">
-                Click a lead to open details and the full-width <strong>Task board</strong>. Set the lead to <strong>Completed</strong> to promote to Projects.
+                Click a lead to open details and the full-width <strong>Task board</strong>. When you mark a lead{' '}
+                <strong>Completed</strong>, you can choose whether to move it to Projects.
               </p>
             </div>
             <div className="flex w-full max-w-2xl gap-3">
@@ -1685,8 +1717,9 @@ export default function AdminTaskPool() {
               </CardHeader>
               <CardContent className="pt-4">
                 <Tabs defaultValue="overview" className="w-full">
-                  <TabsList className="grid w-full grid-cols-5">
+                  <TabsList className="grid w-full grid-cols-6">
                     <TabsTrigger value="overview">Overview</TabsTrigger>
+                    <TabsTrigger value="readme">README</TabsTrigger>
                     <TabsTrigger value="screenshots">Screenshots</TabsTrigger>
                     <TabsTrigger value="files">Source files</TabsTrigger>
                     <TabsTrigger value="chat">Chat</TabsTrigger>
@@ -1973,26 +2006,16 @@ export default function AdminTaskPool() {
                     </div>
                   </TabsContent>
 
+                  <TabsContent value="readme">
+                    <ReadmePanel readme={selected.readme} className="border-0 p-0" />
+                  </TabsContent>
+
                   <TabsContent value="screenshots" className="space-y-4">
-                    {selectedScreenshots.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">No screenshots.</p>
-                    ) : (
-                      <div className="px-12">
-                        <Carousel opts={{ align: 'start' }}>
-                          <CarouselContent>
-                            {selectedScreenshots.map((s) => (
-                              <CarouselItem key={s.id}>
-                                <div className="overflow-hidden rounded border bg-muted/20">
-                                  <img src={s.image_url} alt="" className="h-[320px] w-full object-cover" />
-                                </div>
-                              </CarouselItem>
-                            ))}
-                          </CarouselContent>
-                          <CarouselPrevious />
-                          <CarouselNext />
-                        </Carousel>
-                      </div>
-                    )}
+                    <ResolvedScreenshotCarousel
+                      rows={selectedScreenshots}
+                      folderUrl={screenshotsFolderFromMetadata(selected.metadata_json)}
+                      emptyMessage="No screenshots. Edit this task and add a Google Drive screenshots folder link."
+                    />
                   </TabsContent>
 
                   <TabsContent value="files" className="space-y-2">
@@ -2182,7 +2205,15 @@ export default function AdminTaskPool() {
         onOpenChange={(open) => !open && setFinishDialog(null)}
         task={finishDialog?.task ?? null}
         pendingPeriods={finishDialog ? accrualPeriods.filter((p) => p.pool_item_id === finishDialog.task.id) : []}
-        onConfirmFinish={() => void confirmFinishTask()}
+        canPromoteToProject={!!finishDialog && !finishDialog.task.promoted_project_id}
+        onConfirmFinish={(moveToProject) => void confirmFinishTask(moveToProject)}
+      />
+
+      <TaskPromoteConfirmDialog
+        open={!!promoteConfirm}
+        onOpenChange={(open) => !open && setPromoteConfirm(null)}
+        taskName={promoteConfirm?.taskName ?? null}
+        onConfirmPromote={() => void confirmPromoteToProject()}
       />
 
 
@@ -2211,6 +2242,20 @@ export default function AdminTaskPool() {
                 value={form.description}
                 onChange={(val) => setForm((p) => ({ ...p, description: val }))}
                 placeholder="Task details…"
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <div className="flex items-center justify-between gap-2">
+                <Label>README</Label>
+                <CopyDescriptionButton description={form.readme} />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Project handbook: overview, installation, known issues, version history.
+              </p>
+              <RichTextEditor
+                value={form.readme}
+                onChange={(val) => setForm((p) => ({ ...p, readme: val }))}
+                placeholder={README_EDITOR_PLACEHOLDER}
               />
             </div>
             <div className="space-y-2">
@@ -2642,56 +2687,6 @@ export default function AdminTaskPool() {
                 newRowLabel="Storage"
               />
             </div>
-            {(form.sourceStorageType === 'google_drive' || form.sourceStorageType === 'drive') && (
-              <div className="space-y-3 md:col-span-2">
-                <CloudGoogleDriveUpload
-                  title="Upload screenshots to Google Drive"
-                  accept="image/*"
-                  onUrlAdded={(url) => setForm((p) => ({ ...p, screenshotUrls: [...p.screenshotUrls, url] }))}
-                />
-                <CloudGoogleDriveUpload
-                  title="Upload source files to Google Drive"
-                  accept="*/*"
-                  onUrlAdded={(url) =>
-                    setForm((p) => {
-                      const withFile = { ...p, sourceFileUrls: [...p.sourceFileUrls, url] };
-                      if (serializeLabeledLinks(p.sourceStorageLinks).length === 0) {
-                        return {
-                          ...withFile,
-                          sourceStorageLinks: [...p.sourceStorageLinks.filter((l) => l.url.trim()), { label: 'Drive', url }],
-                        };
-                      }
-                      return withFile;
-                    })
-                  }
-                />
-              </div>
-            )}
-            {form.sourceStorageType === 'box' && (
-              <div className="space-y-3 md:col-span-2">
-                <CloudBoxUpload
-                  title="Upload screenshots to Box"
-                  accept="image/*"
-                  onUrlAdded={(url) => setForm((p) => ({ ...p, screenshotUrls: [...p.screenshotUrls, url] }))}
-                />
-                <CloudBoxUpload
-                  title="Upload source files to Box"
-                  accept="*/*"
-                  onUrlAdded={(url) =>
-                    setForm((p) => {
-                      const withFile = { ...p, sourceFileUrls: [...p.sourceFileUrls, url] };
-                      if (serializeLabeledLinks(p.sourceStorageLinks).length === 0) {
-                        return {
-                          ...withFile,
-                          sourceStorageLinks: [...p.sourceStorageLinks.filter((l) => l.url.trim()), { label: 'Box', url }],
-                        };
-                      }
-                      return withFile;
-                    })
-                  }
-                />
-              </div>
-            )}
             <div className="space-y-2 md:col-span-2">
               <Label>Initial document URLs</Label>
               <LabeledLinksEditor
@@ -2717,22 +2712,10 @@ export default function AdminTaskPool() {
               <Label>Metadata JSON</Label>
               <Textarea className="font-mono min-h-[100px]" value={form.metadataJson} onChange={(e) => setForm((p) => ({ ...p, metadataJson: e.target.value }))} />
             </div>
-            <div className="space-y-2 md:col-span-2">
-              <Label>Screenshot URLs (one per line)</Label>
-              <Textarea
-                className="min-h-[90px]"
-                value={form.screenshotUrls.join('\n')}
-                onChange={(e) =>
-                  setForm((p) => ({
-                    ...p,
-                    screenshotUrls: e.target.value
-                      .split('\n')
-                      .map((x) => x.trim())
-                      .filter(Boolean),
-                  }))
-                }
-              />
-            </div>
+            <ScreenshotsDriveFolderField
+              folderUrl={form.screenshotsDriveFolderUrl}
+              onFolderUrlChange={(url) => setForm((p) => ({ ...p, screenshotsDriveFolderUrl: url }))}
+            />
             <div className="space-y-2 md:col-span-2">
               <Label>Source file URLs (one per line)</Label>
               <Textarea

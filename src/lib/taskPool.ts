@@ -73,6 +73,8 @@ export interface TaskPoolItemRecord {
   user_id: string | null;
   name: string;
   description: string | null;
+  /** HTML handbook: overview, installation, issues, versions, etc. */
+  readme: string | null;
   skillset_csv: string | null;
   tags_csv: string | null;
   main_stack: string | null;

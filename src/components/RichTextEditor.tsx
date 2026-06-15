@@ -1,6 +1,7 @@
 import React from 'react';
-import 'react-quill-new/dist/quill.snow.css';
 import { cn } from '@/lib/utils';
+
+const QuillEditorField = React.lazy(() => import('@/components/QuillEditorField'));
 
 type RichTextEditorProps = {
   value: string;
@@ -9,34 +10,21 @@ type RichTextEditorProps = {
   className?: string;
 };
 
-const ReactQuill = React.lazy(() => import('react-quill-new'));
-
 export function RichTextEditor({ value, onChange, placeholder, className }: RichTextEditorProps) {
   return (
     <React.Suspense
       fallback={
-        <div className={cn('h-[200px] border rounded-md flex items-center justify-center text-sm text-muted-foreground', className)}>
+        <div
+          className={cn(
+            'h-[200px] border rounded-md flex items-center justify-center text-sm text-muted-foreground',
+            className,
+          )}
+        >
           Loading editor…
         </div>
       }
     >
-      <div className={cn('rich-editor [&_.ql-editor]:min-h-[180px]', className)}>
-        <ReactQuill
-          theme="snow"
-          value={value}
-          onChange={onChange}
-          modules={{
-            toolbar: [
-              [{ header: [1, 2, 3, false] }],
-              ['bold', 'italic', 'underline', 'strike'],
-              [{ list: 'ordered' }, { list: 'bullet' }],
-              ['link'],
-              ['clean'],
-            ],
-          }}
-          placeholder={placeholder || 'Write here…'}
-        />
-      </div>
+      <QuillEditorField value={value} onChange={onChange} placeholder={placeholder} className={className} />
     </React.Suspense>
   );
 }

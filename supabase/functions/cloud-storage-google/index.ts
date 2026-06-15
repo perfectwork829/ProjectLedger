@@ -7,11 +7,185 @@ const corsHeaders: Record<string, string> = {
 };
 
 type Body = {
-  action: 'auth_url' | 'exchange' | 'access_token' | 'disconnect';
+  action: 'auth_url' | 'exchange' | 'access_token' | 'disconnect' | 'list_folder_images';
   redirect_uri?: string;
   state?: string;
   code?: string;
+  folder_url?: string;
+  folder_id?: string;
 };
+
+const IMAGE_MIME_PREFIXES = ['image/'];
+
+function extractFolderId(folderUrlOrId: string): string | null {
+  const t = folderUrlOrId.trim();
+  if (!t) return null;
+  if (/^[a-zA-Z0-9_-]{10,}$/.test(t) && !t.includes('/')) return t;
+  const m = t.match(/\/folders\/([a-zA-Z0-9_-]+)/i);
+  return m?.[1] ?? null;
+}
+
+async function getValidAccessToken(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  clientId: string,
+  clientSecret: string,
+): Promise<string | null> {
+  const { data: row, error: selErr } = await supabase
+    .from('user_cloud_storage_connections')
+    .select('id, access_token, refresh_token, token_expires_at')
+    .eq('user_id', userId)
+    .eq('provider', 'google_drive')
+    .maybeSingle();
+
+  if (selErr || (!row?.refresh_token && !row?.access_token)) return null;
+
+  const stillValid =
+    row.access_token &&
+    row.token_expires_at &&
+    new Date(row.token_expires_at as string).getTime() > Date.now() + 60_000;
+
+  if (stillValid) return row.access_token as string;
+
+  if (!row.refresh_token) return null;
+
+  const tr = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      grant_type: 'refresh_token',
+      refresh_token: row.refresh_token as string,
+    }),
+  });
+  const tj = await tr.json();
+  if (!tr.ok) return null;
+
+  const newAccess = tj.access_token as string;
+  const newExpires = new Date(Date.now() + Number(tj.expires_in ?? 3600) * 1000).toISOString();
+
+  await supabase
+    .from('user_cloud_storage_connections')
+    .update({
+      access_token: newAccess,
+      token_expires_at: newExpires,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', row.id);
+
+  return newAccess;
+}
+
+type DriveListedFile = { id: string; name: string; mimeType?: string; image_url: string };
+
+async function listDriveFolderImages(
+  folderId: string,
+  accessToken: string | null,
+  apiKey: string | null,
+): Promise<{ files: DriveListedFile[]; error?: string }> {
+  const files: DriveListedFile[] = [];
+  let pageToken: string | undefined;
+
+  do {
+    const url = new URL('https://www.googleapis.com/drive/v3/files');
+    url.searchParams.set('q', `'${folderId}' in parents and trashed=false`);
+    url.searchParams.set('fields', 'nextPageToken,files(id,name,mimeType,modifiedTime)');
+    url.searchParams.set('pageSize', '200');
+    url.searchParams.set('orderBy', 'name');
+    if (pageToken) url.searchParams.set('pageToken', pageToken);
+    if (apiKey && !accessToken) url.searchParams.set('key', apiKey);
+
+    const headers: Record<string, string> = {};
+    if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+
+    const listRes = await fetch(url.toString(), { headers });
+    const listJson = await listRes.json();
+    if (!listRes.ok) {
+      return {
+        files: [],
+        error: (listJson.error?.message as string) || 'Could not list folder',
+      };
+    }
+
+    for (const f of listJson.files ?? []) {
+      const mime = (f.mimeType as string) || '';
+      if (!IMAGE_MIME_PREFIXES.some((p) => mime.startsWith(p))) continue;
+      const id = f.id as string;
+      files.push({
+        id,
+        name: (f.name as string) || 'Image',
+        mimeType: mime,
+        image_url: `https://drive.google.com/uc?export=view&id=${id}`,
+      });
+    }
+    pageToken = listJson.nextPageToken as string | undefined;
+  } while (pageToken);
+
+  return { files };
+}
+
+const SCRAPE_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+/** List images from a publicly shared folder (Anyone with the link) — no API key or OAuth. */
+async function scrapePublicFolderImages(folderId: string): Promise<DriveListedFile[]> {
+  const pages = [
+    `https://drive.google.com/embeddedfolderview?id=${folderId}#grid`,
+    `https://drive.google.com/drive/folders/${folderId}`,
+  ];
+
+  for (const pageUrl of pages) {
+    try {
+      const res = await fetch(pageUrl, { headers: { 'User-Agent': SCRAPE_UA } });
+      if (!res.ok) continue;
+      const html = await res.text();
+      const parsed = parsePublicFolderHtml(html, folderId);
+      if (parsed.length > 0) return parsed;
+    } catch {
+      /* try next page */
+    }
+  }
+  return [];
+}
+
+function parsePublicFolderHtml(html: string, folderId: string): DriveListedFile[] {
+  const byId = new Map<string, DriveListedFile>();
+
+  const add = (id: string, name?: string) => {
+    if (!id || id === folderId || id.length < 20) return;
+    if (byId.has(id)) return;
+    byId.set(id, {
+      id,
+      name: name?.trim() || 'Screenshot',
+      image_url: `https://drive.google.com/uc?export=view&id=${id}`,
+    });
+  };
+
+  // JSON blobs with image mime types
+  for (const m of html.matchAll(
+    /\["([a-zA-Z0-9_-]{25,})","([^"]*)"[^\]]*?"image\/(png|jpe?g|gif|webp|bmp|svg\+xml|heic|heif)"/gi,
+  )) {
+    add(m[1], m[2]);
+  }
+
+  // /file/d/ID/view links (common in embedded folder grid)
+  for (const m of html.matchAll(/\/file\/d\/([a-zA-Z0-9_-]{25,})(?:\/view)?/g)) {
+    add(m[1]);
+  }
+
+  // uc?export=view&id= links
+  for (const m of html.matchAll(/[?&]id=([a-zA-Z0-9_-]{25,})/g)) {
+    add(m[1]);
+  }
+
+  // data-id attributes in grid tiles
+  for (const m of html.matchAll(/data-id="([a-zA-Z0-9_-]{25,})"/g)) {
+    add(m[1]);
+  }
+
+  return [...byId.values()];
+}
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -20,10 +194,11 @@ serve(async (req) => {
 
   try {
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      return json({ error: 'Missing Authorization' }, 401);
+    if (!authHeader?.startsWith('Bearer ')) {
+      return json({ error: 'Missing or invalid Authorization header' }, 401);
     }
 
+    const jwt = authHeader.replace(/^Bearer\s+/i, '').trim();
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
     const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
     const supabase = createClient(supabaseUrl, supabaseAnonKey, {
@@ -33,9 +208,12 @@ serve(async (req) => {
     const {
       data: { user },
       error: userErr,
-    } = await supabase.auth.getUser();
+    } = await supabase.auth.getUser(jwt);
     if (userErr || !user) {
-      return json({ error: 'Unauthorized' }, 401);
+      return json(
+        { error: userErr?.message || 'Unauthorized — sign in to the app and try again' },
+        401,
+      );
     }
 
     const body = (await req.json()) as Body;
@@ -55,7 +233,7 @@ serve(async (req) => {
         redirect_uri: redirectUri,
         response_type: 'code',
         scope:
-          'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email openid',
+          'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email openid',
         access_type: 'offline',
         prompt: 'consent',
       });
@@ -128,61 +306,46 @@ serve(async (req) => {
         return json({ error: 'Server missing Google OAuth env' }, 500);
       }
 
-      const { data: row, error: selErr } = await supabase
-        .from('user_cloud_storage_connections')
-        .select('id, access_token, refresh_token, token_expires_at')
-        .eq('user_id', user.id)
-        .eq('provider', 'google_drive')
-        .maybeSingle();
-
-      if (selErr) {
-        return json({ error: selErr.message }, 400);
+      const token = await getValidAccessToken(supabase, user.id, clientId, clientSecret);
+      if (!token) {
+        return json({ error: 'Not connected or session expired; reconnect Google Drive' }, 400);
       }
-      if (!row?.refresh_token && !row?.access_token) {
-        return json({ error: 'Not connected' }, 400);
-      }
+      return json({ access_token: token });
+    }
 
-      const stillValid =
-        row.access_token &&
-        row.token_expires_at &&
-        new Date(row.token_expires_at as string).getTime() > Date.now() + 60_000;
-
-      if (stillValid) {
-        return json({ access_token: row.access_token });
+    if (body.action === 'list_folder_images') {
+      const folderId =
+        body.folder_id?.trim() || extractFolderId(body.folder_url?.trim() ?? '');
+      if (!folderId) {
+        return json({ error: 'folder_url or folder_id required' }, 400);
       }
 
-      if (!row.refresh_token) {
-        return json({ error: 'Session expired; reconnect Google Drive' }, 400);
+      // 1) Public shared folder — no API key or Drive connect required
+      const scraped = await scrapePublicFolderImages(folderId);
+      if (scraped.length > 0) return json({ files: scraped });
+
+      const apiKey = Deno.env.get('GOOGLE_API_KEY')?.trim() || null;
+      if (apiKey) {
+        const publicList = await listDriveFolderImages(folderId, null, apiKey);
+        if (!publicList.error && publicList.files.length > 0) return json({ files: publicList.files });
       }
 
-      const tr = await fetch('https://oauth2.googleapis.com/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          client_id: clientId,
-          client_secret: clientSecret,
-          grant_type: 'refresh_token',
-          refresh_token: row.refresh_token as string,
-        }),
-      });
-      const tj = await tr.json();
-      if (!tr.ok) {
-        return json({ error: tj.error_description || tj.error || 'Refresh failed' }, 400);
+      let accessToken: string | null = null;
+      if (clientId && clientSecret) {
+        accessToken = await getValidAccessToken(supabase, user.id, clientId, clientSecret);
+      }
+      if (accessToken) {
+        const oauthList = await listDriveFolderImages(folderId, accessToken, null);
+        if (!oauthList.error && oauthList.files.length > 0) return json({ files: oauthList.files });
       }
 
-      const newAccess = tj.access_token as string;
-      const newExpires = new Date(Date.now() + Number(tj.expires_in ?? 3600) * 1000).toISOString();
-
-      await supabase
-        .from('user_cloud_storage_connections')
-        .update({
-          access_token: newAccess,
-          token_expires_at: newExpires,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', row.id);
-
-      return json({ access_token: newAccess });
+      return json(
+        {
+          error:
+            'No images found in this folder. Use a /drive/folders/… link, set the folder and every image to Anyone with the link, and use PNG/JPG files (not Google Docs).',
+        },
+        400,
+      );
     }
 
     if (body.action === 'disconnect') {

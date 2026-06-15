@@ -13,7 +13,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { AccountRef, ClientRef, loadProjectDependencies, PersonnelRef, ProjectChatMessage, ProjectRecord, ProjectScreenshot, ProjectTask } from '@/lib/projects';
-import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from '@/components/ui/carousel';
+import ResolvedScreenshotCarousel from '@/components/ResolvedScreenshotCarousel';
+import { screenshotsFolderFromMetadata } from '@/lib/screenshotDriveFolder';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,6 +27,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { PanelLeftClose, PanelLeftOpen, Trash2 } from 'lucide-react';
 import { CopyDescriptionButton } from '@/components/CopyDescriptionButton';
+import { ReadmePanel } from '@/components/ReadmePanel';
 import { LabeledLinksListWithCopy, UrlFieldWithCopy } from '@/components/LabeledLinksListWithCopy';
 import { parseLabeledLinks } from '@/lib/taskPool';
 
@@ -93,7 +95,7 @@ export default function Projects() {
     const q = searchInput.trim().toLowerCase();
     if (!q) return list;
     return list.filter((p) =>
-      [p.name, p.description, p.project_source, p.main_stack, p.skillset_csv, p.tags_csv, p.status, p.priority]
+      [p.name, p.description, p.readme, p.project_source, p.main_stack, p.skillset_csv, p.tags_csv, p.status, p.priority]
         .filter(Boolean)
         .join(' ')
         .toLowerCase()
@@ -382,8 +384,9 @@ export default function Projects() {
               </div>
 
               <Tabs defaultValue="overview" className="w-full">
-                <TabsList className="grid w-full grid-cols-4">
+                <TabsList className="grid w-full grid-cols-5">
                   <TabsTrigger value="overview">Overview</TabsTrigger>
+                  <TabsTrigger value="readme">README</TabsTrigger>
                   <TabsTrigger value="screenshots">Screenshots</TabsTrigger>
                   <TabsTrigger value="chat">Chat</TabsTrigger>
                   <TabsTrigger value="tasks">Tasks</TabsTrigger>
@@ -424,26 +427,20 @@ export default function Projects() {
                   </div>
                 </TabsContent>
 
+                <TabsContent value="readme">
+                  <ReadmePanel
+                    readme={selectedProject.readme}
+                    emptyHtml="<p>No README yet. Ask your admin to add overview, installation, known issues, and versions.</p>"
+                    className="border-0 p-0"
+                  />
+                </TabsContent>
+
                 <TabsContent value="screenshots">
-                  {selectedScreenshots.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No screenshots uploaded yet.</p>
-                  ) : (
-                    <div className="px-12">
-                      <Carousel opts={{ align: 'start' }}>
-                        <CarouselContent>
-                          {selectedScreenshots.map((s) => (
-                            <CarouselItem key={s.id}>
-                              <div className="overflow-hidden rounded border bg-muted/20">
-                                <img src={s.image_url} alt="Screenshot" className="h-[320px] w-full object-cover" />
-                              </div>
-                            </CarouselItem>
-                          ))}
-                        </CarouselContent>
-                        <CarouselPrevious />
-                        <CarouselNext />
-                      </Carousel>
-                    </div>
-                  )}
+                  <ResolvedScreenshotCarousel
+                    rows={selectedScreenshots}
+                    folderUrl={screenshotsFolderFromMetadata(selectedProject.metadata_json)}
+                    emptyMessage="No screenshots yet."
+                  />
                 </TabsContent>
 
                 <TabsContent value="chat" className="space-y-3">

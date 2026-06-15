@@ -1,28 +1,89 @@
-import { supabase } from '@/lib/supabase';
+import { SUPABASE_ANON_KEY, supabase } from '@/lib/supabase';
+import { ensureSupabaseAccessTokenFresh } from '@/lib/supabaseJwtRetry';
 
 export type GoogleDriveInvokeResult<T> = { data: T | null; error: Error | null };
 
+type InvokeBody = Record<string, unknown>;
+
+async function requireUserAccessToken(): Promise<string> {
+  const fresh = await ensureSupabaseAccessTokenFresh();
+  if (!fresh.ok) {
+    throw new Error(fresh.errorMessage || 'Session expired. Sign out and sign in again.');
+  }
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  if (!token) {
+    throw new Error('You must be signed in to use Google Drive.');
+  }
+  return token;
+}
+
+/** Invoke cloud-storage-google with a fresh user JWT (avoids 401 from expired/missing auth). */
+async function invokeGoogleDrive<T>(body: InvokeBody) {
+  const token = await requireUserAccessToken();
+  const res = await supabase.functions.invoke<T>('cloud-storage-google', {
+    body,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      apikey: SUPABASE_ANON_KEY,
+    },
+  });
+
+  if (res.error) {
+    const ctx = res.error as Error & { context?: Response };
+    const status = ctx.context?.status;
+    let detail = res.error.message;
+    if (ctx.context) {
+      try {
+        const j = (await ctx.context.clone().json()) as { error?: string };
+        if (j?.error) detail = j.error;
+      } catch {
+        /* ignore */
+      }
+    }
+    if (status === 401 || /unauthorized/i.test(detail)) {
+      throw new Error(
+        `${detail} Sign out and sign in again. If it persists, redeploy the cloud-storage-google edge function.`,
+      );
+    }
+    throw new Error(detail || 'Google Drive request failed');
+  }
+
+  const data = res.data as { error?: string } | null;
+  if (data && typeof data === 'object' && 'error' in data && data.error) {
+    throw new Error(data.error);
+  }
+
+  return res;
+}
+
 export async function googleDriveOAuthUrl(redirectUri: string, state?: string) {
-  return supabase.functions.invoke<{ url?: string; error?: string }>('cloud-storage-google', {
-    body: { action: 'auth_url', redirect_uri: redirectUri, state },
+  return invokeGoogleDrive<{ url?: string; error?: string }>({
+    action: 'auth_url',
+    redirect_uri: redirectUri,
+    state,
   });
 }
 
 export async function googleDriveExchangeCode(code: string, redirectUri: string) {
-  return supabase.functions.invoke<{ ok?: boolean; email?: string; error?: string }>('cloud-storage-google', {
-    body: { action: 'exchange', code, redirect_uri: redirectUri },
+  return invokeGoogleDrive<{ ok?: boolean; email?: string; error?: string }>({
+    action: 'exchange',
+    code,
+    redirect_uri: redirectUri,
   });
 }
 
 export async function googleDriveAccessToken() {
-  return supabase.functions.invoke<{ access_token?: string; error?: string }>('cloud-storage-google', {
-    body: { action: 'access_token' },
+  return invokeGoogleDrive<{ access_token?: string; error?: string }>({
+    action: 'access_token',
   });
 }
 
 export async function googleDriveDisconnect() {
-  return supabase.functions.invoke<{ ok?: boolean; error?: string }>('cloud-storage-google', {
-    body: { action: 'disconnect' },
+  return invokeGoogleDrive<{ ok?: boolean; error?: string }>({
+    action: 'disconnect',
   });
 }
 
@@ -34,7 +95,24 @@ export async function fetchGoogleDriveConnectionRow() {
     .maybeSingle();
 }
 
-/** Multipart upload to the user's Drive (drive.file scope). Returns a shareable view URL. */
+export type DriveFolderImage = {
+  id: string;
+  name: string;
+  image_url: string;
+};
+
+/** Fallback: list folder via edge function (server GOOGLE_API_KEY or connected Drive). */
+export async function googleDriveListFolderImagesViaEdge(folderUrlOrId: string): Promise<DriveFolderImage[]> {
+  const res = await invokeGoogleDrive<{
+    files?: DriveFolderImage[];
+    error?: string;
+  }>({
+    action: 'list_folder_images',
+    folder_url: folderUrlOrId.trim(),
+  });
+  return res.data?.files ?? [];
+}
+
 export async function uploadFileToGoogleDrive(file: File, accessToken: string): Promise<string> {
   const metadata = { name: file.name };
   const form = new FormData();
@@ -53,7 +131,24 @@ export async function uploadFileToGoogleDrive(file: File, accessToken: string): 
   if (!res.ok) {
     throw new Error(j.error?.message || res.statusText || 'Drive upload failed');
   }
+  if (!j.id) throw new Error('Drive did not return a file id');
+
+  try {
+    await fetch(`https://www.googleapis.com/drive/v3/files/${j.id}/permissions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ role: 'reader', type: 'anyone' }),
+    });
+  } catch {
+    /* Preview may still work if file was already shared */
+  }
+
+  if (file.type.startsWith('image/')) {
+    return `https://drive.google.com/uc?export=view&id=${j.id}`;
+  }
   if (j.webViewLink) return j.webViewLink;
-  if (j.id) return `https://drive.google.com/file/d/${j.id}/view`;
-  throw new Error('Drive did not return a link');
+  return `https://drive.google.com/file/d/${j.id}/view`;
 }

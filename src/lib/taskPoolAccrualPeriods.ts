@@ -20,6 +20,7 @@ export interface TaskPoolAccrualPeriodRow {
   net_amount: number | null;
   milestone_id: string | null;
   confirmed_at: string | null;
+  cancelled_at: string | null;
   payment_entry_id: string | null;
   created_at: string;
   updated_at: string;
@@ -27,7 +28,7 @@ export interface TaskPoolAccrualPeriodRow {
 
 export type AccrualPeriodSpec = Omit<
   TaskPoolAccrualPeriodRow,
-  'id' | 'pool_item_id' | 'created_at' | 'updated_at' | 'tracked_hours' | 'billable_hours' | 'payment_received' | 'gross_amount' | 'net_amount' | 'confirmed_at' | 'payment_entry_id'
+  'id' | 'pool_item_id' | 'created_at' | 'updated_at' | 'tracked_hours' | 'billable_hours' | 'payment_received' | 'gross_amount' | 'net_amount' | 'confirmed_at' | 'cancelled_at' | 'payment_entry_id'
 > & {
   tracked_hours?: number | null;
 };
@@ -185,9 +186,29 @@ export function buildExpectedAccrualPeriodSpecs(
   return specs;
 }
 
+export function isPeriodCancelled(period: TaskPoolAccrualPeriodRow): boolean {
+  return !!period.cancelled_at;
+}
+
 export function isPeriodConfirmable(period: TaskPoolAccrualPeriodRow, todayYmd: string = formatJstYmd(new Date())): boolean {
-  if (period.confirmed_at) return false;
+  if (period.confirmed_at || period.cancelled_at) return false;
   return compareJstYmd(todayYmd, period.due_confirm_on) >= 0;
+}
+
+export function isPeriodUnconfirmed(period: TaskPoolAccrualPeriodRow): boolean {
+  return !period.confirmed_at && !period.cancelled_at;
+}
+
+/** Past the JST due-confirm date and still not confirmed. */
+export function isPeriodOverdue(period: TaskPoolAccrualPeriodRow, todayYmd: string = formatJstYmd(new Date())): boolean {
+  if (period.confirmed_at || period.cancelled_at) return false;
+  return compareJstYmd(todayYmd, period.due_confirm_on) > 0;
+}
+
+/** Scheduled accrual not yet due for confirmation (JST). */
+export function isPeriodUpcoming(period: TaskPoolAccrualPeriodRow, todayYmd: string = formatJstYmd(new Date())): boolean {
+  if (period.confirmed_at || period.cancelled_at) return false;
+  return compareJstYmd(todayYmd, period.due_confirm_on) < 0;
 }
 
 export function isPeriodPending(period: TaskPoolAccrualPeriodRow, todayYmd: string = formatJstYmd(new Date())): boolean {

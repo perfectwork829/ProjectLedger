@@ -45,7 +45,7 @@ import PoolSubtaskKanban from '@/components/PoolSubtaskKanban';
 import PoolSubtaskDetailDialog from '@/components/PoolSubtaskDetailDialog';
 import { LabeledLinksListWithCopy } from '@/components/LabeledLinksListWithCopy';
 import { CopyDescriptionButton } from '@/components/CopyDescriptionButton';
-import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from '@/components/ui/carousel';
+import { ReadmePanel } from '@/components/ReadmePanel';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -58,9 +58,12 @@ import {
 } from '@/components/ui/alert-dialog';
 import { ArrowLeft, ArrowUpDown, Pencil, Trash2 } from 'lucide-react';
 import { PRIORITY_BADGE_CLASS, PRIORITY_OPTIONS, PRIORITY_RANK, taskDescriptionPreview } from '@/lib/taskPriority';
+import ResolvedScreenshotCarousel from '@/components/ResolvedScreenshotCarousel';
+import { screenshotsFolderFromMetadata } from '@/lib/screenshotDriveFolder';
 import { countPendingByPool, type TaskPoolAccrualPeriodRow } from '@/lib/taskPoolAccrualPeriods';
 import { fetchAllAccrualPeriods } from '@/lib/taskPoolAccrualService';
 import TaskPaymentDueBadge from '@/components/TaskPaymentDueBadge';
+import TaskFinishPaymentDialog from '@/components/TaskFinishPaymentDialog';
 
 export default function TaskPool() {
   const { user, hasRole } = useAuth();
@@ -107,6 +110,7 @@ export default function TaskPool() {
   const [newAssignee, setNewAssignee] = useState('');
   const [newSubtaskColumn, setNewSubtaskColumn] = useState<PoolSubtaskStatus>('todo');
   const [taskDeleteConfirm, setTaskDeleteConfirm] = useState<{ id: string; title: string } | null>(null);
+  const [finishDialog, setFinishDialog] = useState<{ task: TaskPoolItemRecord } | null>(null);
   const [subtaskDetailId, setSubtaskDetailId] = useState<string | null>(null);
   const [accrualPeriods, setAccrualPeriods] = useState<TaskPoolAccrualPeriodRow[]>([]);
 
@@ -203,7 +207,7 @@ export default function TaskPool() {
     const q = searchInput.trim().toLowerCase();
     if (!q) return itemsForClientFilter;
     return itemsForClientFilter.filter((p) =>
-      [p.name, p.description, p.task_source, p.main_stack, p.skillset_csv, p.tags_csv, p.status].filter(Boolean).join(' ').toLowerCase().includes(q),
+      [p.name, p.description, p.readme, p.task_source, p.main_stack, p.skillset_csv, p.tags_csv, p.status].filter(Boolean).join(' ').toLowerCase().includes(q),
     );
   }, [itemsForClientFilter, searchInput]);
 
@@ -327,26 +331,50 @@ export default function TaskPool() {
 
   const updatePoolStatus = async (newStatus: string) => {
     if (!selected) return;
-    const res = await supabase
-      .from('task_pool_items')
-      .update({ status: newStatus, updated_at: new Date().toISOString() })
-      .eq('id', selected.id)
-      .select('*')
-      .single();
+    if (newStatus === 'completed' && selected.status !== 'completed') {
+      setFinishDialog({ task: selected });
+      return;
+    }
+    await applyPoolStatus(selected.id, newStatus);
+  };
+
+  const promoteIfNeeded = async (poolId: string) => {
+    const { projectId, error } = await promoteCompletedPoolItemToProject(poolId);
+    if (error) {
+      toast({ title: 'Could not create project', description: error, variant: 'destructive' });
+      return;
+    }
+    if (projectId) {
+      toast({ title: 'Moved to Projects', description: 'This lead is now an active project.' });
+      const row = await supabase.from('task_pool_items').select('*').eq('id', poolId).maybeSingle();
+      if (row.data) setItems((prev) => prev.map((x) => (x.id === poolId ? (row.data as TaskPoolItemRecord) : x)));
+    }
+  };
+
+  const applyPoolStatus = async (taskId: string, newStatus: string, finishedAt?: string) => {
+    const patch: Record<string, unknown> = {
+      status: newStatus,
+      updated_at: new Date().toISOString(),
+    };
+    if (finishedAt) patch.finished_at = finishedAt;
+    const res = await supabase.from('task_pool_items').update(patch).eq('id', taskId).select('*').single();
     if (res.error || !res.data) {
       toast({ title: 'Update failed', description: res.error?.message, variant: 'destructive' });
       return;
     }
-    setItems((prev) => prev.map((x) => (x.id === selected.id ? (res.data as TaskPoolItemRecord) : x)));
-    if (newStatus === 'completed') {
-      const { projectId, error } = await promoteCompletedPoolItemToProject(selected.id);
-      if (error) toast({ title: 'Could not create project', description: error, variant: 'destructive' });
-      else if (projectId) {
-        toast({ title: 'Moved to Projects', description: 'This lead is now an active project.' });
-        const row = await supabase.from('task_pool_items').select('*').eq('id', selected.id).maybeSingle();
-        if (row.data) setItems((prev) => prev.map((x) => (x.id === selected.id ? (row.data as TaskPoolItemRecord) : x)));
-      }
+    setItems((prev) => prev.map((x) => (x.id === taskId ? (res.data as TaskPoolItemRecord) : x)));
+  };
+
+  const confirmFinishTask = async (moveToProject: boolean) => {
+    if (!finishDialog) return;
+    const { task } = finishDialog;
+    const finishedAt = new Date().toISOString();
+    await applyPoolStatus(task.id, 'completed', finishedAt);
+    setFinishDialog(null);
+    if (moveToProject && !task.promoted_project_id) {
+      await promoteIfNeeded(task.id);
     }
+    toast({ title: 'Task completed' });
   };
 
   const addChat = async () => {
@@ -944,8 +972,9 @@ export default function TaskPool() {
               </div>
 
               <Tabs defaultValue="overview" className="w-full">
-                <TabsList className="grid w-full grid-cols-5">
+                <TabsList className="grid w-full grid-cols-6">
                   <TabsTrigger value="overview">Overview</TabsTrigger>
+                  <TabsTrigger value="readme">README</TabsTrigger>
                   <TabsTrigger value="screenshots">Screenshots</TabsTrigger>
                   <TabsTrigger value="files">Source files</TabsTrigger>
                   <TabsTrigger value="chat">Chat</TabsTrigger>
@@ -1028,26 +1057,20 @@ export default function TaskPool() {
                   <TaskPoolCredentials metadata={selected.metadata_json} />
                 </TabsContent>
 
+                <TabsContent value="readme">
+                  <ReadmePanel
+                    readme={selected.readme}
+                    emptyHtml="<p>No README yet. Ask your admin to add overview, installation, known issues, and versions.</p>"
+                    className="border-0 p-0"
+                  />
+                </TabsContent>
+
                 <TabsContent value="screenshots">
-                  {selectedScreenshots.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No screenshots.</p>
-                  ) : (
-                    <div className="px-12">
-                      <Carousel opts={{ align: 'start' }}>
-                        <CarouselContent>
-                          {selectedScreenshots.map((s) => (
-                            <CarouselItem key={s.id}>
-                              <div className="overflow-hidden rounded border bg-muted/20">
-                                <img src={s.image_url} alt="" className="h-[320px] w-full object-cover" />
-                              </div>
-                            </CarouselItem>
-                          ))}
-                        </CarouselContent>
-                        <CarouselPrevious />
-                        <CarouselNext />
-                      </Carousel>
-                    </div>
-                  )}
+                  <ResolvedScreenshotCarousel
+                    rows={selectedScreenshots}
+                    folderUrl={screenshotsFolderFromMetadata(selected.metadata_json)}
+                    emptyMessage="No screenshots yet."
+                  />
                 </TabsContent>
 
                 <TabsContent value="files">
@@ -1189,6 +1212,15 @@ export default function TaskPool() {
         task={detailSubtask}
         personnel={personnel}
         onSave={saveSubtaskDetail}
+      />
+
+      <TaskFinishPaymentDialog
+        open={!!finishDialog}
+        onOpenChange={(open) => !open && setFinishDialog(null)}
+        task={finishDialog?.task ?? null}
+        pendingPeriods={finishDialog ? accrualPeriods.filter((p) => p.pool_item_id === finishDialog.task.id) : []}
+        canPromoteToProject={!!finishDialog && !finishDialog.task.promoted_project_id}
+        onConfirmFinish={(moveToProject) => void confirmFinishTask(moveToProject)}
       />
 
       <AlertDialog open={!!taskDeleteConfirm} onOpenChange={(open) => !open && setTaskDeleteConfirm(null)}>

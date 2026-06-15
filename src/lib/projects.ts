@@ -27,6 +27,8 @@ export interface ProjectRecord {
   user_id: string | null;
   name: string;
   description: string | null;
+  /** HTML handbook: overview, installation, issues, versions, etc. */
+  readme: string | null;
   project_source: string | null;
   main_stack: string | null;
   skillset_csv: string | null;

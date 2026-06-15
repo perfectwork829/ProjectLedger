@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/hooks/use-toast';
 import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
@@ -15,8 +17,18 @@ import {
   type UnifiedPaymentRow,
   type TaskFinanceRow,
 } from '@/lib/payments';
+import PaymentEntryDetailDialog from '@/components/PaymentEntryDetailDialog';
+import PaymentAccrualScheduleCard from '@/components/PaymentAccrualScheduleCard';
+import AccrualPeriodHandleDialog from '@/components/AccrualPeriodHandleDialog';
+import type { TaskPoolItemRecord } from '@/lib/taskPool';
+import { fetchAllAccrualPeriods, syncAccrualPeriodsForTasks, cancelAccrualPeriod } from '@/lib/taskPoolAccrualService';
+import type { TaskPoolAccrualPeriodRow } from '@/lib/taskPoolAccrualPeriods';
+import { normalizePoolItemId, periodBelongsToPool } from '@/lib/taskPoolAccrualPeriods';
 
 export default function Payments() {
+  const { hasRole } = useAuth();
+  const { toast } = useToast();
+  const canConfirmPayments = hasRole('admin');
   const [loading, setLoading] = useState(true);
   const [manualEntries, setManualEntries] = useState<PaymentEntryRecord[]>([]);
   const [taskRows, setTaskRows] = useState<TaskFinanceRow[]>([]);
@@ -24,10 +36,14 @@ export default function Payments() {
   const [viewMode, setViewMode] = useState<'card' | 'list' | 'line' | 'table'>('table');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
+  const [detailEntryId, setDetailEntryId] = useState<string | null>(null);
+  const [poolTasks, setPoolTasks] = useState<TaskPoolItemRecord[]>([]);
+  const [accrualPeriods, setAccrualPeriods] = useState<TaskPoolAccrualPeriodRow[]>([]);
+  const [selectedPeriod, setSelectedPeriod] = useState<TaskPoolAccrualPeriodRow | null>(null);
 
   const fetchAll = async () => {
     setLoading(true);
-    const [manualRes, taskRes] = await Promise.all([
+    const [manualRes, taskRes, poolRes, accountsRes] = await Promise.all([
       supabase.from('payment_entries').select('*').order('occurred_at', { ascending: false }),
       supabase
         .from('task_pool_items')
@@ -35,9 +51,23 @@ export default function Payments() {
           'id, name, currency, task_received_at, created_at, budget_type, fixed_budget_mode, withdrawn_amount, upwork_connection_fee, convert_fee, transfer_fee, upwork_fee, withdraw_fee',
         )
         .order('task_received_at', { ascending: false }),
+      supabase.from('task_pool_items').select('*').order('created_at', { ascending: false }),
+      supabase.from('freelancing_accounts').select('id, badge_status'),
     ]);
     setManualEntries((manualRes.data || []) as PaymentEntryRecord[]);
     setTaskRows((taskRes.data || []) as TaskFinanceRow[]);
+    const poolItems = (poolRes.data || []) as TaskPoolItemRecord[];
+    setPoolTasks(poolItems);
+    try {
+      const accounts = (accountsRes.data || []).map((a) => ({
+        id: a.id as string,
+        badge_status: (a.badge_status as string | null) ?? null,
+      }));
+      await syncAccrualPeriodsForTasks(poolItems, accounts);
+      setAccrualPeriods(await fetchAllAccrualPeriods());
+    } catch (e) {
+      console.error('Failed to load payment schedule', e);
+    }
     setLoading(false);
   };
 
@@ -50,6 +80,33 @@ export default function Payments() {
       (a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime(),
     );
   }, [taskRows, manualEntries]);
+
+  const entryById = useMemo(() => Object.fromEntries(manualEntries.map((e) => [e.id, e])), [manualEntries]);
+  const detailEntry = detailEntryId ? entryById[detailEntryId] ?? null : null;
+
+  const selectedPeriodTask = selectedPeriod
+    ? poolTasks.find(
+        (t) =>
+          normalizePoolItemId(t.id) === normalizePoolItemId(selectedPeriod.pool_item_id) ||
+          periodBelongsToPool({ pool_item_id: t.id }, selectedPeriod.pool_item_id),
+      ) ?? null
+    : null;
+
+  const handleCancelPeriod = async (period: TaskPoolAccrualPeriodRow) => {
+    try {
+      await cancelAccrualPeriod(period.id);
+      if (selectedPeriod?.id === period.id) setSelectedPeriod(null);
+      toast({ title: 'Payment item cancelled', description: 'Removed from the confirm list.' });
+      await fetchAll();
+    } catch (e) {
+      toast({
+        title: 'Cancel failed',
+        description: e instanceof Error ? e.message : 'Unknown error',
+        variant: 'destructive',
+      });
+      throw e;
+    }
+  };
 
   const now = new Date();
   const { thisPeriod, lastPeriod, yearStart, yearEnd } = getPaymentPeriods(now);
@@ -91,8 +148,20 @@ export default function Payments() {
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-semibold tracking-tight text-foreground">Payments</h2>
-        <p className="text-sm text-muted-foreground">Incoming and outgoing monthly cashflow (25th to 25th).</p>
+        <p className="text-sm text-muted-foreground">
+          Incoming and outgoing monthly cashflow (25th to 25th). Scheduled and delayed task payments are listed below;
+          confirmed entries appear in the ledger. Click any entry for details.
+        </p>
       </div>
+
+      <PaymentAccrualScheduleCard
+        periods={accrualPeriods}
+        poolTasks={poolTasks.map((t) => ({ id: t.id, name: t.name }))}
+        taskLinkPrefix="/dashboard/tasks"
+        canCancel={canConfirmPayments}
+        onPeriodSelect={setSelectedPeriod}
+        onPeriodCancel={canConfirmPayments ? handleCancelPeriod : undefined}
+      />
 
       <div className="grid gap-3 sm:grid-cols-3">
         <StatCard title={`This Month (${thisMonthLabel})`} summary={thisSummary} />
@@ -148,7 +217,11 @@ export default function Payments() {
                 </thead>
                 <tbody>
                   {filteredRows.map((r) => (
-                    <tr key={r.id} className="border-t">
+                    <tr
+                      key={r.id}
+                      className="cursor-pointer border-t hover:bg-muted/30"
+                      onClick={() => setDetailEntryId(r.id)}
+                    >
                       <td className="px-3 py-2">{new Date(r.occurred_at).toLocaleString()}</td>
                       <td className="px-3 py-2">
                         <Badge variant={r.entry_type === 'incoming' ? 'default' : 'secondary'}>{r.entry_type}</Badge>
@@ -170,7 +243,11 @@ export default function Payments() {
         <Card>
           <CardContent className="p-0">
             {filteredRows.map((r) => (
-              <div key={r.id} className="flex items-center justify-between gap-3 border-t px-3 py-2 first:border-t-0">
+              <div
+                key={r.id}
+                className="flex cursor-pointer items-center justify-between gap-3 border-t px-3 py-2 first:border-t-0 hover:bg-muted/30"
+                onClick={() => setDetailEntryId(r.id)}
+              >
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium">{r.category}</p>
                   <p className="text-xs text-muted-foreground">{new Date(r.occurred_at).toLocaleString()} · {r.source_kind}</p>
@@ -185,7 +262,7 @@ export default function Payments() {
       ) : viewMode === 'list' ? (
         <div className="space-y-2">
           {filteredRows.map((r) => (
-            <Card key={r.id}>
+            <Card key={r.id} className="cursor-pointer transition-colors hover:bg-muted/20" onClick={() => setDetailEntryId(r.id)}>
               <CardContent className="flex items-center justify-between gap-3 p-3">
                 <div>
                   <p className="text-sm font-medium">{r.category}</p>
@@ -199,7 +276,7 @@ export default function Payments() {
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {filteredRows.map((r) => (
-            <Card key={r.id}>
+            <Card key={r.id} className="cursor-pointer transition-colors hover:bg-muted/20" onClick={() => setDetailEntryId(r.id)}>
               <CardContent className="space-y-2 p-4">
                 <div className="flex items-center justify-between">
                   <Badge variant={r.entry_type === 'incoming' ? 'default' : 'secondary'}>{r.entry_type}</Badge>
@@ -216,6 +293,24 @@ export default function Payments() {
           ))}
         </div>
       )}
+
+      <AccrualPeriodHandleDialog
+        open={!!selectedPeriod}
+        onOpenChange={(open) => !open && setSelectedPeriod(null)}
+        period={selectedPeriod}
+        task={selectedPeriodTask}
+        taskHref={selectedPeriodTask ? `/dashboard/tasks?task=${selectedPeriodTask.id}` : null}
+        readOnly={!canConfirmPayments}
+        onConfirmed={() => void fetchAll()}
+        onCancel={canConfirmPayments ? handleCancelPeriod : undefined}
+      />
+
+      <PaymentEntryDetailDialog
+        open={!!detailEntry}
+        onOpenChange={(open) => !open && setDetailEntryId(null)}
+        entry={detailEntry}
+        taskHref={detailEntry?.pool_item_id ? `/dashboard/tasks?task=${detailEntry.pool_item_id}` : null}
+      />
     </div>
   );
 }

@@ -24,8 +24,6 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import ModuleSearchBar from '@/components/ModuleSearchBar';
-import { CloudGoogleDriveUpload } from '@/components/CloudGoogleDriveUpload';
-import { CloudBoxUpload } from '@/components/CloudBoxUpload';
 import { CountrySelect } from '@/components/CountrySelect';
 import { TimezoneSelect } from '@/components/TimezoneSelect';
 import { canonicalCountryNameOrLegacy } from '@/lib/countries';
@@ -43,10 +41,19 @@ import {
   toCsv,
 } from '@/lib/projects';
 import { Calendar, MessageSquare, PanelLeftClose, PanelLeftOpen, Pencil, Plus, Trash2, FolderKanban, Link2, Clock } from 'lucide-react';
-import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from '@/components/ui/carousel';
+import ResolvedScreenshotCarousel from '@/components/ResolvedScreenshotCarousel';
+import { ScreenshotsDriveFolderField } from '@/components/ScreenshotsDriveFolderField';
+import {
+  SCREENSHOTS_DRIVE_FOLDER_META_KEY,
+  screenshotsFolderFromMetadata,
+  screenshotsToFormFields,
+  validateScreenshotsFolderUrl,
+} from '@/lib/screenshotDriveFolder';
 import { LabeledLinksEditor } from '@/components/LabeledLinksEditor';
 import { LabeledLinksListWithCopy, UrlFieldWithCopy } from '@/components/LabeledLinksListWithCopy';
 import { CopyDescriptionButton } from '@/components/CopyDescriptionButton';
+import { RichTextEditor } from '@/components/RichTextEditor';
+import { ReadmePanel, README_EDITOR_PLACEHOLDER } from '@/components/ReadmePanel';
 import { TagChipsInput } from '@/components/TagChipsInput';
 import type { LabeledLink } from '@/lib/taskPool';
 import { parseLabeledLinks, serializeLabeledLinks } from '@/lib/taskPool';
@@ -65,6 +72,7 @@ type PendingProjectDelete =
 const emptyForm = {
   name: '',
   description: '',
+  readme: '',
   projectSource: '',
   mainStack: '',
   skillsetTags: [] as string[],
@@ -88,7 +96,7 @@ const emptyForm = {
   currency: 'USD',
   githubUrl: '',
   publishedLinks: [] as LabeledLink[],
-  screenshotUrls: [] as string[],
+  screenshotsDriveFolderUrl: '',
 };
 
 type CredentialRow = { label: string; value: string };
@@ -201,6 +209,7 @@ export default function AdminProjects() {
       const blob = [
         p.name,
         p.description,
+        p.readme,
         p.project_source,
         p.main_stack,
         p.skillset_csv,
@@ -254,6 +263,7 @@ export default function AdminProjects() {
     setForm({
       name: project.name,
       description: project.description || '',
+      readme: project.readme || '',
       projectSource: project.project_source || '',
       mainStack: project.main_stack || '',
       skillsetTags: (project.skillset_csv || '')
@@ -283,7 +293,10 @@ export default function AdminProjects() {
       currency: project.currency || 'USD',
       githubUrl: project.github_url || '',
       publishedLinks: parseLabeledLinks(project.published_links, null, 'Link'),
-      screenshotUrls: screenshots.filter((s) => s.project_id === project.id).map((s) => s.image_url),
+      ...screenshotsToFormFields(
+        screenshots.filter((s) => s.project_id === project.id),
+        project.metadata_json,
+      ),
     });
     setDialogOpen(true);
   };
@@ -310,12 +323,27 @@ export default function AdminProjects() {
     const normalizedMetadata = { ...metadata } as Record<string, unknown>;
     if (credentialRows.length > 0) normalizedMetadata.credentials = credentialRows;
     else delete normalizedMetadata.credentials;
+
+    try {
+      const folderUrl = validateScreenshotsFolderUrl(form.screenshotsDriveFolderUrl);
+      if (folderUrl) normalizedMetadata[SCREENSHOTS_DRIVE_FOLDER_META_KEY] = folderUrl;
+      else delete normalizedMetadata[SCREENSHOTS_DRIVE_FOLDER_META_KEY];
+    } catch (e) {
+      toast({
+        title: 'Screenshots folder invalid',
+        description: e instanceof Error ? e.message : 'Invalid folder link',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     const published = serializeLabeledLinks(form.publishedLinks ?? []);
     setSaving(true);
     const payload = {
       user_id: user?.id || null,
       name: form.name.trim(),
       description: form.description.trim() || null,
+      readme: form.readme.trim() || null,
       project_source: form.projectSource.trim() || null,
       main_stack: form.mainStack || null,
       skillset_csv: toCsv(form.skillsetTags) || null,
@@ -354,17 +382,6 @@ export default function AdminProjects() {
     const projectId = saveResult.data.id as string;
 
     await supabase.from('project_screenshots').delete().eq('project_id', projectId);
-    if (form.screenshotUrls.length > 0) {
-      const insertRows = form.screenshotUrls.map((url, index) => ({
-        project_id: projectId,
-        image_url: url,
-        sort_order: index,
-      }));
-      const screenshotsInsert = await supabase.from('project_screenshots').insert(insertRows);
-      if (screenshotsInsert.error) {
-        toast({ title: 'Screenshots save warning', description: screenshotsInsert.error.message, variant: 'destructive' });
-      }
-    }
 
     setSaving(false);
     setDialogOpen(false);
@@ -691,8 +708,9 @@ export default function AdminProjects() {
               </CardHeader>
               <CardContent className="pt-4">
                 <Tabs defaultValue="overview" className="w-full">
-                  <TabsList className="grid w-full grid-cols-4">
+                  <TabsList className="grid w-full grid-cols-5">
                     <TabsTrigger value="overview">Overview</TabsTrigger>
+                    <TabsTrigger value="readme">README</TabsTrigger>
                     <TabsTrigger value="screenshots">Screenshots</TabsTrigger>
                     <TabsTrigger value="chat">Chat</TabsTrigger>
                     <TabsTrigger value="tasks">Tasks</TabsTrigger>
@@ -779,27 +797,16 @@ export default function AdminProjects() {
                     )}
                   </TabsContent>
 
+                  <TabsContent value="readme">
+                    <ReadmePanel readme={selectedProject.readme} className="border-0 p-0" />
+                  </TabsContent>
+
                   <TabsContent value="screenshots" className="space-y-4">
-                    {selectedScreenshots.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">No screenshots uploaded yet.</p>
-                    ) : (
-                      <div className="px-12">
-                        <Carousel opts={{ align: 'start' }}>
-                          <CarouselContent>
-                            {selectedScreenshots.map((s) => (
-                              <CarouselItem key={s.id}>
-                                <div className="overflow-hidden rounded border bg-muted/20">
-                                  <img src={s.image_url} alt={s.caption || 'Screenshot'} className="h-[320px] w-full object-cover" />
-                                  {s.caption && <p className="p-2 text-sm text-muted-foreground">{s.caption}</p>}
-                                </div>
-                              </CarouselItem>
-                            ))}
-                          </CarouselContent>
-                          <CarouselPrevious />
-                          <CarouselNext />
-                        </Carousel>
-                      </div>
-                    )}
+                    <ResolvedScreenshotCarousel
+                      rows={selectedScreenshots}
+                      folderUrl={screenshotsFolderFromMetadata(selectedProject.metadata_json)}
+                      emptyMessage="No screenshots. Edit this project and add a Google Drive screenshots folder link."
+                    />
                   </TabsContent>
 
                   <TabsContent value="chat" className="space-y-3">
@@ -938,6 +945,20 @@ export default function AdminProjects() {
               </div>
               <Textarea value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} />
             </div>
+            <div className="space-y-2 md:col-span-2">
+              <div className="flex items-center justify-between gap-2">
+                <Label>README</Label>
+                <CopyDescriptionButton description={form.readme} />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Project handbook: overview, installation, known issues, version history.
+              </p>
+              <RichTextEditor
+                value={form.readme}
+                onChange={(val) => setForm((p) => ({ ...p, readme: val }))}
+                placeholder={README_EDITOR_PLACEHOLDER}
+              />
+            </div>
             <div className="space-y-2">
               <Label>Project source(from)</Label>
               <Input
@@ -1023,55 +1044,6 @@ export default function AdminProjects() {
 
             <div className="space-y-2"><Label>Source storage type</Label><Select value={form.sourceStorageType} onValueChange={(v) => setForm((p) => ({ ...p, sourceStorageType: v }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{SOURCE_STORAGE_PROVIDER_OPTIONS.map((provider) => <SelectItem key={provider} value={provider}>{provider}</SelectItem>)}</SelectContent></Select></div>
             <div className="space-y-2"><Label>Source storage URL *</Label><Input value={form.sourceStorageUrl} onChange={(e) => setForm((p) => ({ ...p, sourceStorageUrl: e.target.value }))} placeholder="Drive folder link" /></div>
-            {(form.sourceStorageType === 'google_drive' || form.sourceStorageType === 'drive') && (
-              <div className="space-y-3 md:col-span-2">
-                <CloudGoogleDriveUpload
-                  title="Upload screenshots to Google Drive"
-                  accept="image/*"
-                  onUrlAdded={(url) => setForm((p) => ({ ...p, screenshotUrls: [...p.screenshotUrls, url] }))}
-                />
-                <CloudGoogleDriveUpload
-                  title="Upload source file to Google Drive"
-                  accept="*/*"
-                  onUrlAdded={(url) =>
-                    setForm((p) => {
-                      if (!p.sourceStorageUrl.trim()) return { ...p, sourceStorageUrl: url };
-                      toast({
-                        title: 'Drive file uploaded',
-                        description: `Primary URL is already set. Use this link if needed: ${url}`,
-                        duration: 12_000,
-                      });
-                      return p;
-                    })
-                  }
-                />
-              </div>
-            )}
-            {form.sourceStorageType === 'box' && (
-              <div className="space-y-3 md:col-span-2">
-                <CloudBoxUpload
-                  title="Upload screenshots to Box"
-                  accept="image/*"
-                  onUrlAdded={(url) => setForm((p) => ({ ...p, screenshotUrls: [...p.screenshotUrls, url] }))}
-                />
-                <CloudBoxUpload
-                  title="Upload source file to Box"
-                  accept="*/*"
-                  onUrlAdded={(url) =>
-                    setForm((p) => {
-                      if (!p.sourceStorageUrl.trim()) return { ...p, sourceStorageUrl: url };
-                      toast({
-                        title: 'Box file uploaded',
-                        description: `Primary URL is already set. Use this link if needed: ${url}`,
-                        duration: 12_000,
-                      });
-                      return p;
-                    })
-                  }
-                />
-              </div>
-            )}
-
             <div className="space-y-2"><Label>Initial document URL (PDF/DOCX)</Label><Input value={form.initialDocumentUrl} onChange={(e) => setForm((p) => ({ ...p, initialDocumentUrl: e.target.value }))} /></div>
             <div className="space-y-2"><Label>Legacy chat history</Label><Textarea value={form.chatHistory} onChange={(e) => setForm((p) => ({ ...p, chatHistory: e.target.value }))} /></div>
 
@@ -1086,26 +1058,10 @@ export default function AdminProjects() {
             </div>
             <div className="space-y-2 md:col-span-2"><Label>Related metadata (JSON)</Label><Textarea className="font-mono min-h-[120px]" value={form.metadataJson} onChange={(e) => setForm((p) => ({ ...p, metadataJson: e.target.value }))} /></div>
 
-            <div className="space-y-2 md:col-span-2">
-              <Label>Screenshots (slider source)</Label>
-              <Textarea
-                className="min-h-[110px]"
-                value={form.screenshotUrls.join('\n')}
-                onChange={(e) =>
-                  setForm((p) => ({
-                    ...p,
-                    screenshotUrls: e.target.value
-                      .split('\n')
-                      .map((v) => v.trim())
-                      .filter(Boolean),
-                  }))
-                }
-                placeholder="Paste screenshot links (one URL per line, e.g. Google Drive public image links)"
-              />
-              <p className="text-xs text-muted-foreground">
-                Link-only mode: files stay in Google Drive (or your cloud storage). We save only URLs in database.
-              </p>
-            </div>
+            <ScreenshotsDriveFolderField
+              folderUrl={form.screenshotsDriveFolderUrl}
+              onFolderUrlChange={(url) => setForm((p) => ({ ...p, screenshotsDriveFolderUrl: url }))}
+            />
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>

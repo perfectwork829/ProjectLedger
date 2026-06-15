@@ -24,13 +24,13 @@ export async function syncAccrualPeriodsForTask(
   for (const spec of specs) {
     const { data: existing } = await supabase
       .from('task_pool_accrual_periods')
-      .select('id, confirmed_at, tracked_hours, billable_hours')
+      .select('id, confirmed_at, cancelled_at, tracked_hours, billable_hours')
       .eq('pool_item_id', task.id)
       .eq('period_kind', spec.period_kind)
       .eq('period_key', spec.period_key)
       .maybeSingle();
 
-    if (existing?.confirmed_at) continue;
+    if (existing?.confirmed_at || existing?.cancelled_at) continue;
 
     const payload = {
       pool_item_id: task.id,
@@ -87,6 +87,12 @@ export type ConfirmAccrualPeriodInput = {
   periodId: string;
   billableHours?: number | null;
   trackedHours?: number | null;
+  /** Override calculated client gross before fees. */
+  grossAmount?: number | null;
+  /** JST period end date (YYYY-MM-DD). */
+  periodEndYmd?: string | null;
+  /** Ledger payment date/time (ISO or datetime-local string). */
+  occurredAt?: string | null;
   paymentReceived: boolean;
   fees: {
     upworkConnectionFee: number;
@@ -103,11 +109,21 @@ export async function confirmAccrualPeriod(
   task: TaskPoolItemRecord,
   input: ConfirmAccrualPeriodInput,
 ): Promise<{ task: TaskPoolItemRecord }> {
+  if (period.confirmed_at) throw new Error('This payment period is already confirmed.');
+  if (period.cancelled_at) throw new Error('This payment period was cancelled.');
   const fees = input.fees;
   let gross = 0;
   let billableHours = input.billableHours ?? period.billable_hours ?? period.tracked_hours;
 
-  if (period.period_kind === 'hourly_week') {
+  if (input.grossAmount != null && Number(input.grossAmount) > 0) {
+    gross = Number(input.grossAmount);
+    if (period.period_kind === 'hourly_week') {
+      billableHours = Math.min(
+        Math.max(Number(billableHours ?? 0), 0),
+        Number(task.weekly_hours_cap ?? 40),
+      );
+    }
+  } else if (period.period_kind === 'hourly_week') {
     const h = Math.min(
       Math.max(Number(billableHours ?? 0), 0),
       Number(task.weekly_hours_cap ?? 40),
@@ -123,6 +139,8 @@ export async function confirmAccrualPeriod(
 
   const net = calcWithdrawnAmount({ budgetAmount: gross, ...fees });
   const nowIso = new Date().toISOString();
+  const occurredIso = input.occurredAt ? new Date(input.occurredAt).toISOString() : nowIso;
+  const periodEndYmd = input.periodEndYmd?.trim() || period.period_end_ymd;
 
   let noteExtra = period.label;
   if (period.period_kind === 'hourly_week') {
@@ -152,7 +170,7 @@ export async function confirmAccrualPeriod(
       category,
       amount: net,
       currency: task.currency || 'USD',
-      occurred_at: nowIso,
+      occurred_at: occurredIso,
       note: `${task.name} — ${noteExtra}${input.paymentReceived ? '' : ' · payment pending'}`,
       source_kind: 'task_auto',
       pool_item_id: task.id,
@@ -173,6 +191,7 @@ export async function confirmAccrualPeriod(
       payment_received: input.paymentReceived,
       gross_amount: gross,
       net_amount: net,
+      period_end_ymd: periodEndYmd,
       confirmed_at: nowIso,
       payment_entry_id: payRes.data.id,
       updated_at: nowIso,
@@ -219,6 +238,18 @@ export async function confirmAccrualPeriod(
 
   if (taskErr || !updatedTask) throw new Error(taskErr?.message || 'Task update failed');
   return { task: updatedTask as TaskPoolItemRecord };
+}
+
+/** Dismiss an accrual from the confirm list without recording payment. */
+export async function cancelAccrualPeriod(periodId: string): Promise<void> {
+  const nowIso = new Date().toISOString();
+  const { error } = await supabase
+    .from('task_pool_accrual_periods')
+    .update({ cancelled_at: nowIso, updated_at: nowIso })
+    .eq('id', periodId)
+    .is('confirmed_at', null)
+    .is('cancelled_at', null);
+  if (error) throw new Error(error.message);
 }
 
 /** Recompute task withdrawn from all confirmed periods. */
