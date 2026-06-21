@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
@@ -22,6 +22,7 @@ import PaymentAccrualScheduleCard from '@/components/PaymentAccrualScheduleCard'
 import AccrualPeriodHandleDialog from '@/components/AccrualPeriodHandleDialog';
 import type { TaskPoolItemRecord } from '@/lib/taskPool';
 import { fetchAllAccrualPeriods, syncAccrualPeriodsForTasks, cancelAccrualPeriod } from '@/lib/taskPoolAccrualService';
+import { filterAccrualPeriodsForPaymentTracking } from '@/lib/taskPoolAccrualPeriods';
 import type { TaskPoolAccrualPeriodRow } from '@/lib/taskPoolAccrualPeriods';
 import { normalizePoolItemId, periodBelongsToPool } from '@/lib/taskPoolAccrualPeriods';
 
@@ -41,8 +42,8 @@ export default function Payments() {
   const [accrualPeriods, setAccrualPeriods] = useState<TaskPoolAccrualPeriodRow[]>([]);
   const [selectedPeriod, setSelectedPeriod] = useState<TaskPoolAccrualPeriodRow | null>(null);
 
-  const fetchAll = async () => {
-    setLoading(true);
+  const fetchAll = useCallback(async ({ withLoading = false }: { withLoading?: boolean } = {}) => {
+    if (withLoading) setLoading(true);
     const [manualRes, taskRes, poolRes, accountsRes] = await Promise.all([
       supabase.from('payment_entries').select('*').order('occurred_at', { ascending: false }),
       supabase
@@ -67,13 +68,14 @@ export default function Payments() {
       setAccrualPeriods(await fetchAllAccrualPeriods());
     } catch (e) {
       console.error('Failed to load payment schedule', e);
+    } finally {
+      if (withLoading) setLoading(false);
     }
-    setLoading(false);
-  };
+  }, []);
 
   useEffect(() => {
-    fetchAll();
-  }, []);
+    void fetchAll({ withLoading: true });
+  }, [fetchAll]);
 
   const allRows = useMemo<UnifiedPaymentRow[]>(() => {
     return [...buildTaskAutoRows(taskRows), ...normalizeManualRows(manualEntries)].sort(
@@ -84,6 +86,11 @@ export default function Payments() {
   const entryById = useMemo(() => Object.fromEntries(manualEntries.map((e) => [e.id, e])), [manualEntries]);
   const detailEntry = detailEntryId ? entryById[detailEntryId] ?? null : null;
 
+  const paymentTrackingPeriods = useMemo(
+    () => filterAccrualPeriodsForPaymentTracking(accrualPeriods, poolTasks),
+    [accrualPeriods, poolTasks],
+  );
+
   const selectedPeriodTask = selectedPeriod
     ? poolTasks.find(
         (t) =>
@@ -92,12 +99,34 @@ export default function Payments() {
       ) ?? null
     : null;
 
+  const markPeriodCancelledLocally = useCallback((periodId: string) => {
+    const cancelledAt = new Date().toISOString();
+    setAccrualPeriods((prev) =>
+      prev.map((p) => (p.id === periodId ? { ...p, cancelled_at: cancelledAt } : p)),
+    );
+  }, []);
+
+  const refreshAfterPaymentConfirm = useCallback(async () => {
+    try {
+      const [manualRes, periods] = await Promise.all([
+        supabase.from('payment_entries').select('*').order('occurred_at', { ascending: false }),
+        fetchAllAccrualPeriods(),
+      ]);
+      if (!manualRes.error) {
+        setManualEntries((manualRes.data || []) as PaymentEntryRecord[]);
+      }
+      setAccrualPeriods(periods);
+    } catch (e) {
+      console.error('Failed to refresh after payment confirm', e);
+    }
+  }, []);
+
   const handleCancelPeriod = async (period: TaskPoolAccrualPeriodRow) => {
     try {
       await cancelAccrualPeriod(period.id);
       if (selectedPeriod?.id === period.id) setSelectedPeriod(null);
+      markPeriodCancelledLocally(period.id);
       toast({ title: 'Payment item cancelled', description: 'Removed from the confirm list.' });
-      await fetchAll();
     } catch (e) {
       toast({
         title: 'Cancel failed',
@@ -155,7 +184,7 @@ export default function Payments() {
       </div>
 
       <PaymentAccrualScheduleCard
-        periods={accrualPeriods}
+        periods={paymentTrackingPeriods}
         poolTasks={poolTasks.map((t) => ({ id: t.id, name: t.name }))}
         taskLinkPrefix="/dashboard/tasks"
         canCancel={canConfirmPayments}
@@ -301,7 +330,7 @@ export default function Payments() {
         task={selectedPeriodTask}
         taskHref={selectedPeriodTask ? `/dashboard/tasks?task=${selectedPeriodTask.id}` : null}
         readOnly={!canConfirmPayments}
-        onConfirmed={() => void fetchAll()}
+        onConfirmed={() => void refreshAfterPaymentConfirm()}
         onCancel={canConfirmPayments ? handleCancelPeriod : undefined}
       />
 

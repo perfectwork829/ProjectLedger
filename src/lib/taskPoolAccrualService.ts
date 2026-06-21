@@ -17,7 +17,7 @@ export async function syncAccrualPeriodsForTask(
   account: AccountBadgeLookup | undefined,
   now = new Date(),
 ): Promise<void> {
-  if (['cancelled'].includes(task.status)) return;
+  if (['cancelled', 'paused'].includes(task.status)) return;
   const topRated = isUpworkTopRatedAccount(account?.badge_status);
   const specs = buildExpectedAccrualPeriodSpecs(task, { topRated, now });
 
@@ -58,7 +58,7 @@ export async function syncAccrualPeriodsForTasks(
   accounts: AccountBadgeLookup[],
 ): Promise<void> {
   const accountMap = Object.fromEntries(accounts.map((a) => [a.id, a]));
-  const active = tasks.filter((t) => !['cancelled'].includes(t.status));
+  const active = tasks.filter((t) => !['cancelled', 'paused'].includes(t.status));
   await Promise.all(
     active.map((t) => syncAccrualPeriodsForTask(t, t.account_id ? accountMap[t.account_id] : undefined)),
   );

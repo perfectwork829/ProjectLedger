@@ -38,6 +38,7 @@ import {
   syncAccrualPeriodsForTasks,
   cancelAccrualPeriod,
 } from '@/lib/taskPoolAccrualService';
+import { filterAccrualPeriodsForPaymentTracking } from '@/lib/taskPoolAccrualPeriods';
 
 const OUTGOING_CATEGORIES = [
   'Base fee',
@@ -99,8 +100,8 @@ export default function AdminPayments() {
     }
   }, []);
 
-  const fetchAll = async () => {
-    setLoading(true);
+  const fetchAll = useCallback(async ({ withLoading = false }: { withLoading?: boolean } = {}) => {
+    if (withLoading) setLoading(true);
     const [manualRes, taskRes, poolRes, accountsRes] = await Promise.all([
       supabase.from('payment_entries').select('*').order('occurred_at', { ascending: false }),
       supabase
@@ -129,13 +130,14 @@ export default function AdminPayments() {
       if (taskFromUrl) await loadTaskScopedPeriods(taskFromUrl);
     } catch (e) {
       console.error('Accrual sync failed', e);
+    } finally {
+      if (withLoading) setLoading(false);
     }
-    setLoading(false);
-  };
+  }, [loadTaskScopedPeriods, toast]);
 
   useEffect(() => {
-    void fetchAll();
-  }, []);
+    void fetchAll({ withLoading: true });
+  }, [fetchAll]);
 
   useEffect(() => {
     if (!filterTaskId) {
@@ -146,7 +148,15 @@ export default function AdminPayments() {
   }, [filterTaskId, loadTaskScopedPeriods]);
 
   /** When `?task=` is set, only use periods loaded for that pool (never the global list). */
-  const accrualSource = filterTaskId ? (taskScopedPeriods ?? []) : accrualPeriods;
+  const paymentTrackingPeriods = useMemo(
+    () => filterAccrualPeriodsForPaymentTracking(accrualPeriods, poolTasks),
+    [accrualPeriods, poolTasks],
+  );
+  const trackedTaskScopedPeriods = useMemo(
+    () => filterAccrualPeriodsForPaymentTracking(taskScopedPeriods ?? [], poolTasks),
+    [taskScopedPeriods, poolTasks],
+  );
+  const accrualSource = filterTaskId ? trackedTaskScopedPeriods : paymentTrackingPeriods;
 
   const taskById = useMemo(() => {
     const map: Record<string, TaskPoolItemRecord> = {};
@@ -222,17 +232,40 @@ export default function AdminPayments() {
     setSearchParams(next, { replace: true });
   };
 
-  const refreshAfterAccrualChange = async () => {
-    await fetchAll();
-    if (filterTaskId) await loadTaskScopedPeriods(filterTaskId);
-  };
+  const markPeriodCancelledLocally = useCallback((periodId: string) => {
+    const cancelledAt = new Date().toISOString();
+    setAccrualPeriods((prev) =>
+      prev.map((p) => (p.id === periodId ? { ...p, cancelled_at: cancelledAt } : p)),
+    );
+    setTaskScopedPeriods((prev) =>
+      prev ? prev.map((p) => (p.id === periodId ? { ...p, cancelled_at: cancelledAt } : p)) : prev,
+    );
+  }, []);
+
+  const refreshAfterPaymentConfirm = useCallback(async () => {
+    try {
+      const [manualRes, periods] = await Promise.all([
+        supabase.from('payment_entries').select('*').order('occurred_at', { ascending: false }),
+        fetchAllAccrualPeriods(),
+      ]);
+      if (manualRes.error) {
+        toast({ title: 'Error refreshing payments', description: manualRes.error.message, variant: 'destructive' });
+      } else {
+        setManualEntries((manualRes.data || []) as PaymentEntryRecord[]);
+      }
+      setAccrualPeriods(periods);
+      if (filterTaskId) await loadTaskScopedPeriods(filterTaskId);
+    } catch (e) {
+      console.error('Failed to refresh after payment confirm', e);
+    }
+  }, [filterTaskId, loadTaskScopedPeriods, toast]);
 
   const handleCancelPeriod = async (period: TaskPoolAccrualPeriodRow) => {
     try {
       await cancelAccrualPeriod(period.id);
       if (selectedPeriod?.id === period.id) setSelectedPeriod(null);
+      markPeriodCancelledLocally(period.id);
       toast({ title: 'Payment item cancelled', description: 'Removed from the confirm list.' });
-      await refreshAfterAccrualChange();
     } catch (e) {
       toast({
         title: 'Cancel failed',
@@ -266,7 +299,7 @@ export default function AdminPayments() {
     setAmount('');
     setNote('');
     toast({ title: 'Entry added' });
-    fetchAll();
+    void fetchAll();
   };
 
   const openTaskPaymentEdit = (rowId: string) => {
@@ -291,7 +324,7 @@ export default function AdminPayments() {
       toast({ title: 'Delete failed', description: res.error.message, variant: 'destructive' });
       return;
     }
-    fetchAll();
+    void fetchAll();
   };
 
   if (loading) {
@@ -332,7 +365,7 @@ export default function AdminPayments() {
       ) : null}
 
       <PaymentAccrualScheduleCard
-        periods={filterTaskId ? accrualSource : accrualPeriods}
+        periods={filterTaskId ? accrualSource : paymentTrackingPeriods}
         poolTasks={poolTasks.map((t) => ({ id: t.id, name: t.name }))}
         filterTaskId={filterTaskId}
         filterTaskName={filterTask?.name ?? null}
@@ -694,7 +727,7 @@ export default function AdminPayments() {
         period={selectedPeriod}
         task={selectedPeriodTask}
         taskHref={selectedPeriodTask ? `/admin/tasks?task=${selectedPeriodTask.id}` : null}
-        onConfirmed={() => void refreshAfterAccrualChange()}
+        onConfirmed={() => void refreshAfterPaymentConfirm()}
         onCancel={handleCancelPeriod}
       />
     </div>

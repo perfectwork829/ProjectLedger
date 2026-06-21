@@ -1,5 +1,6 @@
 import type { TaskPoolItemRecord } from '@/lib/taskPool';
 import { parseMilestones, taskPoolFixedMode } from '@/lib/taskPool';
+import { periodOverlapsAccrualGap, isTaskPaymentAccrualActive } from '@/lib/taskPoolStatusTransitions';
 import { addDaysToJstYmd, compareJstYmd, formatJstYmd, getJstMondayYmd } from '@/lib/jst';
 
 export type AccrualPeriodKind = 'hourly_week' | 'recurring' | 'fixed_project' | 'milestone';
@@ -60,7 +61,12 @@ export function wednesdayDueForWorkWeek(weekMonday: string, weeksAfter: 1 | 2): 
 
 function taskEndYmd(task: TaskPoolItemRecord, now: Date): string {
   if (task.finished_at) return formatJstYmd(new Date(task.finished_at));
+  if (task.status === 'paused' && task.paused_at) return formatJstYmd(new Date(task.paused_at));
   return formatJstYmd(now);
+}
+
+function skipSpecForAccrualGap(task: TaskPoolItemRecord, periodStartYmd: string, periodEndYmd: string, now: Date): boolean {
+  return periodOverlapsAccrualGap(task, periodStartYmd, periodEndYmd, now);
 }
 
 function taskStartMonday(task: TaskPoolItemRecord): string {
@@ -101,6 +107,7 @@ export function buildExpectedAccrualPeriodSpecs(
     for (const weekMonday of weeks) {
       const periodEnd = addDaysToJstYmd(weekMonday, 6);
       if (compareJstYmd(periodEnd, today) > 0 && !task.finished_at) continue;
+      if (skipSpecForAccrualGap(task, weekMonday, periodEnd, now)) continue;
       specs.push({
         period_kind: 'hourly_week',
         period_key: weekMonday,
@@ -162,20 +169,22 @@ export function buildExpectedAccrualPeriodSpecs(
       const blockEnd = addDaysToJstYmd(blockStart, stepDays - 1);
       const dueMonday = addDaysToJstYmd(blockEnd, 1);
       if (compareJstYmd(blockEnd, today) <= 0 || task.finished_at) {
-        specs.push({
-          period_kind: 'recurring',
-          period_key: `i${i}`,
-          label:
-            cadence === 'biweekly'
-              ? `Bi-weekly ${blockStart} – ${blockEnd}`
-              : cadence === 'monthly'
-                ? `Monthly ${blockStart} – ${blockEnd}`
-                : `Weekly ${blockStart} – ${blockEnd}`,
-          week_monday: blockStart,
-          period_end_ymd: blockEnd,
-          due_confirm_on: dueMonday,
-          milestone_id: null,
-        });
+        if (!skipSpecForAccrualGap(task, blockStart, blockEnd, now)) {
+          specs.push({
+            period_kind: 'recurring',
+            period_key: `i${i}`,
+            label:
+              cadence === 'biweekly'
+                ? `Bi-weekly ${blockStart} – ${blockEnd}`
+                : cadence === 'monthly'
+                  ? `Monthly ${blockStart} – ${blockEnd}`
+                  : `Weekly ${blockStart} – ${blockEnd}`,
+            week_monday: blockStart,
+            period_end_ymd: blockEnd,
+            due_confirm_on: dueMonday,
+            milestone_id: null,
+          });
+        }
       }
       blockStart = addDaysToJstYmd(blockStart, stepDays);
       i += 1;
@@ -226,4 +235,16 @@ export function countPendingByPool(periods: TaskPoolAccrualPeriodRow[], todayYmd
     out[p.pool_item_id] = (out[p.pool_item_id] || 0) + 1;
   }
   return out;
+}
+
+/** Drop accrual rows for tasks that are paused, completed, or cancelled. */
+export function filterAccrualPeriodsForPaymentTracking(
+  periods: TaskPoolAccrualPeriodRow[],
+  tasks: Pick<TaskPoolItemRecord, 'id' | 'status'>[],
+): TaskPoolAccrualPeriodRow[] {
+  const byId = Object.fromEntries(tasks.map((t) => [t.id, t]));
+  return periods.filter((p) => {
+    const task = byId[p.pool_item_id];
+    return task && isTaskPaymentAccrualActive(task);
+  });
 }

@@ -22,6 +22,7 @@ import {
 import { PERSONNEL_SEARCH_COLUMNS } from '@/lib/supabaseSearch';
 import { filterItemsBySearch } from '@/lib/clientSearch';
 import FileUpload from '@/components/FileUpload';
+import PhoneInput from '@/components/PhoneInput';
 import { IdentityDocumentsEditor, IdentityDocumentsGallery } from '@/components/IdentityDocumentsFields';
 import { useToast } from '@/hooks/use-toast';
 import type { IdentityDocuments } from '@/lib/identityDocuments';
@@ -749,25 +750,6 @@ function LanguageEditor({ value, onChange }: { value: string; onChange: (v: stri
   );
 }
 
-// --- Phone Number Input ---
-function PhoneInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const format = (raw: string) => {
-    const digits = raw.replace(/\D/g, '');
-    if (digits.length <= 1) return digits.length ? `+${digits}` : '';
-    if (digits.length <= 4) return `+${digits.slice(0, 1)} ${digits.slice(1)}`;
-    if (digits.length <= 7) return `+${digits.slice(0, 1)} (${digits.slice(1, 4)}) ${digits.slice(4)}`;
-    return `+${digits.slice(0, 1)} (${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7, 11)}`;
-  };
-
-  return (
-    <Input
-      value={value}
-      onChange={(e) => onChange(format(e.target.value))}
-      placeholder="+1 (555) 123-4567"
-      type="tel"
-    />
-  );
-}
 
 export default function AdminPersonnel() {
   const { user } = useAuth();
@@ -1454,7 +1436,7 @@ export default function AdminPersonnel() {
               {/* Communication */}
               <TabsContent value="communication" className="space-y-4 pt-4">
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2"><Label>Phone Number</Label><PhoneInput value={form.phone_number} onChange={(v) => set('phone_number', v)} /></div>
+                  <div className="space-y-2"><Label>Phone Number</Label><PhoneInput value={form.phone_number} onChange={(v) => set('phone_number', v)} countryHint={form.country} /></div>
                   <div className="space-y-2"><Label>Email</Label><Input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} /></div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">

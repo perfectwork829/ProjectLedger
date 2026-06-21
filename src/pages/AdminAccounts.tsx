@@ -31,6 +31,7 @@ import {
   CheckCircle, XCircle, Github, Linkedin, Wallet,
 } from 'lucide-react';
 import FileUpload from '@/components/FileUpload';
+import PhoneInput from '@/components/PhoneInput';
 import ImageGalleryUpload from '@/components/ImageGalleryUpload';
 import { useToast } from '@/hooks/use-toast';
 import { isFreelancerPlatform, parseScreenshotUrls, isLikelyImageUrl } from '@/lib/accountPlatforms';
@@ -904,7 +905,7 @@ export default function AdminAccounts() {
                 )}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2"><Label>Email (login / connected)</Label><Input type="email" value={form.connected_email} onChange={(e) => set('connected_email', e.target.value)} /></div>
-                  <div className="space-y-2"><Label>Phone number</Label><Input type="tel" value={form.telephone} onChange={(e) => set('telephone', e.target.value)} /></div>
+                  <div className="space-y-2"><Label>Phone number</Label><PhoneInput value={form.telephone} onChange={(v) => set('telephone', v)} countryHint={form.country} /></div>
                 </div>
               </TabsContent>
 
@@ -1000,7 +1001,7 @@ export default function AdminAccounts() {
             </div>
             <div className="space-y-2">
               <Label>Connected phone</Label>
-              <Input value={paymentForm.connected_phone} onChange={(e) => setPay('connected_phone', e.target.value)} />
+              <PhoneInput value={paymentForm.connected_phone} onChange={(v) => setPay('connected_phone', v)} />
             </div>
             <div className="space-y-2">
               <Label>Email</Label>

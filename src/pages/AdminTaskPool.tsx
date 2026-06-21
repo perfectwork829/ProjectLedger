@@ -54,6 +54,7 @@ import {
   canEditLastHourlyAccrual,
   type PoolSubtaskStatus,
   TaskPoolItemRecord,
+  type TaskPoolItemStatus,
   TaskPoolScreenshot,
   TaskPoolSourceFile,
   toCsv,
@@ -101,14 +102,17 @@ import {
 } from '@/lib/screenshotDriveFolder';
 import {
   countPendingByPool,
+  filterAccrualPeriodsForPaymentTracking,
   type TaskPoolAccrualPeriodRow,
 } from '@/lib/taskPoolAccrualPeriods';
 import {
   fetchAllAccrualPeriods,
   syncAccrualPeriodsForTasks,
 } from '@/lib/taskPoolAccrualService';
+import { buildPoolStatusTransitionFields } from '@/lib/taskPoolStatusTransitions';
 import TaskPaymentDueBadge from '@/components/TaskPaymentDueBadge';
 import TaskFinishPaymentDialog from '@/components/TaskFinishPaymentDialog';
+import TaskFinishButton from '@/components/TaskFinishButton';
 import TaskPromoteConfirmDialog from '@/components/TaskPromoteConfirmDialog';
 
 const MAIN_STACK_OPTIONS = ['angular', 'react', 'react_native', 'vue', 'nextjs', 'nodejs', 'laravel', 'django', 'flutter', 'other'] as const;
@@ -284,7 +288,11 @@ export default function AdminTaskPool() {
     );
   }, [form, editingId, items, formFees, editTaskAutoPayments]);
 
-  const pendingCountByPool = useMemo(() => countPendingByPool(accrualPeriods), [accrualPeriods]);
+  const paymentTrackingPeriods = useMemo(
+    () => filterAccrualPeriodsForPaymentTracking(accrualPeriods, items),
+    [accrualPeriods, items],
+  );
+  const pendingCountByPool = useMemo(() => countPendingByPool(paymentTrackingPeriods), [paymentTrackingPeriods]);
 
   const refreshAccrualPeriods = async (taskList: TaskPoolItemRecord[], accountList: typeof accounts) => {
     try {
@@ -524,9 +532,18 @@ export default function AdminTaskPool() {
         .reduce((m, x) => Math.max(m, Number(x.priority_order ?? 0)), -1);
       priority_order = maxO + 1;
     }
+    const statusFields =
+      patch.status !== undefined && row
+        ? buildPoolStatusTransitionFields(row, patch.status as TaskPoolItemStatus)
+        : { status: patch.status };
     const res = await supabase
       .from('task_pool_items')
-      .update({ ...patch, ...(priority_order !== undefined ? { priority_order } : {}), updated_at: new Date().toISOString() })
+      .update({
+        ...(patch.status !== undefined ? statusFields : patch),
+        ...(patch.priority !== undefined ? { priority: patch.priority } : {}),
+        ...(priority_order !== undefined ? { priority_order } : {}),
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', id)
       .select('*')
       .single();
@@ -534,7 +551,14 @@ export default function AdminTaskPool() {
       toast({ title: 'Update failed', description: res.error?.message, variant: 'destructive' });
       return;
     }
-    setItems((prev) => prev.map((x) => (x.id === id ? (res.data as TaskPoolItemRecord) : x)));
+    const updated = res.data as TaskPoolItemRecord;
+    setItems((prev) => prev.map((x) => (x.id === id ? updated : x)));
+    if (patch.status !== undefined) {
+      void refreshAccrualPeriods(
+        items.map((x) => (x.id === id ? updated : x)),
+        accounts,
+      );
+    }
   };
 
   const applyDraggedPriority = async (target: TaskPoolItemRecord) => {
@@ -821,6 +845,27 @@ export default function AdminTaskPool() {
     }
 
     setSaving(true);
+    const existing = editingId ? items.find((i) => i.id === editingId) ?? null : null;
+    let statusFields: Pick<TaskPoolItemRecord, 'status' | 'paused_at' | 'metadata_json'>;
+    if (existing && form.status !== existing.status) {
+      statusFields = buildPoolStatusTransitionFields(
+        { ...existing, metadata_json: normalizedMetadata },
+        form.status as TaskPoolItemStatus,
+      );
+    } else if (!existing && form.status === 'paused') {
+      statusFields = {
+        status: 'paused',
+        paused_at: new Date().toISOString(),
+        metadata_json: normalizedMetadata,
+      };
+    } else {
+      statusFields = {
+        status: form.status as TaskPoolItemStatus,
+        paused_at: existing?.paused_at ?? null,
+        metadata_json: normalizedMetadata,
+      };
+    }
+
     const payload = {
       user_id: user?.id || null,
       name: form.name.trim(),
@@ -830,7 +875,7 @@ export default function AdminTaskPool() {
       main_stack: form.mainStack || null,
       skillset_csv: toCsv(form.skillsetTags) || null,
       tags_csv: toCsv(form.tagsTags) || null,
-      status: form.status,
+      ...statusFields,
       priority: form.priority,
       client_id: form.clientId || null,
       client_name_override: form.clientNameOverride.trim() || null,
@@ -838,7 +883,7 @@ export default function AdminTaskPool() {
       client_timezone: form.clientTimezone.trim() || null,
       account_id: form.accountId || null,
       chat_history: form.chatHistory.trim() || null,
-      metadata_json: normalizedMetadata,
+      metadata_json: statusFields.metadata_json,
       initial_document_url: docs[0]?.url ?? null,
       source_storage_type: form.sourceStorageType,
       source_storage_url: storageLinks[0]?.url ?? null,
@@ -1045,12 +1090,23 @@ export default function AdminTaskPool() {
     await applyDetailStatus(selected.id, newStatus);
   };
 
+  const requestFinishTask = (task: TaskPoolItemRecord) => {
+    if (task.status === 'completed') return;
+    setFinishDialog({ task, newStatus: 'completed' });
+  };
+
   const applyDetailStatus = async (taskId: string, newStatus: string, finishedAt?: string) => {
+    const row = items.find((x) => x.id === taskId);
+    if (!row) return;
     const patch: Record<string, unknown> = {
-      status: newStatus,
       updated_at: new Date().toISOString(),
     };
-    if (finishedAt) patch.finished_at = finishedAt;
+    if (finishedAt) {
+      patch.status = newStatus;
+      patch.finished_at = finishedAt;
+    } else {
+      Object.assign(patch, buildPoolStatusTransitionFields(row, newStatus as TaskPoolItemStatus));
+    }
     const res = await supabase.from('task_pool_items').update(patch).eq('id', taskId).select('*').single();
     if (res.error || !res.data) {
       toast({ title: 'Update failed', description: res.error?.message, variant: 'destructive' });
@@ -1415,6 +1471,9 @@ export default function AdminTaskPool() {
                     <p className="mt-2 text-xs text-muted-foreground line-clamp-3 break-words [overflow-wrap:anywhere]">
                       {taskDescriptionPreview(row.description, 20)}
                     </p>
+                    <div className="mt-3 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
+                      <TaskFinishButton task={row} onFinish={requestFinishTask} />
+                    </div>
                   </CardContent>
                   {row.client_id ? (
                     <div className="border-t border-border bg-muted/25 px-4 py-1.5">
@@ -1451,6 +1510,7 @@ export default function AdminTaskPool() {
                     <th className="px-3 py-2">Source</th>
                     <th className="px-3 py-2">Real</th>
                     <th className="px-3 py-2">Withdrawn</th>
+                    <th className="px-3 py-2 w-[100px]">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1513,6 +1573,9 @@ export default function AdminTaskPool() {
                       <td className="px-3 py-2 capitalize">{(row.task_source || '-').replace('_', ' ')}</td>
                       <td className="px-3 py-2">{row.currency} {taskPoolContractGross(row).toFixed(2)}</td>
                       <td className="px-3 py-2 text-emerald-600">{row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}</td>
+                      <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                        <TaskFinishButton task={row} onFinish={requestFinishTask} compact />
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1581,6 +1644,7 @@ export default function AdminTaskPool() {
                           ))}
                         </SelectContent>
                       </Select>
+                      <TaskFinishButton task={row} onFinish={requestFinishTask} compact />
                     </div>
                     <p className="text-xs text-emerald-600">{row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}</p>
                   </div>
@@ -1620,7 +1684,10 @@ export default function AdminTaskPool() {
                         </p>
                       </div>
                     </div>
-                    <Badge variant="outline" className="shrink-0">{row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}</Badge>
+                    <div className="flex shrink-0 items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                      <TaskFinishButton task={row} onFinish={requestFinishTask} compact />
+                      <Badge variant="outline">{row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}</Badge>
+                    </div>
                   </CardContent>
                 </Card>
               ))}
@@ -1680,6 +1747,7 @@ export default function AdminTaskPool() {
                     ) : null}
                   </div>
                   <div className="flex flex-wrap gap-2 shrink-0">
+                    <TaskFinishButton task={selected} onFinish={requestFinishTask} />
                     {(pendingCountByPool[selected.id] ?? 0) > 0 ? (
                       <Button size="sm" variant="secondary" className="gap-1" asChild>
                         <Link to={`/admin/payments?task=${selected.id}`}>
@@ -2204,7 +2272,11 @@ export default function AdminTaskPool() {
         open={!!finishDialog}
         onOpenChange={(open) => !open && setFinishDialog(null)}
         task={finishDialog?.task ?? null}
-        pendingPeriods={finishDialog ? accrualPeriods.filter((p) => p.pool_item_id === finishDialog.task.id) : []}
+        pendingPeriods={
+          finishDialog
+            ? paymentTrackingPeriods.filter((p) => p.pool_item_id === finishDialog.task.id)
+            : []
+        }
         canPromoteToProject={!!finishDialog && !finishDialog.task.promoted_project_id}
         onConfirmFinish={(moveToProject) => void confirmFinishTask(moveToProject)}
       />

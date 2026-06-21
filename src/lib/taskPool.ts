@@ -3,29 +3,35 @@ import type { ProjectPriority, ProjectStatus, SourceStorageType } from '@/lib/pr
 import { normalizeExternalUrl } from '@/lib/externalUrl';
 import { addDaysToJstYmd, compareJstYmd, formatJstYmd, getJstMondayYmd } from '@/lib/jst';
 
-/** Parent lead / pool item — same lifecycle as projects (not Trello columns). */
-export type TaskPoolItemStatus = ProjectStatus;
+/** Parent lead / pool item — workflow statuses (includes paused; not identical to ProjectStatus). */
+export type TaskPoolItemStatus = ProjectStatus | 'paused';
 
 export const TASK_POOL_ITEM_STATUS_OPTIONS = [
   'planning',
   'active',
   'blocked',
   'qa',
+  'paused',
   'completed',
   'cancelled',
-] as const satisfies readonly ProjectStatus[];
+] as const satisfies readonly TaskPoolItemStatus[];
 
 const POOL_ITEM_STATUS_LABELS: Record<string, string> = {
   planning: 'Planning',
   active: 'Active',
   blocked: 'Blocked',
   qa: 'QA',
+  paused: 'Paused',
   completed: 'Completed',
   cancelled: 'Cancelled',
 };
 
 export function taskPoolItemStatusLabel(status: string): string {
   return POOL_ITEM_STATUS_LABELS[status] ?? status.replace(/_/g, ' ');
+}
+
+export function canFinishPoolTask(task: Pick<TaskPoolItemRecord, 'status'>): boolean {
+  return !['completed', 'cancelled'].includes(task.status);
 }
 
 /** Per-item Trello / Kanban columns on subtasks. */
@@ -124,6 +130,8 @@ export interface TaskPoolItemRecord {
   promoted_at: string | null;
   /** When the task was marked completed (JST-aware in UI). */
   finished_at?: string | null;
+  /** When the task was last set to paused. Cleared on resume. */
+  paused_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -311,7 +319,7 @@ export function firstPendingMilestone(row: TaskPoolItemRecord): TaskMilestone | 
 }
 
 export function hasPendingMilestonePayment(row: TaskPoolItemRecord): boolean {
-  return firstPendingMilestone(row) !== null && !['completed', 'cancelled'].includes(row.status);
+  return firstPendingMilestone(row) !== null && !['completed', 'cancelled', 'paused'].includes(row.status);
 }
 
 export function taskUsesAccrualPayments(row: TaskPoolItemRecord): boolean {
@@ -322,14 +330,14 @@ export function taskUsesAccrualPayments(row: TaskPoolItemRecord): boolean {
 export function needsRecurringPaymentAck(row: TaskPoolItemRecord, now = new Date()): boolean {
   if (row.budget_type !== 'fixed' || taskPoolFixedMode(row) !== 'recurring') return false;
   if (!row.recurring_cadence || !row.next_payment_due_at) return false;
-  if (['completed', 'cancelled'].includes(row.status)) return false;
+  if (['completed', 'cancelled', 'paused'].includes(row.status)) return false;
   const today = formatJstYmd(now);
   return compareJstYmd(today, row.next_payment_due_at) >= 0;
 }
 
 export function needsHourlyWeekAck(row: TaskPoolItemRecord, now = new Date()): boolean {
   if (row.budget_type !== 'hourly') return false;
-  if (['completed', 'cancelled'].includes(row.status)) return false;
+  if (['completed', 'cancelled', 'paused'].includes(row.status)) return false;
   const anchor = row.task_received_at || row.created_at;
   if (!anchor) return false;
   const startMonday = getJstMondayYmd(new Date(anchor));

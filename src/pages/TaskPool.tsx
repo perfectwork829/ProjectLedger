@@ -26,6 +26,7 @@ import {
   type PoolSubtaskStatus,
   parseLabeledLinks,
   type TaskPoolItemRecord,
+  type TaskPoolItemStatus,
   type TaskPoolScreenshot,
   type TaskPoolSourceFile,
   taskPoolContractGross,
@@ -60,10 +61,12 @@ import { ArrowLeft, ArrowUpDown, Pencil, Trash2 } from 'lucide-react';
 import { PRIORITY_BADGE_CLASS, PRIORITY_OPTIONS, PRIORITY_RANK, taskDescriptionPreview } from '@/lib/taskPriority';
 import ResolvedScreenshotCarousel from '@/components/ResolvedScreenshotCarousel';
 import { screenshotsFolderFromMetadata } from '@/lib/screenshotDriveFolder';
-import { countPendingByPool, type TaskPoolAccrualPeriodRow } from '@/lib/taskPoolAccrualPeriods';
+import { countPendingByPool, filterAccrualPeriodsForPaymentTracking, type TaskPoolAccrualPeriodRow } from '@/lib/taskPoolAccrualPeriods';
+import { buildPoolStatusTransitionFields } from '@/lib/taskPoolStatusTransitions';
 import { fetchAllAccrualPeriods } from '@/lib/taskPoolAccrualService';
 import TaskPaymentDueBadge from '@/components/TaskPaymentDueBadge';
 import TaskFinishPaymentDialog from '@/components/TaskFinishPaymentDialog';
+import TaskFinishButton from '@/components/TaskFinishButton';
 
 export default function TaskPool() {
   const { user, hasRole } = useAuth();
@@ -142,7 +145,11 @@ export default function TaskPool() {
     setLoading(false);
   };
 
-  const pendingCountByPool = useMemo(() => countPendingByPool(accrualPeriods), [accrualPeriods]);
+  const paymentTrackingPeriods = useMemo(
+    () => filterAccrualPeriodsForPaymentTracking(accrualPeriods, items),
+    [accrualPeriods, items],
+  );
+  const pendingCountByPool = useMemo(() => countPendingByPool(paymentTrackingPeriods), [paymentTrackingPeriods]);
 
   useEffect(() => {
     fetchAll();
@@ -251,9 +258,16 @@ export default function TaskPool() {
     return counts;
   }, [sortedTasks]);
 
+  const canEditTask = (task: TaskPoolItemRecord) =>
+    !task.promoted_project_id && user && (hasRole('admin') || task.user_id === user.id);
+
   const updateTaskQuick = async (id: string, patch: Partial<Pick<TaskPoolItemRecord, 'priority' | 'status' | 'priority_order'>>) => {
     if (!hasRole('admin')) return;
     const row = items.find((x) => x.id === id);
+    if (patch.status === 'completed' && row && row.status !== 'completed') {
+      setFinishDialog({ task: row });
+      return;
+    }
     let priority_order = patch.priority_order;
     if (patch.priority !== undefined && priority_order === undefined && row && patch.priority !== row.priority) {
       const maxO = items
@@ -261,9 +275,18 @@ export default function TaskPool() {
         .reduce((m, x) => Math.max(m, Number(x.priority_order ?? 0)), -1);
       priority_order = maxO + 1;
     }
+    const statusFields =
+      patch.status !== undefined && row
+        ? buildPoolStatusTransitionFields(row, patch.status as TaskPoolItemStatus)
+        : { status: patch.status };
     const res = await supabase
       .from('task_pool_items')
-      .update({ ...patch, ...(priority_order !== undefined ? { priority_order } : {}), updated_at: new Date().toISOString() })
+      .update({
+        ...(patch.status !== undefined ? statusFields : patch),
+        ...(patch.priority !== undefined ? { priority: patch.priority } : {}),
+        ...(priority_order !== undefined ? { priority_order } : {}),
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', id)
       .select('*')
       .single();
@@ -329,6 +352,11 @@ export default function TaskPool() {
   const canEditStatus =
     selected && !selected.promoted_project_id && user && (hasRole('admin') || selected.user_id === user.id);
 
+  const requestFinishTask = (task: TaskPoolItemRecord) => {
+    if (!canEditTask(task) || task.status === 'completed') return;
+    setFinishDialog({ task });
+  };
+
   const updatePoolStatus = async (newStatus: string) => {
     if (!selected) return;
     if (newStatus === 'completed' && selected.status !== 'completed') {
@@ -352,11 +380,17 @@ export default function TaskPool() {
   };
 
   const applyPoolStatus = async (taskId: string, newStatus: string, finishedAt?: string) => {
+    const row = items.find((x) => x.id === taskId);
+    if (!row) return;
     const patch: Record<string, unknown> = {
-      status: newStatus,
       updated_at: new Date().toISOString(),
     };
-    if (finishedAt) patch.finished_at = finishedAt;
+    if (finishedAt) {
+      patch.status = newStatus;
+      patch.finished_at = finishedAt;
+    } else {
+      Object.assign(patch, buildPoolStatusTransitionFields(row, newStatus as TaskPoolItemStatus));
+    }
     const res = await supabase.from('task_pool_items').update(patch).eq('id', taskId).select('*').single();
     if (res.error || !res.data) {
       toast({ title: 'Update failed', description: res.error?.message, variant: 'destructive' });
@@ -696,6 +730,11 @@ export default function TaskPool() {
                     <p className="mt-2 text-xs text-muted-foreground line-clamp-3 break-words [overflow-wrap:anywhere]">
                       {taskDescriptionPreview(row.description, 20)}
                     </p>
+                    {canEditTask(row) ? (
+                      <div className="mt-3 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
+                        <TaskFinishButton task={row} onFinish={requestFinishTask} />
+                      </div>
+                    ) : null}
                   </CardContent>
                 </Card>
               ))}
@@ -722,6 +761,7 @@ export default function TaskPool() {
                     <th className="px-3 py-2">Received</th>
                     <th className="px-3 py-2">Real</th>
                     <th className="px-3 py-2">Withdrawn</th>
+                    <th className="px-3 py-2 w-[100px]">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -788,6 +828,9 @@ export default function TaskPool() {
                       <td className="px-3 py-2">{formatJstYmdFromIso(row.task_received_at)}</td>
                       <td className="px-3 py-2">{row.currency} {taskPoolContractGross(row).toFixed(2)}</td>
                       <td className="px-3 py-2 text-emerald-600">{row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}</td>
+                      <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                        {canEditTask(row) ? <TaskFinishButton task={row} onFinish={requestFinishTask} compact /> : null}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -852,6 +895,7 @@ export default function TaskPool() {
                             ))}
                           </SelectContent>
                         </Select>
+                        {canEditTask(row) ? <TaskFinishButton task={row} onFinish={requestFinishTask} compact /> : null}
                       </div>
                     ) : (
                       <p className="text-xs text-muted-foreground">{taskPoolItemStatusLabel(row.status)}</p>
@@ -895,7 +939,10 @@ export default function TaskPool() {
                         </p>
                       </div>
                     </div>
-                    <Badge variant="outline" className="shrink-0">{row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}</Badge>
+                    <div className="flex shrink-0 items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                      {canEditTask(row) ? <TaskFinishButton task={row} onFinish={requestFinishTask} compact /> : null}
+                      <Badge variant="outline">{row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}</Badge>
+                    </div>
                   </CardContent>
                 </Card>
               ))}
@@ -933,6 +980,7 @@ export default function TaskPool() {
                   ) : (
                     <Badge>{taskPoolItemStatusLabel(selected.status)}</Badge>
                   )}
+                  {canEditStatus ? <TaskFinishButton task={selected} onFinish={requestFinishTask} /> : null}
                 </div>
                 {selected.main_stack ? <Badge className="mt-2 capitalize">{selected.main_stack.replace('_', ' ')}</Badge> : null}
                 {selected.task_source ? (
@@ -1218,7 +1266,11 @@ export default function TaskPool() {
         open={!!finishDialog}
         onOpenChange={(open) => !open && setFinishDialog(null)}
         task={finishDialog?.task ?? null}
-        pendingPeriods={finishDialog ? accrualPeriods.filter((p) => p.pool_item_id === finishDialog.task.id) : []}
+        pendingPeriods={
+          finishDialog
+            ? paymentTrackingPeriods.filter((p) => p.pool_item_id === finishDialog.task.id)
+            : []
+        }
         canPromoteToProject={!!finishDialog && !finishDialog.task.promoted_project_id}
         onConfirmFinish={(moveToProject) => void confirmFinishTask(moveToProject)}
       />
