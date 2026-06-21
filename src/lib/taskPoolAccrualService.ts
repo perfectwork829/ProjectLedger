@@ -9,6 +9,7 @@ import {
 } from '@/lib/taskPoolAccrualPeriods';
 import { advanceRecurringDueJstYmd } from '@/lib/jst';
 import { calcWithdrawnAmount, parseHourlyHoursFromAccrualNote } from '@/lib/taskPoolFinance';
+import { isNonBillingTaskStatus } from '@/lib/taskPoolStatusTransitions';
 
 export type AccountBadgeLookup = { id: string; badge_status: string | null };
 
@@ -17,7 +18,7 @@ export async function syncAccrualPeriodsForTask(
   account: AccountBadgeLookup | undefined,
   now = new Date(),
 ): Promise<void> {
-  if (['cancelled', 'paused'].includes(task.status)) return;
+  if (isNonBillingTaskStatus(task.status) || task.status === 'cancelled') return;
   const topRated = isUpworkTopRatedAccount(account?.badge_status);
   const specs = buildExpectedAccrualPeriodSpecs(task, { topRated, now });
 
@@ -58,7 +59,7 @@ export async function syncAccrualPeriodsForTasks(
   accounts: AccountBadgeLookup[],
 ): Promise<void> {
   const accountMap = Object.fromEntries(accounts.map((a) => [a.id, a]));
-  const active = tasks.filter((t) => !['cancelled', 'paused'].includes(t.status));
+  const active = tasks.filter((t) => !isNonBillingTaskStatus(t.status) && t.status !== 'cancelled');
   await Promise.all(
     active.map((t) => syncAccrualPeriodsForTask(t, t.account_id ? accountMap[t.account_id] : undefined)),
   );

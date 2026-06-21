@@ -791,13 +791,13 @@ export default function TaskPool() {
                       <td className="px-3 py-2">
                         {hasRole('admin') ? (
                           <Select value={row.status} onValueChange={(v) => void updateTaskQuick(row.id, { status: v as TaskPoolItemRecord['status'] })}>
-                            <SelectTrigger className="h-8 w-[150px]" onClick={(e) => e.stopPropagation()}>
+                            <SelectTrigger className="h-8 min-w-[9rem] w-[9rem]" onClick={(e) => e.stopPropagation()}>
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent onClick={(e) => e.stopPropagation()}>
                               {TASK_POOL_ITEM_STATUS_OPTIONS.map((s) => (
                                 <SelectItem key={s} value={s}>
-                                  {taskPoolItemStatusLabel(s)}
+                                  {taskPoolItemStatusLabel(s, { inMenu: true })}
                                 </SelectItem>
                               ))}
                             </SelectContent>
@@ -872,13 +872,13 @@ export default function TaskPool() {
                     {hasRole('admin') ? (
                       <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
                         <Select value={row.status} onValueChange={(v) => void updateTaskQuick(row.id, { status: v as TaskPoolItemRecord['status'] })}>
-                          <SelectTrigger className="h-8 w-[140px] text-xs">
+                          <SelectTrigger className="h-8 min-w-[9rem] w-[9rem] text-xs">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
                             {TASK_POOL_ITEM_STATUS_OPTIONS.map((s) => (
                               <SelectItem key={s} value={s}>
-                                {taskPoolItemStatusLabel(s)}
+                                {taskPoolItemStatusLabel(s, { inMenu: true })}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -972,7 +972,7 @@ export default function TaskPool() {
                       <SelectContent>
                         {TASK_POOL_ITEM_STATUS_OPTIONS.map((s) => (
                           <SelectItem key={s} value={s}>
-                            {taskPoolItemStatusLabel(s)}
+                            {taskPoolItemStatusLabel(s, { inMenu: true })}
                           </SelectItem>
                         ))}
                       </SelectContent>

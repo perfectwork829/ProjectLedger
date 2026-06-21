@@ -62,6 +62,7 @@ export function wednesdayDueForWorkWeek(weekMonday: string, weeksAfter: 1 | 2): 
 function taskEndYmd(task: TaskPoolItemRecord, now: Date): string {
   if (task.finished_at) return formatJstYmd(new Date(task.finished_at));
   if (task.status === 'paused' && task.paused_at) return formatJstYmd(new Date(task.paused_at));
+  if (task.status === 'free' && task.free_at) return formatJstYmd(new Date(task.free_at));
   return formatJstYmd(now);
 }
 
@@ -237,7 +238,7 @@ export function countPendingByPool(periods: TaskPoolAccrualPeriodRow[], todayYmd
   return out;
 }
 
-/** Drop accrual rows for tasks that are paused, completed, or cancelled. */
+/** Drop accrual rows for tasks that are paused, free, completed, or cancelled. */
 export function filterAccrualPeriodsForPaymentTracking(
   periods: TaskPoolAccrualPeriodRow[],
   tasks: Pick<TaskPoolItemRecord, 'id' | 'status'>[],
