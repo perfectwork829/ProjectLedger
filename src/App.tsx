@@ -52,7 +52,7 @@ const App = () => (
             <Route
               path="/oauth/google-drive/callback"
               element={
-                <ProtectedRoute requiredRole="admin">
+                <ProtectedRoute>
                   <OAuthGoogleDriveCallback />
                 </ProtectedRoute>
               }
@@ -60,7 +60,7 @@ const App = () => (
             <Route
               path="/oauth/box/callback"
               element={
-                <ProtectedRoute requiredRole="admin">
+                <ProtectedRoute>
                   <OAuthBoxCallback />
                 </ProtectedRoute>
               }
@@ -87,17 +87,24 @@ const App = () => (
               <Route path="useful-links" element={<UsefulLinks />} />
             </Route>
 
-            {/* Admin — full CRUD, separate layout */}
+            {/* Manage — full CRUD scoped by RLS to own rows (admins see all) */}
             <Route
               path="/admin"
               element={
-                <ProtectedRoute requiredRole="admin">
+                <ProtectedRoute>
                   <AdminLayout />
                 </ProtectedRoute>
               }
             >
               <Route index element={<Navigate to="/admin/tasks" replace />} />
-              <Route path="roles" element={<AdminRoles />} />
+              <Route
+                path="roles"
+                element={
+                  <ProtectedRoute requiredRole="admin">
+                    <AdminRoles />
+                  </ProtectedRoute>
+                }
+              />
               <Route path="accounts" element={<AdminAccounts />} />
               <Route path="projects" element={<AdminProjects />} />
               <Route path="clients" element={<AdminClients />} />

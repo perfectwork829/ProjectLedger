@@ -3,6 +3,18 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { RotateCcw } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -21,7 +33,7 @@ import PaymentEntryDetailDialog from '@/components/PaymentEntryDetailDialog';
 import PaymentAccrualScheduleCard from '@/components/PaymentAccrualScheduleCard';
 import AccrualPeriodHandleDialog from '@/components/AccrualPeriodHandleDialog';
 import type { TaskPoolItemRecord } from '@/lib/taskPool';
-import { fetchAllAccrualPeriods, syncAccrualPeriodsForTasks, cancelAccrualPeriod } from '@/lib/taskPoolAccrualService';
+import { fetchAllAccrualPeriods, syncAccrualPeriodsForTasks, cancelAccrualPeriod, rollbackAccrualPeriodByPaymentEntryId } from '@/lib/taskPoolAccrualService';
 import { filterAccrualPeriodsForPaymentTracking } from '@/lib/taskPoolAccrualPeriods';
 import type { TaskPoolAccrualPeriodRow } from '@/lib/taskPoolAccrualPeriods';
 import { normalizePoolItemId, periodBelongsToPool } from '@/lib/taskPoolAccrualPeriods';
@@ -41,6 +53,8 @@ export default function Payments() {
   const [poolTasks, setPoolTasks] = useState<TaskPoolItemRecord[]>([]);
   const [accrualPeriods, setAccrualPeriods] = useState<TaskPoolAccrualPeriodRow[]>([]);
   const [selectedPeriod, setSelectedPeriod] = useState<TaskPoolAccrualPeriodRow | null>(null);
+  const [rollbackEntryId, setRollbackEntryId] = useState<string | null>(null);
+  const [rollbackBusy, setRollbackBusy] = useState(false);
 
   const fetchAll = useCallback(async ({ withLoading = false }: { withLoading?: boolean } = {}) => {
     if (withLoading) setLoading(true);
@@ -85,6 +99,46 @@ export default function Payments() {
 
   const entryById = useMemo(() => Object.fromEntries(manualEntries.map((e) => [e.id, e])), [manualEntries]);
   const detailEntry = detailEntryId ? entryById[detailEntryId] ?? null : null;
+  const detailAccrualPeriod = detailEntry
+    ? accrualPeriods.find((p) => p.payment_entry_id === detailEntry.id) ?? null
+    : null;
+
+  const canRollbackEntry = useCallback(
+    (entryId: string) => {
+      const entry = entryById[entryId];
+      if (!entry || entry.source_kind !== 'task_auto') return false;
+      return accrualPeriods.some((p) => p.payment_entry_id === entryId && p.confirmed_at);
+    },
+    [entryById, accrualPeriods],
+  );
+
+  const requestRollback = (entryId: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setRollbackEntryId(entryId);
+  };
+
+  const confirmRollback = async () => {
+    if (!rollbackEntryId) return;
+    setRollbackBusy(true);
+    try {
+      await rollbackAccrualPeriodByPaymentEntryId(rollbackEntryId);
+      if (detailEntryId === rollbackEntryId) setDetailEntryId(null);
+      setRollbackEntryId(null);
+      await fetchAll();
+      toast({
+        title: 'Payment rolled back',
+        description: 'The ledger entry was removed and the payment item is unconfirmed again.',
+      });
+    } catch (err) {
+      toast({
+        title: 'Rollback failed',
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    } finally {
+      setRollbackBusy(false);
+    }
+  };
 
   const paymentTrackingPeriods = useMemo(
     () => filterAccrualPeriodsForPaymentTracking(accrualPeriods, poolTasks),
@@ -242,6 +296,7 @@ export default function Payments() {
                     <th className="px-3 py-2">Amount</th>
                     <th className="px-3 py-2">Source</th>
                     <th className="px-3 py-2">Note</th>
+                    <th className="px-3 py-2"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -261,6 +316,19 @@ export default function Payments() {
                       </td>
                       <td className="px-3 py-2">{r.source_kind}</td>
                       <td className="px-3 py-2 text-muted-foreground">{r.note || '-'}</td>
+                      <td className="px-3 py-2 text-right">
+                        {canRollbackEntry(r.id) ? (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7 text-amber-600 hover:text-amber-700"
+                            title="Roll back confirmation"
+                            onClick={(e) => requestRollback(r.id, e)}
+                          >
+                            <RotateCcw className="h-4 w-4" />
+                          </Button>
+                        ) : null}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -284,6 +352,17 @@ export default function Payments() {
                 <p className={r.entry_type === 'incoming' ? 'shrink-0 text-sm text-emerald-600' : 'shrink-0 text-sm text-red-600'}>
                   {r.currency} {r.amount.toFixed(2)}
                 </p>
+                {canRollbackEntry(r.id) ? (
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-7 w-7 shrink-0 text-amber-600 hover:text-amber-700"
+                    title="Roll back confirmation"
+                    onClick={(e) => requestRollback(r.id, e)}
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                  </Button>
+                ) : null}
               </div>
             ))}
           </CardContent>
@@ -338,8 +417,43 @@ export default function Payments() {
         open={!!detailEntry}
         onOpenChange={(open) => !open && setDetailEntryId(null)}
         entry={detailEntry}
+        accrualPeriod={detailAccrualPeriod}
         taskHref={detailEntry?.pool_item_id ? `/dashboard/tasks?task=${detailEntry.pool_item_id}` : null}
+        onRollback={
+          detailEntry && canRollbackEntry(detailEntry.id)
+            ? () => {
+                const id = detailEntry.id;
+                setDetailEntryId(null);
+                setRollbackEntryId(id);
+              }
+            : undefined
+        }
       />
+
+      <AlertDialog open={!!rollbackEntryId} onOpenChange={(open) => !open && !rollbackBusy && setRollbackEntryId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Roll back this payment?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes the ledger entry and unconfirms the linked task payment. If it is overdue, it will show up
+              on the delayed schedule again so you can confirm it correctly.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={rollbackBusy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={rollbackBusy}
+              className="bg-amber-600 hover:bg-amber-700"
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmRollback();
+              }}
+            >
+              {rollbackBusy ? 'Rolling back…' : 'Roll back'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

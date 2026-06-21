@@ -31,7 +31,7 @@ const EXPANDED_SIDEBAR_WIDTH = 'w-[260px]';
 const RAIL_ICON_HIT = 'inline-flex size-10 shrink-0 items-center justify-center rounded-md transition-colors';
 
 const adminItems = [
-  { to: '/admin/roles', label: 'Manage Roles', icon: Shield },
+  { to: '/admin/roles', label: 'Manage Roles', icon: Shield, adminOnly: true },
   { to: '/admin/accounts', label: 'Manage Accounts', icon: CreditCard },
   { to: '/admin/payments', label: 'Manage Payments', icon: DollarSign },
   { to: '/admin/projects', label: 'Manage Projects', icon: FolderKanban },
@@ -40,7 +40,7 @@ const adminItems = [
   { to: '/admin/personnel', label: 'Manage Personnel', icon: Users2 },
   { to: '/admin/job-interviews', label: 'Job interviews', icon: CalendarClock },
   { to: '/admin/useful-links', label: 'Manage Help', icon: HelpCircle },
-];
+] as const;
 
 function readCollapsedPreference(): boolean {
   try {
@@ -104,10 +104,12 @@ function AdminRailNavItem({
 }
 
 function AdminDesktopRail({
+  navItems,
   onNavigate,
   onExpand,
   onSignOut,
 }: {
+  navItems: ReadonlyArray<(typeof adminItems)[number]>;
   onNavigate: () => void;
   onExpand: () => void;
   onSignOut: () => void;
@@ -143,7 +145,7 @@ function AdminDesktopRail({
             </Tooltip>
           </li>
 
-          {adminItems.map((item) => (
+          {navItems.map((item) => (
             <AdminRailNavItem key={item.to} to={item.to} label={item.label} icon={item.icon} isActive={isPathActive(item.to)} onNavigate={onNavigate} />
           ))}
         </ul>
@@ -164,7 +166,10 @@ function AdminDesktopRail({
 }
 
 export default function AdminLayout() {
-  const { user, signOut } = useAuth();
+  const { user, signOut, hasRole } = useAuth();
+  const isAdmin = hasRole('admin');
+  const visibleAdminItems = adminItems.filter((item) => !('adminOnly' in item && item.adminOnly) || isAdmin);
+  const panelTitle = isAdmin ? 'Admin Panel' : 'Manage';
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readCollapsedPreference);
@@ -212,7 +217,7 @@ export default function AdminLayout() {
       <div className="flex h-12 shrink-0 items-center gap-2 border-b border-sidebar-border bg-card px-3">
         <img src="/favicon.svg" alt="" className="h-8 w-8 shrink-0 rounded-sm" width={32} height={32} />
         <div className="min-w-0 flex-1">
-          <span className="block truncate text-[13px] font-semibold tracking-tight text-sidebar-foreground">Administration</span>
+          <span className="block truncate text-[13px] font-semibold tracking-tight text-sidebar-foreground">{panelTitle}</span>
           <span className="block truncate text-[11px] font-normal text-muted-foreground">BenchHub</span>
         </div>
         <Tooltip delayDuration={300}>
@@ -248,9 +253,9 @@ export default function AdminLayout() {
           Back to app
         </NavLink>
 
-        <p className="mb-2 px-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Administration</p>
+        <p className="mb-2 px-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{panelTitle}</p>
 
-        {adminItems.map((item) => (
+        {visibleAdminItems.map((item) => (
           <ExpandedNavItem key={item.to} to={item.to} label={item.label} icon={item.icon} onNavigate={onNavigate} />
         ))}
       </nav>
@@ -270,7 +275,7 @@ export default function AdminLayout() {
       <div className="flex h-12 shrink-0 items-center gap-2 border-b border-sidebar-border bg-card px-3">
         <img src="/favicon.svg" alt="" className="h-8 w-8 shrink-0 rounded-sm" width={32} height={32} />
         <div className="min-w-0 flex-1 pr-8">
-          <span className="block truncate text-[13px] font-semibold tracking-tight text-sidebar-foreground">Administration</span>
+          <span className="block truncate text-[13px] font-semibold tracking-tight text-sidebar-foreground">{panelTitle}</span>
           <span className="block truncate text-[11px] font-normal text-muted-foreground">BenchHub</span>
         </div>
       </div>
@@ -291,9 +296,9 @@ export default function AdminLayout() {
           Back to app
         </NavLink>
 
-        <p className="mb-2 px-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Administration</p>
+        <p className="mb-2 px-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{panelTitle}</p>
 
-        {adminItems.map((item) => (
+        {visibleAdminItems.map((item) => (
           <ExpandedNavItem key={item.to} to={item.to} label={item.label} icon={item.icon} onNavigate={onNavigate} />
         ))}
       </nav>
@@ -319,7 +324,7 @@ export default function AdminLayout() {
           )}
         >
           {sidebarCollapsed ? (
-            <AdminDesktopRail onNavigate={() => {}} onExpand={() => setSidebarCollapsed(false)} onSignOut={handleSignOut} />
+            <AdminDesktopRail navItems={visibleAdminItems} onNavigate={() => {}} onExpand={() => setSidebarCollapsed(false)} onSignOut={handleSignOut} />
           ) : (
             <DesktopSidebarExpanded onNavigate={() => {}} />
           )}
@@ -349,7 +354,7 @@ export default function AdminLayout() {
               <button type="button" className="-ml-1 rounded-md p-2 md:hidden" onClick={() => setSidebarOpen(true)} aria-label="Open sidebar">
                 <Menu className="h-5 w-5 text-foreground" />
               </button>
-              <h1 className="text-[17px] font-semibold tracking-tight text-foreground">Admin Panel</h1>
+              <h1 className="text-[17px] font-semibold tracking-tight text-foreground">{panelTitle}</h1>
             </div>
           </header>
           <main className="min-h-0 flex-1 overflow-y-auto px-4 py-5 md:px-6 md:py-6">

@@ -200,7 +200,11 @@ export default function PaymentAccrualScheduleCard({
   const [cancelling, setCancelling] = useState(false);
 
   const delayedOnly = useMemo(
-    () => periods.filter((p) => isPeriodUnconfirmed(p) && isPeriodOverdue(p)),
+    () =>
+      periods.filter((p) => {
+        if (!isPeriodUnconfirmed(p)) return false;
+        return isPeriodOverdue(p);
+      }),
     [periods],
   );
 

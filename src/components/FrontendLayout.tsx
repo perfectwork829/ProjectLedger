@@ -123,7 +123,17 @@ export default function FrontendLayout() {
                       </NavLink>
                     </DropdownMenuItem>
                   </>
-                ) : null}
+                ) : (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem asChild className="cursor-pointer">
+                      <NavLink to="/admin/tasks" className="flex w-full cursor-pointer items-center gap-2">
+                        <ClipboardList className="h-4 w-4 shrink-0" />
+                        Manage data
+                      </NavLink>
+                    </DropdownMenuItem>
+                  </>
+                )}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={handleSignOut} className="gap-2 text-destructive focus:text-destructive">
                   <LogOut className="h-4 w-4" />

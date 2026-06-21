@@ -337,10 +337,15 @@ export default function AdminProjects() {
       return;
     }
 
+    if (!user?.id) {
+      toast({ title: 'Not signed in', variant: 'destructive' });
+      return;
+    }
+
     const published = serializeLabeledLinks(form.publishedLinks ?? []);
     setSaving(true);
     const payload = {
-      user_id: user?.id || null,
+      user_id: user.id,
       name: form.name.trim(),
       description: form.description.trim() || null,
       readme: form.readme.trim() || null,

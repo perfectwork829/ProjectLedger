@@ -9,7 +9,7 @@ import {
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Pencil, Trash2 } from 'lucide-react';
+import { Pencil, Trash2, RotateCcw } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import type { PaymentEntryRecord } from '@/lib/payments';
 import type { TaskPoolAccrualPeriodRow } from '@/lib/taskPoolAccrualPeriods';
@@ -23,6 +23,7 @@ type Props = {
   accrualPeriod?: TaskPoolAccrualPeriodRow | null;
   onEdit?: () => void;
   onDelete?: () => void;
+  onRollback?: () => void;
 };
 
 function DetailRow({ label, value }: { label: string; value: ReactNode }) {
@@ -44,6 +45,7 @@ export default function PaymentEntryDetailDialog({
   accrualPeriod: accrualPeriodProp,
   onEdit,
   onDelete,
+  onRollback,
 }: Props) {
   const [taskName, setTaskName] = useState<string | null>(null);
   const [accrualPeriod, setAccrualPeriod] = useState<TaskPoolAccrualPeriodRow | null>(null);
@@ -188,12 +190,18 @@ export default function PaymentEntryDetailDialog({
           </div>
         ) : null}
 
-        {(onEdit || onDelete) && entry ? (
+        {(onEdit || onDelete || onRollback) && entry ? (
           <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
             {onEdit && entry.source_kind === 'task_auto' && entry.pool_item_id ? (
               <Button type="button" variant="outline" className="gap-2" onClick={onEdit}>
                 <Pencil className="h-4 w-4" />
                 Edit payment
+              </Button>
+            ) : null}
+            {onRollback && entry.source_kind === 'task_auto' && resolvedPeriod?.confirmed_at ? (
+              <Button type="button" variant="outline" className="gap-2 text-amber-700 hover:text-amber-800" onClick={onRollback}>
+                <RotateCcw className="h-4 w-4" />
+                Roll back confirmation
               </Button>
             ) : null}
             {onDelete && entry.source_kind === 'manual' ? (

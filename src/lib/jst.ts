@@ -68,6 +68,12 @@ export function advanceRecurringDueJstYmd(ymd: string, cadence: 'weekly' | 'biwe
   return addMonthsToJstYmd(ymd, 1);
 }
 
+export function retreatRecurringDueJstYmd(ymd: string, cadence: 'weekly' | 'biweekly' | 'monthly'): string {
+  if (cadence === 'weekly') return addDaysToJstYmd(ymd, -7);
+  if (cadence === 'biweekly') return addDaysToJstYmd(ymd, -14);
+  return addMonthsToJstYmd(ymd, -1);
+}
+
 const JST_DATETIME_DISPLAY = new Intl.DateTimeFormat('en', {
   timeZone: 'Asia/Tokyo',
   year: 'numeric',
@@ -116,13 +122,28 @@ export function isoToDatetimeLocalInJst(iso: string): string {
 
 /** Parse datetime-local string as JST wall time → UTC ISO (for Supabase). */
 export function datetimeLocalJstToIso(localYmdHm: string): string | null {
-  const t = localYmdHm.trim();
+  const t = localYmdHm.trim().replace(' ', 'T');
   if (!t) return null;
   const [datePart, timePart] = t.split('T');
   if (!datePart || !timePart) return null;
   const [y, mo, d] = datePart.split('-').map((x) => parseInt(x, 10));
-  const [h, mi] = timePart.split(':').map((x) => parseInt(x, 10));
+  const timeParts = timePart.split(':');
+  const h = parseInt(timeParts[0] ?? '', 10);
+  const mi = parseInt((timeParts[1] ?? '0').split('.')[0], 10);
   if ([y, mo, d, h, mi].some((n) => Number.isNaN(n))) return null;
+  if (h < 0 || h > 23 || mi < 0 || mi > 59) return null;
   const ms = Date.UTC(y, mo - 1, d, h, mi, 0, 0) - 9 * 60 * 60 * 1000;
-  return new Date(ms).toISOString();
+  const iso = new Date(ms).toISOString();
+  return Number.isNaN(new Date(iso).getTime()) ? null : iso;
+}
+
+/** Parse optional datetime-local (JST) for forms; returns null when empty. */
+export function optionalDatetimeLocalJstToIso(
+  localYmdHm: string,
+): { ok: true; iso: string | null } | { ok: false } {
+  const trimmed = localYmdHm.trim();
+  if (!trimmed) return { ok: true, iso: null };
+  const iso = datetimeLocalJstToIso(trimmed);
+  if (!iso) return { ok: false };
+  return { ok: true, iso };
 }

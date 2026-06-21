@@ -77,11 +77,11 @@ import { SOURCE_STORAGE_PROVIDER_OPTIONS } from '@/lib/projects';
 import {
   advanceRecurringDueJstYmd,
   addDaysToJstYmd,
-  datetimeLocalJstToIso,
   formatIsoInJst,
   formatJstYmd,
   getJstMondayYmd,
   isoToDatetimeLocalInJst,
+  optionalDatetimeLocalJstToIso,
 } from '@/lib/jst';
 import { RichTextEditor } from '@/components/RichTextEditor';
 import { ReadmePanel, README_EDITOR_PLACEHOLDER } from '@/components/ReadmePanel';
@@ -103,12 +103,16 @@ import {
 import {
   countPendingByPool,
   filterAccrualPeriodsForPaymentTracking,
+  findAccrualPeriodForMilestone,
   type TaskPoolAccrualPeriodRow,
 } from '@/lib/taskPoolAccrualPeriods';
 import {
   fetchAllAccrualPeriods,
+  syncAccrualPeriodsForTask,
   syncAccrualPeriodsForTasks,
 } from '@/lib/taskPoolAccrualService';
+import AccrualPeriodHandleDialog from '@/components/AccrualPeriodHandleDialog';
+import TaskMilestonePaymentsPanel from '@/components/TaskMilestonePaymentsPanel';
 import { buildPoolStatusTransitionFields } from '@/lib/taskPoolStatusTransitions';
 import TaskPaymentDueBadge from '@/components/TaskPaymentDueBadge';
 import TaskFinishPaymentDialog from '@/components/TaskFinishPaymentDialog';
@@ -160,7 +164,7 @@ const emptyForm = {
   deadline: '',
   budgetType: 'fixed' as 'fixed' | 'hourly',
   fixedBudgetMode: 'project' as 'project' | 'recurring' | 'milestone',
-  milestones: [] as { id: string; title: string; amount: string; confirmedAt: string | null }[],
+  milestones: [] as { id: string; title: string; amount: string; dueAt: string; confirmedAt: string | null }[],
   recurringCadence: '' as '' | 'weekly' | 'biweekly' | 'monthly',
   nextPaymentDueAt: '',
   hourlyRate: '',
@@ -265,6 +269,8 @@ export default function AdminTaskPool() {
   const [accrualHours, setAccrualHours] = useState('');
   const [editTaskAutoPayments, setEditTaskAutoPayments] = useState<TaskAutoPaymentSlice[]>([]);
   const [accrualPeriods, setAccrualPeriods] = useState<TaskPoolAccrualPeriodRow[]>([]);
+  const [selectedPeriod, setSelectedPeriod] = useState<TaskPoolAccrualPeriodRow | null>(null);
+  const [milestoneConfirmLoadingId, setMilestoneConfirmLoadingId] = useState<string | null>(null);
   const [finishDialog, setFinishDialog] = useState<{ task: TaskPoolItemRecord; newStatus: string } | null>(null);
   const [promoteConfirm, setPromoteConfirm] = useState<{ poolId: string; taskName: string } | null>(null);
 
@@ -688,6 +694,7 @@ export default function AdminTaskPool() {
         id: m.id,
         title: m.title,
         amount: String(m.amount),
+        dueAt: m.due_at || '',
         confirmedAt: m.confirmed_at,
       })),
       upworkConnectionFee: Number(row.upwork_connection_fee ?? 0).toString(),
@@ -707,6 +714,10 @@ export default function AdminTaskPool() {
   };
 
   const savePoolItem = async () => {
+    if (!user?.id) {
+      toast({ title: 'Not signed in', description: 'Sign in again to save.', variant: 'destructive' });
+      return;
+    }
     if (!form.name.trim()) {
       toast({ title: 'Name is required', variant: 'destructive' });
       return;
@@ -751,7 +762,13 @@ export default function AdminTaskPool() {
     const upworkFee = form.upworkFee ? Number(form.upworkFee) : 0;
     const withdrawFee = form.withdrawFee ? Number(form.withdrawFee) : 0;
 
-    let milestoneRowsForSave: Array<{ id: string; title: string; amount: number; confirmed_at: string | null }> = [];
+    let milestoneRowsForSave: Array<{
+      id: string;
+      title: string;
+      amount: number;
+      due_at: string | null;
+      confirmed_at: string | null;
+    }> = [];
     if (form.budgetType === 'fixed' && form.fixedBudgetMode === 'milestone') {
       const prev = existing ? parseMilestones(existing.milestones_json) : [];
       milestoneRowsForSave = form.milestones
@@ -762,6 +779,7 @@ export default function AdminTaskPool() {
             id: m.id,
             title: m.title.trim() || 'Milestone',
             amount: Math.max(0, Number(m.amount) || 0),
+            due_at: m.dueAt.trim() || p?.due_at || null,
             confirmed_at: p?.confirmed_at ?? null,
           };
         });
@@ -857,6 +875,25 @@ export default function AdminTaskPool() {
       return;
     }
 
+    const taskReceivedParsed = optionalDatetimeLocalJstToIso(form.taskReceivedAt);
+    if (!taskReceivedParsed.ok) {
+      toast({
+        title: 'Invalid task received date',
+        description: 'Enter a full date and time (JST).',
+        variant: 'destructive',
+      });
+      return;
+    }
+    const deadlineParsed = optionalDatetimeLocalJstToIso(form.deadline);
+    if (!deadlineParsed.ok) {
+      toast({
+        title: 'Invalid deadline',
+        description: 'Enter a full date and time (JST).',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     setSaving(true);
     const rowForTransition = (existing ?? {
       status: 'planning',
@@ -870,7 +907,7 @@ export default function AdminTaskPool() {
     );
 
     const payload = {
-      user_id: user?.id || null,
+      user_id: user.id,
       name: form.name.trim(),
       description: form.description.trim() || null,
       readme: form.readme.trim() || null,
@@ -894,8 +931,8 @@ export default function AdminTaskPool() {
       source_storage_urls: storageLinks,
       initial_document_urls: docs,
       published_links: published,
-      task_received_at: form.taskReceivedAt ? datetimeLocalJstToIso(form.taskReceivedAt) : null,
-      deadline: form.deadline ? datetimeLocalJstToIso(form.deadline) : null,
+      task_received_at: taskReceivedParsed.iso,
+      deadline: deadlineParsed.iso,
       budget_type: form.budgetType,
       fixed_budget_mode: fixedMode,
       recurring_cadence: recurringCadence,
@@ -916,8 +953,8 @@ export default function AdminTaskPool() {
     };
 
     const saveResult = editingId
-      ? await supabase.from('task_pool_items').update(payload).eq('id', editingId).select('id').single()
-      : await supabase.from('task_pool_items').insert(payload).select('id').single();
+      ? await supabase.from('task_pool_items').update(payload).eq('id', editingId).select('*').single()
+      : await supabase.from('task_pool_items').insert(payload).select('*').single();
 
     if (saveResult.error || !saveResult.data) {
       toast({ title: 'Save failed', description: saveResult.error?.message, variant: 'destructive' });
@@ -925,7 +962,17 @@ export default function AdminTaskPool() {
       return;
     }
 
-    const poolId = saveResult.data.id as string;
+    const savedRow = saveResult.data as TaskPoolItemRecord;
+    const poolId = savedRow.id;
+    setItems((prev) => {
+      const idx = prev.findIndex((x) => x.id === poolId);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = savedRow;
+        return next;
+      }
+      return [savedRow, ...prev];
+    });
 
     await supabase.from('task_pool_screenshots').delete().eq('pool_item_id', poolId);
 
@@ -966,6 +1013,14 @@ export default function AdminTaskPool() {
     setSaving(false);
     setDialogOpen(false);
     toast({ title: editingId ? 'Task updated' : 'Task created' });
+    try {
+      const account = accounts.find((a) => a.id === savedRow.account_id);
+      await syncAccrualPeriodsForTask(savedRow, account);
+      const periods = await fetchAllAccrualPeriods();
+      setAccrualPeriods(periods);
+    } catch (e) {
+      console.error('Accrual sync after save failed', e);
+    }
     await refreshTaskPoolDataQuiet();
     const newlyCompleted =
       form.status === 'completed' && (existing?.status !== 'completed' || !editingId);
@@ -1096,6 +1151,48 @@ export default function AdminTaskPool() {
   const requestFinishTask = (task: TaskPoolItemRecord) => {
     if (task.status === 'completed') return;
     setFinishDialog({ task, newStatus: 'completed' });
+  };
+
+  const openMilestoneConfirm = async (milestoneId: string) => {
+    if (!selected) return;
+    setMilestoneConfirmLoadingId(milestoneId);
+    try {
+      let period = findAccrualPeriodForMilestone(accrualPeriods, selected.id, milestoneId);
+      if (!period) {
+        const account = accounts.find((a) => a.id === selected.account_id);
+        await syncAccrualPeriodsForTask(selected, account);
+        const periods = await fetchAllAccrualPeriods();
+        setAccrualPeriods(periods);
+        period = findAccrualPeriodForMilestone(periods, selected.id, milestoneId);
+      }
+      if (!period) {
+        toast({
+          title: 'Milestone payment not found',
+          description: 'Save the task with milestones, then try again.',
+          variant: 'destructive',
+        });
+        return;
+      }
+      setSelectedPeriod(period);
+    } catch (e) {
+      toast({
+        title: 'Could not open milestone payment',
+        description: e instanceof Error ? e.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    } finally {
+      setMilestoneConfirmLoadingId(null);
+    }
+  };
+
+  const refreshAfterAccrualConfirm = async () => {
+    try {
+      const periods = await fetchAllAccrualPeriods();
+      setAccrualPeriods(periods);
+      await refreshTaskPoolDataQuiet();
+    } catch (e) {
+      console.error('Failed to refresh after accrual confirm', e);
+    }
   };
 
   const applyDetailStatus = async (taskId: string, newStatus: string, finishedAt?: string) => {
@@ -1914,138 +2011,11 @@ export default function AdminTaskPool() {
                         </p>
                       ) : null}
                     </div>
-                    {taskPoolFixedMode(selected) === 'milestone' ? (
-                      <div className="rounded-lg border p-3 space-y-2 md:col-span-2">
-                        <p className="text-sm font-medium">Milestones</p>
-                        {parseMilestones(selected.milestones_json).length === 0 ? (
-                          <p className="text-xs text-muted-foreground">No milestones defined.</p>
-                        ) : (
-                          <>
-                            {(() => {
-                              const ms = parseMilestones(selected.milestones_json);
-                              const paid = ms.filter((m) => !!m.confirmed_at);
-                              const pending = ms.filter((m) => !m.confirmed_at);
-                              const paidGross = paid.reduce((s, m) => s + Number(m.amount || 0), 0);
-                              const pendingGross = pending.reduce((s, m) => s + Number(m.amount || 0), 0);
-                              const paidNet = paid.reduce(
-                                (s, m) =>
-                                  s +
-                                  calcWithdrawnAmount({
-                                    budgetAmount: Number(m.amount || 0),
-                                    upworkConnectionFee: Number(selected.upwork_connection_fee ?? 0),
-                                    convertFee: Number(selected.convert_fee ?? 0),
-                                    transferFee: Number(selected.transfer_fee ?? 0),
-                                    upworkFee: Number(selected.upwork_fee ?? 0),
-                                    withdrawFee: Number(selected.withdraw_fee ?? 0),
-                                  }),
-                                0,
-                              );
-                              const contractNetMax = ms.reduce(
-                                (s, m) =>
-                                  s +
-                                  calcWithdrawnAmount({
-                                    budgetAmount: Number(m.amount || 0),
-                                    upworkConnectionFee: Number(selected.upwork_connection_fee ?? 0),
-                                    convertFee: Number(selected.convert_fee ?? 0),
-                                    transferFee: Number(selected.transfer_fee ?? 0),
-                                    upworkFee: Number(selected.upwork_fee ?? 0),
-                                    withdrawFee: Number(selected.withdraw_fee ?? 0),
-                                  }),
-                                0,
-                              );
-                              return (
-                                <div className="grid gap-2 sm:grid-cols-3">
-                                  <div className="rounded border bg-muted/20 p-2">
-                                    <p className="text-[11px] text-muted-foreground">Paid</p>
-                                    <p className="text-sm font-medium">
-                                      {selected.currency} {paidGross.toFixed(2)} gross
-                                    </p>
-                                    <p className="text-[11px] text-emerald-700">
-                                      {paidNet.toFixed(2)} net → withdrawn (by milestones)
-                                    </p>
-                                  </div>
-                                  <div className="rounded border bg-muted/20 p-2">
-                                    <p className="text-[11px] text-muted-foreground">Pending</p>
-                                    <p className="text-sm font-medium">
-                                      {selected.currency} {pendingGross.toFixed(2)} gross
-                                    </p>
-                                    <p className="text-[11px] text-muted-foreground">Awaiting confirmation</p>
-                                  </div>
-                                  <div className="rounded border bg-muted/20 p-2">
-                                    <p className="text-[11px] text-muted-foreground">Safety cap</p>
-                                    <p className="text-sm font-medium">
-                                      Max net: {selected.currency} {contractNetMax.toFixed(2)}
-                                    </p>
-                                    <p className="text-[11px] text-muted-foreground">
-                                      Current withdrawn: {selected.currency} {Number(selected.withdrawn_amount ?? 0).toFixed(2)}
-                                    </p>
-                                  </div>
-                                </div>
-                              );
-                            })()}
-                            <ul className="space-y-2 text-sm">
-                              {parseMilestones(selected.milestones_json).map((m) => (
-                              <li
-                                key={m.id}
-                                className="flex flex-wrap items-center justify-between gap-2 border-b border-dashed border-border/60 pb-2 last:border-0"
-                              >
-                                <div className="min-w-0">
-                                  <span className="font-medium">{m.title}</span>
-                                  <span className="text-muted-foreground">
-                                    {' '}
-                                    · {selected.currency} {Number(m.amount).toFixed(2)}
-                                  </span>
-                                  {m.confirmed_at ? (
-                                    <Badge variant="secondary" className="ml-2 text-[10px]">
-                                      Confirmed
-                                    </Badge>
-                                  ) : (
-                                    <Badge variant="outline" className="ml-2 text-[10px]">
-                                      Pending
-                                    </Badge>
-                                  )}
-                                  {m.confirmed_at ? (
-                                    <span className="ml-2 text-[11px] text-muted-foreground">
-                                      {new Date(m.confirmed_at).toLocaleString()}
-                                    </span>
-                                  ) : null}
-                                </div>
-                                {!m.confirmed_at && Number(m.amount) > 0 ? (
-                                  <Button type="button" size="sm" variant="outline" asChild>
-                                    <Link to={`/admin/payments?task=${selected.id}`}>Confirm on Payments</Link>
-                                  </Button>
-                                ) : null}
-                              </li>
-                            ))}
-                          </ul>
-                          </>
-                        )}
-                        {(() => {
-                          const confirmed = parseMilestones(selected.milestones_json).filter((m) => !!m.confirmed_at);
-                          if (confirmed.length === 0) return null;
-                          return (
-                            <div className="pt-1">
-                              <p className="text-xs font-medium text-foreground">Milestone history</p>
-                              <ul className="mt-1 space-y-1 text-xs text-muted-foreground">
-                                {confirmed
-                                  .slice()
-                                  .sort((a, b) => new Date(String(b.confirmed_at)).getTime() - new Date(String(a.confirmed_at)).getTime())
-                                  .map((m) => (
-                                    <li key={`hist-${m.id}`} className="flex flex-wrap gap-2">
-                                      <span className="text-foreground">{m.title}</span>
-                                      <span>
-                                        {selected.currency} {Number(m.amount).toFixed(2)}
-                                      </span>
-                                      <span>·</span>
-                                      <span>{m.confirmed_at ? new Date(m.confirmed_at).toLocaleString() : ''}</span>
-                                    </li>
-                                  ))}
-                              </ul>
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    ) : null}
+                    <TaskMilestonePaymentsPanel
+                      task={selected}
+                      onConfirmMilestone={(id) => void openMilestoneConfirm(id)}
+                      confirmBusyId={milestoneConfirmLoadingId}
+                    />
                     <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                       <InfoCard icon={Clock} title="Upwork connection fee" value={`${selected.currency} ${Number(selected.upwork_connection_fee ?? 0).toFixed(2)}`} />
                       <InfoCard icon={Clock} title="Convert fee" value={`${selected.currency} ${Number(selected.convert_fee ?? 0).toFixed(2)}`} />
@@ -2290,6 +2260,15 @@ export default function AdminTaskPool() {
         </AlertDialogContent>
       </AlertDialog>
 
+      <AccrualPeriodHandleDialog
+        open={!!selectedPeriod}
+        onOpenChange={(open) => !open && setSelectedPeriod(null)}
+        period={selectedPeriod}
+        task={selectedPeriod && selected ? selected : null}
+        taskHref={selected ? `/admin/tasks?task=${selected.id}` : null}
+        onConfirmed={() => void refreshAfterAccrualConfirm()}
+      />
+
       <TaskFinishPaymentDialog
         open={!!finishDialog}
         onOpenChange={(open) => !open && setFinishDialog(null)}
@@ -2493,12 +2472,22 @@ export default function AdminTaskPool() {
             </div>
             <div className="space-y-2">
               <Label>Task received at (offer date, JST)</Label>
-              <Input type="datetime-local" value={form.taskReceivedAt} onChange={(e) => setForm((p) => ({ ...p, taskReceivedAt: e.target.value }))} />
+              <Input
+                type="datetime-local"
+                step={60}
+                value={form.taskReceivedAt}
+                onChange={(e) => setForm((p) => ({ ...p, taskReceivedAt: e.target.value }))}
+              />
               <p className="text-[11px] text-muted-foreground">Interpreted as Asia/Tokyo, not your computer timezone.</p>
             </div>
             <div className="space-y-2">
               <Label>Deadline (JST)</Label>
-              <Input type="datetime-local" value={form.deadline} onChange={(e) => setForm((p) => ({ ...p, deadline: e.target.value }))} />
+              <Input
+                type="datetime-local"
+                step={60}
+                value={form.deadline}
+                onChange={(e) => setForm((p) => ({ ...p, deadline: e.target.value }))}
+              />
             </div>
             <div className="space-y-2">
               <Label>Budget type</Label>
@@ -2536,7 +2525,7 @@ export default function AdminTaskPool() {
                           mode === 'recurring' && !p.recurringCadence ? 'weekly' : mode === 'recurring' ? p.recurringCadence : '',
                         milestones:
                           mode === 'milestone' && p.milestones.length === 0
-                            ? [{ id: crypto.randomUUID(), title: '', amount: '', confirmedAt: null }]
+                            ? [{ id: crypto.randomUUID(), title: '', amount: '', dueAt: '', confirmedAt: null }]
                             : p.milestones,
                       };
                     })
@@ -2573,6 +2562,7 @@ export default function AdminTaskPool() {
                           id: m.id,
                           title: m.title.trim() || 'Milestone',
                           amount: Math.max(0, Number(m.amount) || 0),
+                          due_at: m.dueAt.trim() || null,
                           confirmed_at: m.confirmedAt,
                         })),
                     ).toFixed(2)} (sum of milestones)`}
@@ -2588,7 +2578,7 @@ export default function AdminTaskPool() {
                       onClick={() =>
                         setForm((p) => ({
                           ...p,
-                          milestones: [...p.milestones, { id: crypto.randomUUID(), title: '', amount: '', confirmedAt: null }],
+                          milestones: [...p.milestones, { id: crypto.randomUUID(), title: '', amount: '', dueAt: '', confirmedAt: null }],
                         }))
                       }
                     >
@@ -2614,6 +2604,21 @@ export default function AdminTaskPool() {
                                 })
                               }
                               placeholder={`Milestone ${idx + 1}`}
+                            />
+                          </div>
+                          <div className="space-y-1 w-[130px]">
+                            <span className="text-[11px] text-muted-foreground">Due (JST date)</span>
+                            <Input
+                              type="date"
+                              value={m.dueAt}
+                              disabled={!!m.confirmedAt}
+                              onChange={(e) =>
+                                setForm((p) => {
+                                  const next = [...p.milestones];
+                                  next[idx] = { ...next[idx], dueAt: e.target.value };
+                                  return { ...p, milestones: next };
+                                })
+                              }
                             />
                           </div>
                           <div className="space-y-1 w-[120px]">
@@ -2653,8 +2658,8 @@ export default function AdminTaskPool() {
                     )}
                   </div>
                   <p className="text-[11px] text-muted-foreground">
-                    Saved <strong className="text-foreground">budget_amount</strong> matches this total. Confirm each milestone on the task detail page to
-                    update withdrawn and add incoming rows in Payments.
+                    Set a <strong className="text-foreground">due date</strong> per milestone (JST). Payments lists a milestone only
+                    after that date passes. Confirm on the task detail page while the task deadline has not passed.
                   </p>
                 </div>
               </div>

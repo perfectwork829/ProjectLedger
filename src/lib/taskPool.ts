@@ -278,6 +278,8 @@ export interface TaskMilestone {
   id: string;
   title: string;
   amount: number;
+  /** JST calendar date (YYYY-MM-DD) when this milestone payment is due. */
+  due_at: string | null;
   confirmed_at: string | null;
 }
 
@@ -291,6 +293,8 @@ export function parseMilestones(raw: unknown): TaskMilestone[] {
     const amount = Number(rec.amount ?? 0);
     const confirmed = rec.confirmed_at;
     const confirmed_at = typeof confirmed === 'string' && confirmed.trim() ? confirmed.trim() : null;
+    const dueRaw = rec.due_at;
+    const due_at = typeof dueRaw === 'string' && dueRaw.trim() ? dueRaw.trim().slice(0, 10) : null;
     let id = String(rec.id ?? '').trim();
     if (!id) {
       id =
@@ -298,7 +302,7 @@ export function parseMilestones(raw: unknown): TaskMilestone[] {
           ? crypto.randomUUID()
           : `m-${out.length}-${Date.now()}`;
     }
-    out.push({ id, title, amount, confirmed_at });
+    out.push({ id, title, amount, due_at, confirmed_at });
   }
   return out;
 }
@@ -326,6 +330,22 @@ export function firstPendingMilestone(row: TaskPoolItemRecord): TaskMilestone | 
   return (
     parseMilestones(row.milestones_json).find((m) => !m.confirmed_at && Number(m.amount) > 0) ?? null
   );
+}
+
+/** True when the task deadline (JST calendar day) is strictly before today. */
+export function isTaskDeadlinePassed(row: Pick<TaskPoolItemRecord, 'deadline'>, now = new Date()): boolean {
+  if (!row.deadline) return false;
+  const d = new Date(row.deadline);
+  if (Number.isNaN(d.getTime())) return false;
+  return compareJstYmd(formatJstYmd(now), formatJstYmd(d)) > 0;
+}
+
+export function milestoneDueConfirmOnYmd(task: TaskPoolItemRecord, milestone: TaskMilestone): string {
+  if (milestone.due_at) return milestone.due_at;
+  if (task.deadline != null && !Number.isNaN(new Date(task.deadline).getTime())) {
+    return formatJstYmd(new Date(task.deadline));
+  }
+  return formatJstYmd(new Date(task.task_received_at || task.created_at));
 }
 
 export function hasPendingMilestonePayment(row: TaskPoolItemRecord): boolean {

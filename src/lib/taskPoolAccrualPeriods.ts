@@ -1,5 +1,5 @@
 import type { TaskPoolItemRecord } from '@/lib/taskPool';
-import { parseMilestones, taskPoolFixedMode } from '@/lib/taskPool';
+import { parseMilestones, taskPoolFixedMode, milestoneDueConfirmOnYmd } from '@/lib/taskPool';
 import { periodOverlapsAccrualGap, isTaskPaymentAccrualActive } from '@/lib/taskPoolStatusTransitions';
 import { addDaysToJstYmd, compareJstYmd, formatJstYmd, getJstMondayYmd } from '@/lib/jst';
 
@@ -143,17 +143,15 @@ export function buildExpectedAccrualPeriodSpecs(
   if (task.budget_type === 'fixed' && taskPoolFixedMode(task) === 'milestone') {
     for (const m of parseMilestones(task.milestones_json)) {
       if (Number(m.amount) <= 0) continue;
-      const due =
-        task.deadline != null && !Number.isNaN(new Date(task.deadline).getTime())
-          ? formatJstYmd(new Date(task.deadline))
-          : endYmd;
+      if (m.confirmed_at) continue;
+      const dueYmd = milestoneDueConfirmOnYmd(task, m);
       specs.push({
         period_kind: 'milestone',
         period_key: m.id,
         label: `Milestone: ${m.title}`,
         week_monday: null,
-        period_end_ymd: due,
-        due_confirm_on: due,
+        period_end_ymd: dueYmd,
+        due_confirm_on: dueYmd,
         milestone_id: m.id,
       });
     }
@@ -248,4 +246,21 @@ export function filterAccrualPeriodsForPaymentTracking(
     const task = byId[p.pool_item_id];
     return task && isTaskPaymentAccrualActive(task);
   });
+}
+
+export function findAccrualPeriodForMilestone(
+  periods: TaskPoolAccrualPeriodRow[],
+  poolItemId: string,
+  milestoneId: string,
+): TaskPoolAccrualPeriodRow | null {
+  return (
+    periods.find(
+      (p) =>
+        p.pool_item_id === poolItemId &&
+        p.period_kind === 'milestone' &&
+        p.period_key === milestoneId &&
+        !p.confirmed_at &&
+        !p.cancelled_at,
+    ) ?? null
+  );
 }

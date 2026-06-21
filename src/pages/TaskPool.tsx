@@ -61,9 +61,11 @@ import { ArrowLeft, ArrowUpDown, Pencil, Trash2 } from 'lucide-react';
 import { PRIORITY_BADGE_CLASS, PRIORITY_OPTIONS, PRIORITY_RANK, taskDescriptionPreview } from '@/lib/taskPriority';
 import ResolvedScreenshotCarousel from '@/components/ResolvedScreenshotCarousel';
 import { screenshotsFolderFromMetadata } from '@/lib/screenshotDriveFolder';
-import { countPendingByPool, filterAccrualPeriodsForPaymentTracking, type TaskPoolAccrualPeriodRow } from '@/lib/taskPoolAccrualPeriods';
+import { countPendingByPool, filterAccrualPeriodsForPaymentTracking, findAccrualPeriodForMilestone, type TaskPoolAccrualPeriodRow } from '@/lib/taskPoolAccrualPeriods';
 import { buildPoolStatusTransitionFields } from '@/lib/taskPoolStatusTransitions';
-import { fetchAllAccrualPeriods } from '@/lib/taskPoolAccrualService';
+import { fetchAllAccrualPeriods, syncAccrualPeriodsForTask } from '@/lib/taskPoolAccrualService';
+import AccrualPeriodHandleDialog from '@/components/AccrualPeriodHandleDialog';
+import TaskMilestonePaymentsPanel from '@/components/TaskMilestonePaymentsPanel';
 import TaskPaymentDueBadge from '@/components/TaskPaymentDueBadge';
 import TaskFinishPaymentDialog from '@/components/TaskFinishPaymentDialog';
 import TaskFinishButton from '@/components/TaskFinishButton';
@@ -107,7 +109,7 @@ export default function TaskPool() {
 
   const [searchInput, setSearchInput] = useState('');
   const [listFilter, setListFilter] = useState<TaskPoolListFilter>('working');
-  const [viewMode, setViewMode] = useState<'card' | 'list' | 'line' | 'table'>('line');
+  const [viewMode, setViewMode] = useState<'card' | 'list' | 'line' | 'table'>('table');
   const [prioritySortOrder, setPrioritySortOrder] = useState<'high_first' | 'low_first'>('high_first');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
@@ -124,6 +126,8 @@ export default function TaskPool() {
   const [finishDialog, setFinishDialog] = useState<{ task: TaskPoolItemRecord } | null>(null);
   const [subtaskDetailId, setSubtaskDetailId] = useState<string | null>(null);
   const [accrualPeriods, setAccrualPeriods] = useState<TaskPoolAccrualPeriodRow[]>([]);
+  const [selectedPeriod, setSelectedPeriod] = useState<TaskPoolAccrualPeriodRow | null>(null);
+  const [milestoneConfirmLoadingId, setMilestoneConfirmLoadingId] = useState<string | null>(null);
 
   const fetchAll = async () => {
     setLoading(true);
@@ -275,8 +279,8 @@ export default function TaskPool() {
     !task.promoted_project_id && user && (hasRole('admin') || task.user_id === user.id);
 
   const updateTaskQuick = async (id: string, patch: Partial<Pick<TaskPoolItemRecord, 'priority' | 'status' | 'priority_order'>>) => {
-    if (!hasRole('admin')) return;
     const row = items.find((x) => x.id === id);
+    if (!row || !canEditTask(row)) return;
     if (patch.status === 'completed' && row && row.status !== 'completed') {
       setFinishDialog({ task: row });
       return;
@@ -311,7 +315,7 @@ export default function TaskPool() {
   };
 
   const applyDraggedPriority = async (target: TaskPoolItemRecord) => {
-    if (!hasRole('admin') || !draggingTaskId || draggingTaskId === target.id) return;
+    if (!canEditTask(target) || !draggingTaskId || draggingTaskId === target.id) return;
     const patches = computeTaskPoolDragPatches(items, draggingTaskId, target.id);
     if (!patches?.length) return;
     const ts = new Date().toISOString();
@@ -422,6 +426,48 @@ export default function TaskPool() {
       await promoteIfNeeded(task.id);
     }
     toast({ title: 'Task completed' });
+  };
+
+  const openMilestoneConfirm = async (milestoneId: string) => {
+    if (!selected || !hasRole('admin')) return;
+    setMilestoneConfirmLoadingId(milestoneId);
+    try {
+      let period = findAccrualPeriodForMilestone(accrualPeriods, selected.id, milestoneId);
+      if (!period) {
+        const account = accounts.find((a) => a.id === selected.account_id);
+        await syncAccrualPeriodsForTask(selected, account);
+        const periods = await fetchAllAccrualPeriods();
+        setAccrualPeriods(periods);
+        period = findAccrualPeriodForMilestone(periods, selected.id, milestoneId);
+      }
+      if (!period) {
+        toast({
+          title: 'Milestone payment not found',
+          description: 'Ensure milestones are saved on this task, then try again.',
+          variant: 'destructive',
+        });
+        return;
+      }
+      setSelectedPeriod(period);
+    } catch (e) {
+      toast({
+        title: 'Could not open milestone payment',
+        description: e instanceof Error ? e.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    } finally {
+      setMilestoneConfirmLoadingId(null);
+    }
+  };
+
+  const refreshAfterAccrualConfirm = async () => {
+    try {
+      setAccrualPeriods(await fetchAllAccrualPeriods());
+      const res = await supabase.from('task_pool_items').select('*').order('created_at', { ascending: false });
+      if (res.data) setItems(res.data as TaskPoolItemRecord[]);
+    } catch (e) {
+      console.error('Failed to refresh after accrual confirm', e);
+    }
   };
 
   const addChat = async () => {
@@ -652,11 +698,10 @@ export default function TaskPool() {
               Showing {sortedTasks.length} tasks
               {viewMode === 'table'
                 ? ', grouped by status (active → paused → free → completed → cancelled), then priority'
-                : `, sorted by priority (${prioritySortOrder === 'high_first' ? 'high to low' : 'low to high'})`}
-              {viewMode !== 'table' && hasRole('admin') ? (
+                : `, sorted by priority (${prioritySortOrder === 'high_first' ? 'high to low' : 'low to high'})`}{' '}
+              {viewMode !== 'table' ? (
                 <>
-                  {' '}
-                  Within the same priority, drag a task onto another to place it{' '}
+                  . Within the same priority, drag a task onto another to place it{' '}
                   <span className="font-medium text-foreground/80">before</span> that task.
                 </>
               ) : null}
@@ -774,7 +819,6 @@ export default function TaskPool() {
                       </button>
                     </th>
                     <th className="px-3 py-2">Source</th>
-                    <th className="px-3 py-2">Received</th>
                     <th className="px-3 py-2">Real</th>
                     <th className="px-3 py-2">Withdrawn</th>
                     <th className="px-3 py-2 w-[100px]">Actions</th>
@@ -787,7 +831,7 @@ export default function TaskPool() {
                     return (
                       <Fragment key={row.id}>
                         {band !== prevBand ? (
-                          <TaskPoolTableBandHeader band={band} count={tableBandCounts[band]} colSpan={8} />
+                          <TaskPoolTableBandHeader band={band} count={tableBandCounts[band]} colSpan={7} />
                         ) : null}
                         <tr
                           className={cn(
@@ -795,14 +839,14 @@ export default function TaskPool() {
                             TASK_POOL_TABLE_BAND_ROW_CLASS[band],
                           )}
                           onClick={() => setSelectedId(row.id)}
-                          draggable={hasRole('admin')}
+                          draggable={canEditTask(row)}
                           onDragStart={(e) => {
-                            if (!hasRole('admin')) return;
+                            if (!canEditTask(row)) return;
                             setDraggingTaskId(row.id);
                             e.dataTransfer.effectAllowed = 'move';
                           }}
                           onDragOver={(e) => {
-                            if (!hasRole('admin') || !draggingTaskId || draggingTaskId === row.id) return;
+                            if (!canEditTask(row) || !draggingTaskId || draggingTaskId === row.id) return;
                             e.preventDefault();
                           }}
                           onDrop={(e) => {
@@ -814,8 +858,11 @@ export default function TaskPool() {
                         >
                       <td className="px-3 py-2 font-medium">#{idx + 1} {row.name}</td>
                       <td className="px-3 py-2">
-                        {hasRole('admin') ? (
-                          <Select value={row.status} onValueChange={(v) => void updateTaskQuick(row.id, { status: v as TaskPoolItemRecord['status'] })}>
+                        {canEditTask(row) ? (
+                          <Select
+                            value={row.status}
+                            onValueChange={(v) => void updateTaskQuick(row.id, { status: v as TaskPoolItemRecord['status'] })}
+                          >
                             <SelectTrigger className="h-8 min-w-[9rem] w-[9rem]" onClick={(e) => e.stopPropagation()}>
                               <SelectValue />
                             </SelectTrigger>
@@ -832,8 +879,11 @@ export default function TaskPool() {
                         )}
                       </td>
                       <td className="px-3 py-2">
-                        {hasRole('admin') ? (
-                          <Select value={row.priority} onValueChange={(v) => void updateTaskQuick(row.id, { priority: v as TaskPoolItemRecord['priority'] })}>
+                        {canEditTask(row) ? (
+                          <Select
+                            value={row.priority}
+                            onValueChange={(v) => void updateTaskQuick(row.id, { priority: v as TaskPoolItemRecord['priority'] })}
+                          >
                             <SelectTrigger className="h-8 w-[130px]" onClick={(e) => e.stopPropagation()}>
                               <SelectValue />
                             </SelectTrigger>
@@ -846,11 +896,12 @@ export default function TaskPool() {
                             </SelectContent>
                           </Select>
                         ) : (
-                          <Badge variant="outline" className={`capitalize ${PRIORITY_BADGE_CLASS[row.priority] || ''}`}>{row.priority}</Badge>
+                          <Badge variant="outline" className={`capitalize ${PRIORITY_BADGE_CLASS[row.priority] || ''}`}>
+                            {row.priority}
+                          </Badge>
                         )}
                       </td>
                       <td className="px-3 py-2 capitalize">{(row.task_source || '-').replace('_', ' ')}</td>
-                      <td className="px-3 py-2">{formatJstYmdFromIso(row.task_received_at)}</td>
                       <td className="px-3 py-2">{row.currency} {taskPoolContractGross(row).toFixed(2)}</td>
                       <td className="px-3 py-2 text-emerald-600">{row.currency} {Number(row.withdrawn_amount ?? 0).toFixed(2)}</td>
                       <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
@@ -1105,6 +1156,11 @@ export default function TaskPool() {
                       </p>
                     ) : null}
                   </div>
+                  <TaskMilestonePaymentsPanel
+                    task={selected}
+                    onConfirmMilestone={hasRole('admin') ? (id) => void openMilestoneConfirm(id) : undefined}
+                    confirmBusyId={milestoneConfirmLoadingId}
+                  />
                   <div className="flex flex-wrap gap-2">
                     {(selected.skillset_csv || '')
                       .split(',')
@@ -1287,6 +1343,15 @@ export default function TaskPool() {
         task={detailSubtask}
         personnel={personnel}
         onSave={saveSubtaskDetail}
+      />
+
+      <AccrualPeriodHandleDialog
+        open={!!selectedPeriod}
+        onOpenChange={(open) => !open && setSelectedPeriod(null)}
+        period={selectedPeriod}
+        task={selectedPeriod && selected ? selected : null}
+        taskHref={selected ? `/dashboard/tasks?task=${selected.id}` : null}
+        onConfirmed={() => void refreshAfterAccrualConfirm()}
       />
 
       <TaskFinishPaymentDialog

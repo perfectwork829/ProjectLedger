@@ -40,11 +40,20 @@ export default function AdminRoles() {
 
   const fetchRoles = async () => {
     setLoading(true);
-    const { data, error } = await supabase.from('user_roles').select('*');
+    const [{ data: roleRows, error }, { data: profileRows }] = await Promise.all([
+      supabase.from('user_roles').select('*'),
+      supabase.from('profiles').select('id, email'),
+    ]);
     if (error) {
       toast({ title: 'Error loading roles', description: error.message, variant: 'destructive' });
     } else {
-      setRoles(data || []);
+      const emailById = Object.fromEntries((profileRows || []).map((p) => [p.id, p.email ?? '']));
+      setRoles(
+        (roleRows || []).map((r) => ({
+          ...r,
+          email: emailById[r.user_id] || r.user_id.slice(0, 8),
+        })),
+      );
     }
     setLoading(false);
   };

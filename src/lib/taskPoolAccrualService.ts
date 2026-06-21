@@ -1,13 +1,12 @@
 import { supabase } from '@/lib/supabase';
 import type { TaskPoolItemRecord } from '@/lib/taskPool';
 import { parseMilestones, taskPoolFixedMode } from '@/lib/taskPool';
-import { formatJstYmd } from '@/lib/jst';
+import { formatJstYmd, advanceRecurringDueJstYmd, retreatRecurringDueJstYmd } from '@/lib/jst';
 import {
   buildExpectedAccrualPeriodSpecs,
   isUpworkTopRatedAccount,
   type TaskPoolAccrualPeriodRow,
 } from '@/lib/taskPoolAccrualPeriods';
-import { advanceRecurringDueJstYmd } from '@/lib/jst';
 import { calcWithdrawnAmount, parseHourlyHoursFromAccrualNote } from '@/lib/taskPoolFinance';
 import { isNonBillingTaskStatus } from '@/lib/taskPoolStatusTransitions';
 
@@ -239,6 +238,90 @@ export async function confirmAccrualPeriod(
 
   if (taskErr || !updatedTask) throw new Error(taskErr?.message || 'Task update failed');
   return { task: updatedTask as TaskPoolItemRecord };
+}
+
+function recurringPeriodIndex(period: TaskPoolAccrualPeriodRow): number | null {
+  if (period.period_kind !== 'recurring') return null;
+  const match = period.period_key.match(/^i(\d+)$/);
+  return match ? Number(match[1]) : null;
+}
+
+/** Undo a confirmed accrual: remove ledger entry and restore the period to unconfirmed. */
+export async function rollbackAccrualPeriodByPaymentEntryId(paymentEntryId: string): Promise<void> {
+  const { data: period, error: periodErr } = await supabase
+    .from('task_pool_accrual_periods')
+    .select('*')
+    .eq('payment_entry_id', paymentEntryId)
+    .not('confirmed_at', 'is', null)
+    .maybeSingle();
+
+  if (periodErr) throw new Error(periodErr.message);
+  if (!period) throw new Error('No confirmed accrual period linked to this payment entry.');
+
+  const { data: task, error: taskErr } = await supabase
+    .from('task_pool_items')
+    .select('*')
+    .eq('id', period.pool_item_id)
+    .single();
+
+  if (taskErr || !task) throw new Error(taskErr?.message || 'Task not found');
+
+  const nowIso = new Date().toISOString();
+  const periodRow = period as TaskPoolAccrualPeriodRow;
+  const taskRecord = task as TaskPoolItemRecord;
+
+  const { error: clearErr } = await supabase
+    .from('task_pool_accrual_periods')
+    .update({
+      confirmed_at: null,
+      payment_entry_id: null,
+      gross_amount: null,
+      net_amount: null,
+      payment_received: null,
+      updated_at: nowIso,
+    })
+    .eq('id', periodRow.id);
+
+  if (clearErr) throw new Error(clearErr.message);
+
+  const { error: delErr } = await supabase.from('payment_entries').delete().eq('id', paymentEntryId);
+  if (delErr) throw new Error(delErr.message);
+
+  const taskPatch: Record<string, unknown> = { updated_at: nowIso };
+
+  if (periodRow.period_kind === 'milestone' && periodRow.milestone_id) {
+    const ms = parseMilestones(taskRecord.milestones_json).map((m) =>
+      m.id === periodRow.milestone_id ? { ...m, confirmed_at: undefined } : m,
+    );
+    taskPatch.milestones_json = ms;
+  }
+
+  if (periodRow.period_kind === 'recurring' && taskRecord.next_payment_due_at) {
+    const remaining = await fetchAccrualPeriodsForPool(taskRecord.id);
+    const rolledIndex = recurringPeriodIndex(periodRow);
+    const confirmedIndices = remaining
+      .filter((p) => p.confirmed_at && p.period_kind === 'recurring')
+      .map((p) => recurringPeriodIndex(p))
+      .filter((n): n is number => n != null);
+    if (rolledIndex != null && confirmedIndices.every((i) => i < rolledIndex)) {
+      const cadence = taskRecord.recurring_cadence || 'weekly';
+      taskPatch.next_payment_due_at = retreatRecurringDueJstYmd(taskRecord.next_payment_due_at, cadence);
+    }
+  }
+
+  if (periodRow.period_kind === 'hourly_week') {
+    const remaining = (await fetchAccrualPeriodsForPool(taskRecord.id))
+      .filter((p) => p.confirmed_at && p.period_kind === 'hourly_week' && p.week_monday)
+      .sort((a, b) => b.week_monday!.localeCompare(a.week_monday!));
+    const latest = remaining[0];
+    taskPatch.hourly_last_ack_week_monday = latest?.week_monday ?? null;
+    taskPatch.hourly_last_billable_hours = latest?.billable_hours ?? null;
+  }
+
+  taskPatch.withdrawn_amount = await recomputeTaskWithdrawnFromPeriods(taskRecord.id);
+
+  const { error: updErr } = await supabase.from('task_pool_items').update(taskPatch).eq('id', taskRecord.id);
+  if (updErr) throw new Error(updErr.message);
 }
 
 /** Dismiss an accrual from the confirm list without recording payment. */
