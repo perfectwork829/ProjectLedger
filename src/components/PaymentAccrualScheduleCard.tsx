@@ -14,12 +14,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { AlertTriangle, CalendarClock, ChevronRight, Clock, ExternalLink, X } from 'lucide-react';
+import { AlertTriangle, ChevronRight, Clock, ExternalLink, X } from 'lucide-react';
 import {
   isPeriodOverdue,
-  isPeriodPending,
   isPeriodUnconfirmed,
-  isPeriodUpcoming,
   normalizePoolItemId,
   periodBelongsToPool,
   type TaskPoolAccrualPeriodRow,
@@ -48,11 +46,8 @@ function taskForPeriod(period: TaskPoolAccrualPeriodRow, poolTasks: TaskRef[]) {
   return poolTasks.find((t) => periodBelongsToPool({ pool_item_id: t.id }, period.pool_item_id)) ?? null;
 }
 
-function periodStatusLabel(period: TaskPoolAccrualPeriodRow) {
-  if (isPeriodOverdue(period)) return { text: 'Delayed', variant: 'destructive' as const };
-  if (isPeriodPending(period) && !isPeriodOverdue(period)) return { text: 'Due', variant: 'default' as const };
-  if (isPeriodUpcoming(period)) return { text: 'Upcoming', variant: 'secondary' as const };
-  return { text: 'Scheduled', variant: 'outline' as const };
+function periodStatusLabel(_period: TaskPoolAccrualPeriodRow) {
+  return { text: 'Delayed', variant: 'destructive' as const };
 }
 
 function periodKindLabel(kind: TaskPoolAccrualPeriodRow['period_kind']) {
@@ -64,8 +59,6 @@ type TaskGroup = {
   taskName: string;
   periods: TaskPoolAccrualPeriodRow[];
   delayed: number;
-  due: number;
-  upcoming: number;
 };
 
 function TaskPaymentGroup({
@@ -96,25 +89,14 @@ function TaskPaymentGroup({
               <ExternalLink className="h-3.5 w-3.5 shrink-0 opacity-60" />
             </Link>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              {group.periods.length} unconfirmed payment{group.periods.length === 1 ? '' : 's'}
+              {group.periods.length} delayed payment{group.periods.length === 1 ? '' : 's'}
             </p>
           </div>
           <div className="flex flex-wrap gap-1.5">
-            {group.delayed > 0 ? (
-              <Badge variant="destructive" className="gap-1 text-[10px]">
-                <AlertTriangle className="h-3 w-3" />
-                {group.delayed} delayed
-              </Badge>
-            ) : null}
-            {group.due > 0 ? (
-              <Badge className="bg-amber-600 text-[10px] hover:bg-amber-600">{group.due} due</Badge>
-            ) : null}
-            {group.upcoming > 0 ? (
-              <Badge variant="secondary" className="gap-1 text-[10px]">
-                <CalendarClock className="h-3 w-3" />
-                {group.upcoming} upcoming
-              </Badge>
-            ) : null}
+            <Badge variant="destructive" className="gap-1 text-[10px]">
+              <AlertTriangle className="h-3 w-3" />
+              {group.delayed} delayed
+            </Badge>
           </div>
         </header>
       ) : null}
@@ -217,17 +199,17 @@ export default function PaymentAccrualScheduleCard({
   const [cancelTarget, setCancelTarget] = useState<TaskPoolAccrualPeriodRow | null>(null);
   const [cancelling, setCancelling] = useState(false);
 
-  const unconfirmed = useMemo(
-    () => periods.filter((p) => isPeriodUnconfirmed(p)),
+  const delayedOnly = useMemo(
+    () => periods.filter((p) => isPeriodUnconfirmed(p) && isPeriodOverdue(p)),
     [periods],
   );
 
   const scoped = useMemo(() => {
     const urlFilter = filterTaskId;
     const uiFilter = urlFilter ?? (scheduleTaskFilter === 'all' ? null : scheduleTaskFilter);
-    if (!uiFilter) return unconfirmed;
-    return unconfirmed.filter((p) => periodBelongsToPool(p, uiFilter));
-  }, [unconfirmed, filterTaskId, scheduleTaskFilter]);
+    if (!uiFilter) return delayedOnly;
+    return delayedOnly.filter((p) => periodBelongsToPool(p, uiFilter));
+  }, [delayedOnly, filterTaskId, scheduleTaskFilter]);
 
   const taskGroups = useMemo<TaskGroup[]>(() => {
     const map = new Map<string, TaskPoolAccrualPeriodRow[]>();
@@ -244,21 +226,18 @@ export default function PaymentAccrualScheduleCard({
           taskId,
           taskName: task?.name ?? 'Task',
           periods: sorted,
-          delayed: sorted.filter((p) => isPeriodOverdue(p)).length,
-          due: sorted.filter((p) => isPeriodPending(p) && !isPeriodOverdue(p)).length,
-          upcoming: sorted.filter((p) => isPeriodUpcoming(p)).length,
+          delayed: sorted.length,
         };
       })
       .sort((a, b) => {
         if (a.delayed !== b.delayed) return b.delayed - a.delayed;
-        if (a.due !== b.due) return b.due - a.due;
         return a.taskName.localeCompare(b.taskName);
       });
   }, [scoped, poolTasks]);
 
   const taskFilterOptions = useMemo(() => {
     const map = new Map<string, { name: string; count: number }>();
-    for (const p of unconfirmed) {
+    for (const p of delayedOnly) {
       const key = normalizePoolItemId(p.pool_item_id) ?? p.pool_item_id;
       const task = taskForPeriod(p, poolTasks);
       const existing = map.get(key);
@@ -268,15 +247,13 @@ export default function PaymentAccrualScheduleCard({
     return [...map.entries()]
       .map(([id, { name, count }]) => ({ id, name, count }))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [unconfirmed, poolTasks]);
+  }, [delayedOnly, poolTasks]);
 
-  const actionCount = scoped.filter((p) => isPeriodPending(p)).length;
-  const upcomingCount = scoped.filter((p) => isPeriodUpcoming(p)).length;
-  const delayedCount = scoped.filter((p) => isPeriodOverdue(p)).length;
+  const delayedCount = scoped.length;
 
   const title = filterTaskId
-    ? `Unconfirmed payments — ${filterTaskName ?? 'task'}`
-    : 'Unconfirmed payments by task';
+    ? `Delayed payments — ${filterTaskName ?? 'task'}`
+    : 'Delayed payments by task';
 
   const effectiveTaskFilter = filterTaskId ?? scheduleTaskFilter;
 
@@ -292,19 +269,10 @@ export default function PaymentAccrualScheduleCard({
               {delayedCount} delayed
             </Badge>
           ) : null}
-          {actionCount > 0 ? (
-            <Badge className="bg-amber-600 text-[10px] hover:bg-amber-600">{actionCount} due</Badge>
-          ) : null}
-          {upcomingCount > 0 ? (
-            <Badge variant="secondary" className="gap-1 text-[10px]">
-              <CalendarClock className="h-3 w-3" />
-              {upcomingCount} upcoming
-            </Badge>
-          ) : null}
         </CardTitle>
         <p className="text-xs text-muted-foreground">
-          Each task lists all unconfirmed payments in a table. Click a row to confirm, or use Cancel to remove an item
-          from this list without recording payment.
+          Past-due task payments only (after the JST confirm date). Due-today and upcoming items are not listed here.
+          Click a row to confirm, or cancel to remove from the list without recording payment.
         </p>
         {!filterTaskId && taskFilterOptions.length > 0 ? (
           <div className="pt-2">
@@ -313,7 +281,7 @@ export default function PaymentAccrualScheduleCard({
                 <SelectValue placeholder="Filter by task" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All tasks ({unconfirmed.length} items)</SelectItem>
+                <SelectItem value="all">All tasks ({delayedOnly.length} delayed)</SelectItem>
                 {taskFilterOptions.map((t) => (
                   <SelectItem key={t.id} value={t.id}>
                     {t.name} ({t.count} items)
@@ -330,8 +298,8 @@ export default function PaymentAccrualScheduleCard({
         ) : scoped.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             {filterTaskId || scheduleTaskFilter !== 'all'
-              ? 'No unconfirmed payments for this task.'
-              : 'No unconfirmed task payments. Accruals are created for active hourly, recurring, milestone, and fixed-project tasks.'}
+              ? 'No delayed payments for this task.'
+              : 'No delayed task payments. Items appear here only after their confirm date has passed (JST).'}
           </p>
         ) : (
           taskGroups.map((group) => (

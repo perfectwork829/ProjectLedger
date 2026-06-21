@@ -342,7 +342,7 @@ export default function AdminPayments() {
       <div>
         <h2 className="text-2xl font-semibold tracking-tight text-foreground">Payments</h2>
         <p className="text-sm text-muted-foreground">
-          Manage incoming and outgoing cashflow per period (25th to 25th). Use the task payment schedule for delayed, due, and upcoming accruals; confirmed rows appear in the ledger below. Click any entry for details.
+          Manage incoming and outgoing cashflow per period (25th to 25th). The schedule below lists only delayed task payments; confirmed rows appear in the ledger. Click any entry for details.
         </p>
       </div>
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -67,6 +67,14 @@ import { fetchAllAccrualPeriods } from '@/lib/taskPoolAccrualService';
 import TaskPaymentDueBadge from '@/components/TaskPaymentDueBadge';
 import TaskFinishPaymentDialog from '@/components/TaskFinishPaymentDialog';
 import TaskFinishButton from '@/components/TaskFinishButton';
+import TaskPoolTableBandHeader from '@/components/TaskPoolTableBandHeader';
+import { cn } from '@/lib/utils';
+import {
+  countTasksByTableBand,
+  sortTasksForTableView,
+  taskPoolTableBand,
+  TASK_POOL_TABLE_BAND_ROW_CLASS,
+} from '@/lib/taskPoolTableBands';
 
 export default function TaskPool() {
   const { user, hasRole } = useAuth();
@@ -251,6 +259,11 @@ export default function TaskPool() {
       }),
     [filtered, prioritySortOrder],
   );
+  const tableSortedTasks = useMemo(
+    () => sortTasksForTableView(filtered, prioritySortOrder),
+    [filtered, prioritySortOrder],
+  );
+  const tableBandCounts = useMemo(() => countTasksByTableBand(tableSortedTasks), [tableSortedTasks]);
 
   const priorityCounts = useMemo(() => {
     const counts: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0 };
@@ -636,8 +649,11 @@ export default function TaskPool() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-xs text-muted-foreground">
-              Showing {sortedTasks.length} tasks, sorted by priority ({prioritySortOrder === 'high_first' ? 'high to low' : 'low to high'}).
-              {hasRole('admin') ? (
+              Showing {sortedTasks.length} tasks
+              {viewMode === 'table'
+                ? ', grouped by status (active → paused → free → completed → cancelled), then priority'
+                : `, sorted by priority (${prioritySortOrder === 'high_first' ? 'high to low' : 'low to high'})`}
+              {viewMode !== 'table' && hasRole('admin') ? (
                 <>
                   {' '}
                   Within the same priority, drag a task onto another to place it{' '}
@@ -765,28 +781,37 @@ export default function TaskPool() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedTasks.map((row, idx) => (
-                    <tr
-                      key={row.id}
-                      className="cursor-pointer border-t hover:bg-muted/30"
-                      onClick={() => setSelectedId(row.id)}
-                      draggable={hasRole('admin')}
-                      onDragStart={(e) => {
-                        if (!hasRole('admin')) return;
-                        setDraggingTaskId(row.id);
-                        e.dataTransfer.effectAllowed = 'move';
-                      }}
-                      onDragOver={(e) => {
-                        if (!hasRole('admin') || !draggingTaskId || draggingTaskId === row.id) return;
-                        e.preventDefault();
-                      }}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        void applyDraggedPriority(row);
-                        setDraggingTaskId(null);
-                      }}
-                      onDragEnd={() => setDraggingTaskId(null)}
-                    >
+                  {tableSortedTasks.map((row, idx) => {
+                    const band = taskPoolTableBand(row.status);
+                    const prevBand = idx > 0 ? taskPoolTableBand(tableSortedTasks[idx - 1].status) : null;
+                    return (
+                      <Fragment key={row.id}>
+                        {band !== prevBand ? (
+                          <TaskPoolTableBandHeader band={band} count={tableBandCounts[band]} colSpan={8} />
+                        ) : null}
+                        <tr
+                          className={cn(
+                            'cursor-pointer border-t hover:bg-muted/30',
+                            TASK_POOL_TABLE_BAND_ROW_CLASS[band],
+                          )}
+                          onClick={() => setSelectedId(row.id)}
+                          draggable={hasRole('admin')}
+                          onDragStart={(e) => {
+                            if (!hasRole('admin')) return;
+                            setDraggingTaskId(row.id);
+                            e.dataTransfer.effectAllowed = 'move';
+                          }}
+                          onDragOver={(e) => {
+                            if (!hasRole('admin') || !draggingTaskId || draggingTaskId === row.id) return;
+                            e.preventDefault();
+                          }}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            void applyDraggedPriority(row);
+                            setDraggingTaskId(null);
+                          }}
+                          onDragEnd={() => setDraggingTaskId(null)}
+                        >
                       <td className="px-3 py-2 font-medium">#{idx + 1} {row.name}</td>
                       <td className="px-3 py-2">
                         {hasRole('admin') ? (
@@ -831,8 +856,10 @@ export default function TaskPool() {
                       <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
                         {canEditTask(row) ? <TaskFinishButton task={row} onFinish={requestFinishTask} compact /> : null}
                       </td>
-                    </tr>
-                  ))}
+                        </tr>
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

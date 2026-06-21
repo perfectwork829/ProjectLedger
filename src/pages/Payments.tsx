@@ -178,7 +178,7 @@ export default function Payments() {
       <div>
         <h2 className="text-2xl font-semibold tracking-tight text-foreground">Payments</h2>
         <p className="text-sm text-muted-foreground">
-          Incoming and outgoing monthly cashflow (25th to 25th). Scheduled and delayed task payments are listed below;
+          Incoming and outgoing monthly cashflow (25th to 25th). Only delayed task payments are listed below;
           confirmed entries appear in the ledger. Click any entry for details.
         </p>
       </div>

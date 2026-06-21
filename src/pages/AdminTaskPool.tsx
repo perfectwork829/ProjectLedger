@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
@@ -114,6 +114,14 @@ import TaskPaymentDueBadge from '@/components/TaskPaymentDueBadge';
 import TaskFinishPaymentDialog from '@/components/TaskFinishPaymentDialog';
 import TaskFinishButton from '@/components/TaskFinishButton';
 import TaskPromoteConfirmDialog from '@/components/TaskPromoteConfirmDialog';
+import TaskPoolTableBandHeader from '@/components/TaskPoolTableBandHeader';
+import { cn } from '@/lib/utils';
+import {
+  countTasksByTableBand,
+  sortTasksForTableView,
+  taskPoolTableBand,
+  TASK_POOL_TABLE_BAND_ROW_CLASS,
+} from '@/lib/taskPoolTableBands';
 
 const MAIN_STACK_OPTIONS = ['angular', 'react', 'react_native', 'vue', 'nextjs', 'nodejs', 'laravel', 'django', 'flutter', 'other'] as const;
 const TASK_SOURCE_OPTIONS = ['upwork', 'freelancer', 'job_broker', 'linkedin', 'other_job_site', 'friend', 'discord_job_channel', 'telegram_channel', 'teams', 'facebook', 'github'] as const;
@@ -477,6 +485,11 @@ export default function AdminTaskPool() {
       }),
     [filteredItems, prioritySortOrder],
   );
+  const tableSortedItems = useMemo(
+    () => sortTasksForTableView(filteredItems, prioritySortOrder),
+    [filteredItems, prioritySortOrder],
+  );
+  const tableBandCounts = useMemo(() => countTasksByTableBand(tableSortedItems), [tableSortedItems]);
 
   const thisPeriodSummary = useMemo(
     () => summarizeTaskPool(items.filter((x) => isWithinRange(x.task_received_at || x.created_at, thisPeriod.start, thisPeriod.end))),
@@ -1375,8 +1388,16 @@ export default function AdminTaskPool() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-xs text-muted-foreground">
-              Showing {sortedItems.length} tasks, sorted by priority ({prioritySortOrder === 'high_first' ? 'high to low' : 'low to high'}). Within the
-              same priority, drag a task onto another to place it <span className="font-medium text-foreground/80">before</span> that task.
+              Showing {sortedItems.length} tasks
+              {viewMode === 'table'
+                ? ', grouped by status (active → paused → free → completed → cancelled), then priority'
+                : `, sorted by priority (${prioritySortOrder === 'high_first' ? 'high to low' : 'low to high'})`}{' '}
+              {viewMode !== 'table' ? (
+                <>
+                  . Within the same priority, drag a task onto another to place it{' '}
+                  <span className="font-medium text-foreground/80">before</span> that task.
+                </>
+              ) : null}
             </p>
             <Button
               type="button"
@@ -1504,27 +1525,36 @@ export default function AdminTaskPool() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedItems.map((row, idx) => (
-                    <tr
-                      key={row.id}
-                      className="cursor-pointer border-t hover:bg-muted/30"
-                      onClick={() => setSelectedId(row.id)}
-                      draggable
-                      onDragStart={(e) => {
-                        setDraggingTaskId(row.id);
-                        e.dataTransfer.effectAllowed = 'move';
-                      }}
-                      onDragOver={(e) => {
-                        if (!draggingTaskId || draggingTaskId === row.id) return;
-                        e.preventDefault();
-                      }}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        void applyDraggedPriority(row);
-                        setDraggingTaskId(null);
-                      }}
-                      onDragEnd={() => setDraggingTaskId(null)}
-                    >
+                  {tableSortedItems.map((row, idx) => {
+                    const band = taskPoolTableBand(row.status);
+                    const prevBand = idx > 0 ? taskPoolTableBand(tableSortedItems[idx - 1].status) : null;
+                    return (
+                      <Fragment key={row.id}>
+                        {band !== prevBand ? (
+                          <TaskPoolTableBandHeader band={band} count={tableBandCounts[band]} colSpan={7} />
+                        ) : null}
+                        <tr
+                          className={cn(
+                            'cursor-pointer border-t hover:bg-muted/30',
+                            TASK_POOL_TABLE_BAND_ROW_CLASS[band],
+                          )}
+                          onClick={() => setSelectedId(row.id)}
+                          draggable
+                          onDragStart={(e) => {
+                            setDraggingTaskId(row.id);
+                            e.dataTransfer.effectAllowed = 'move';
+                          }}
+                          onDragOver={(e) => {
+                            if (!draggingTaskId || draggingTaskId === row.id) return;
+                            e.preventDefault();
+                          }}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            void applyDraggedPriority(row);
+                            setDraggingTaskId(null);
+                          }}
+                          onDragEnd={() => setDraggingTaskId(null)}
+                        >
                       <td className="px-3 py-2 font-medium">#{idx + 1} {row.name}</td>
                       <td className="px-3 py-2">
                         <Select
@@ -1566,8 +1596,10 @@ export default function AdminTaskPool() {
                       <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
                         <TaskFinishButton task={row} onFinish={requestFinishTask} compact />
                       </td>
-                    </tr>
-                  ))}
+                        </tr>
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
