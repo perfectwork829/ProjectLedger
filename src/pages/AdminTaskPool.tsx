@@ -2585,13 +2585,17 @@ export default function AdminTaskPool() {
                       Add milestone
                     </Button>
                   </div>
-                  <div className="space-y-2 rounded-md border p-3">
+                  <div className="overflow-x-auto rounded-md border">
+                    <div className="min-w-[32rem] space-y-2 p-3">
                     {form.milestones.length === 0 ? (
                       <p className="text-xs text-muted-foreground">No milestones yet — add one.</p>
                     ) : (
                       form.milestones.map((m, idx) => (
-                        <div key={m.id} className="flex flex-wrap items-end gap-2 border-b border-dashed pb-2 last:border-b-0">
-                          <div className="space-y-1 flex-1 min-w-[140px]">
+                        <div
+                          key={m.id}
+                          className="grid grid-cols-[minmax(0,1fr)_10.5rem_7rem_auto] items-end gap-x-2 gap-y-1 border-b border-dashed pb-2 last:border-b-0"
+                        >
+                          <div className="min-w-0 space-y-1">
                             <span className="text-[11px] text-muted-foreground">Title</span>
                             <Input
                               value={m.title}
@@ -2606,10 +2610,11 @@ export default function AdminTaskPool() {
                               placeholder={`Milestone ${idx + 1}`}
                             />
                           </div>
-                          <div className="space-y-1 w-[130px]">
-                            <span className="text-[11px] text-muted-foreground">Due (JST date)</span>
+                          <div className="space-y-1">
+                            <span className="text-[11px] text-muted-foreground whitespace-nowrap">Due (JST date)</span>
                             <Input
                               type="date"
+                              className="w-full"
                               value={m.dueAt}
                               disabled={!!m.confirmedAt}
                               onChange={(e) =>
@@ -2621,10 +2626,11 @@ export default function AdminTaskPool() {
                               }
                             />
                           </div>
-                          <div className="space-y-1 w-[120px]">
+                          <div className="space-y-1">
                             <span className="text-[11px] text-muted-foreground">Amount</span>
                             <Input
                               type="number"
+                              className="w-full"
                               value={m.amount}
                               disabled={!!m.confirmedAt}
                               onChange={(e) =>
@@ -2638,7 +2644,7 @@ export default function AdminTaskPool() {
                           </div>
                           <div className="flex items-center gap-2 pb-1">
                             {m.confirmedAt ? (
-                              <Badge variant="secondary" className="text-[10px] shrink-0">
+                              <Badge variant="secondary" className="shrink-0 text-[10px]">
                                 Paid
                               </Badge>
                             ) : (
@@ -2656,6 +2662,7 @@ export default function AdminTaskPool() {
                         </div>
                       ))
                     )}
+                    </div>
                   </div>
                   <p className="text-[11px] text-muted-foreground">
                     Set a <strong className="text-foreground">due date</strong> per milestone (JST). Payments lists a milestone only
