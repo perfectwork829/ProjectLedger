@@ -29,6 +29,9 @@ import type { IdentityDocuments } from '@/lib/identityDocuments';
 import { identityDocumentsForDb, formatBirthday, normalizeIdentityDocuments } from '@/lib/identityDocuments';
 import { cn } from '@/lib/utils';
 import { RichTextEditor } from '@/components/RichTextEditor';
+import { CountrySelect } from '@/components/CountrySelect';
+import { TimezoneSelect } from '@/components/TimezoneSelect';
+import { suggestedTimezoneForCountry } from '@/lib/timezones';
 
 interface Personnel {
   id: string;
@@ -225,41 +228,6 @@ const COMMON_LANGUAGES = [
   'English', 'Spanish', 'French', 'German', 'Chinese', 'Japanese', 'Korean',
   'Russian', 'Arabic', 'Portuguese', 'Italian', 'Hindi', 'Turkish', 'Polish',
   'Dutch', 'Swedish', 'Vietnamese', 'Thai', 'Indonesian', 'Ukrainian',
-];
-
-const TIMEZONES = [
-  { value: 'UTC-12:00', label: 'UTC-12:00 – Baker Island' },
-  { value: 'UTC-11:00', label: 'UTC-11:00 – American Samoa' },
-  { value: 'UTC-10:00', label: 'UTC-10:00 – Hawaii' },
-  { value: 'UTC-09:00', label: 'UTC-09:00 – Alaska' },
-  { value: 'UTC-08:00', label: 'UTC-08:00 – Pacific (US/Canada)' },
-  { value: 'UTC-07:00', label: 'UTC-07:00 – Mountain (US/Canada)' },
-  { value: 'UTC-06:00', label: 'UTC-06:00 – Central (US/Canada)' },
-  { value: 'UTC-05:00', label: 'UTC-05:00 – Eastern (US/Canada)' },
-  { value: 'UTC-04:00', label: 'UTC-04:00 – Atlantic' },
-  { value: 'UTC-03:00', label: 'UTC-03:00 – Buenos Aires, São Paulo' },
-  { value: 'UTC-02:00', label: 'UTC-02:00 – South Georgia' },
-  { value: 'UTC-01:00', label: 'UTC-01:00 – Azores' },
-  { value: 'UTC+00:00', label: 'UTC+00:00 – London, Lisbon' },
-  { value: 'UTC+01:00', label: 'UTC+01:00 – Berlin, Paris, Warsaw' },
-  { value: 'UTC+02:00', label: 'UTC+02:00 – Cairo, Bucharest, Kyiv' },
-  { value: 'UTC+03:00', label: 'UTC+03:00 – Moscow, Istanbul' },
-  { value: 'UTC+03:30', label: 'UTC+03:30 – Tehran' },
-  { value: 'UTC+04:00', label: 'UTC+04:00 – Dubai, Baku' },
-  { value: 'UTC+04:30', label: 'UTC+04:30 – Kabul' },
-  { value: 'UTC+05:00', label: 'UTC+05:00 – Karachi, Tashkent' },
-  { value: 'UTC+05:30', label: 'UTC+05:30 – Mumbai, Colombo' },
-  { value: 'UTC+05:45', label: 'UTC+05:45 – Kathmandu' },
-  { value: 'UTC+06:00', label: 'UTC+06:00 – Dhaka, Almaty' },
-  { value: 'UTC+06:30', label: 'UTC+06:30 – Yangon' },
-  { value: 'UTC+07:00', label: 'UTC+07:00 – Bangkok, Jakarta, Hanoi' },
-  { value: 'UTC+08:00', label: 'UTC+08:00 – Beijing, Singapore, Manila' },
-  { value: 'UTC+09:00', label: 'UTC+09:00 – Tokyo, Seoul' },
-  { value: 'UTC+09:30', label: 'UTC+09:30 – Adelaide' },
-  { value: 'UTC+10:00', label: 'UTC+10:00 – Sydney, Melbourne' },
-  { value: 'UTC+11:00', label: 'UTC+11:00 – Solomon Islands' },
-  { value: 'UTC+12:00', label: 'UTC+12:00 – Auckland, Fiji' },
-  { value: 'UTC+13:00', label: 'UTC+13:00 – Samoa, Tonga' },
 ];
 
 const MET_PLACES = [
@@ -1389,15 +1357,18 @@ export default function AdminPersonnel() {
                   <Label>Profile Photo</Label>
                   <FileUpload value={form.profile_photo_url} onChange={(url) => set('profile_photo_url', url)} folder="personnel-photos" label="Upload Photo" />
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2"><Label>Country</Label><Input value={form.country} onChange={(e) => set('country', e.target.value)} /></div>
-                  <div className="space-y-2">
-                    <Label>Timezone</Label>
-                    <Select value={form.timezone} onValueChange={(v) => set('timezone', v)}>
-                      <SelectTrigger><SelectValue placeholder="Select timezone" /></SelectTrigger>
-                      <SelectContent>{TIMEZONES.map(tz => <SelectItem key={tz.value} value={tz.value}>{tz.label}</SelectItem>)}</SelectContent>
-                    </Select>
-                  </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <CountrySelect
+                    label="Country"
+                    value={form.country}
+                    onChange={(country) =>
+                      setForm((prev) => {
+                        const suggested = suggestedTimezoneForCountry(country);
+                        return { ...prev, country, ...(suggested ? { timezone: suggested } : {}) };
+                      })
+                    }
+                  />
+                  <TimezoneSelect label="Timezone" value={form.timezone} onChange={(tz) => set('timezone', tz)} />
                 </div>
                 <div className="space-y-2"><Label>Address</Label><Input value={form.address} onChange={(e) => set('address', e.target.value)} /></div>
               </TabsContent>

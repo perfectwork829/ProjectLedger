@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, Expand, ExternalLink } from 'lucide-react';
 import {
   Carousel,
@@ -11,6 +11,7 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import ScreenshotImage from '@/components/ScreenshotImage';
+import { cn } from '@/lib/utils';
 
 export type ScreenshotSlide = {
   id: string;
@@ -24,6 +25,70 @@ type Props = {
 };
 
 const PREVIEW_FRAME = 'h-[min(440px,52vh)] w-full';
+const THUMB_MAX_COUNT = 40;
+
+function ScreenshotThumbStrip({
+  slides,
+  activeIndex,
+  onSelect,
+}: {
+  slides: ScreenshotSlide[];
+  activeIndex: number;
+  onSelect: (index: number) => void;
+}) {
+  const thumbRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const useNumbered = slides.length > THUMB_MAX_COUNT;
+
+  useEffect(() => {
+    thumbRefs.current[activeIndex]?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'nearest',
+      inline: 'center',
+    });
+  }, [activeIndex]);
+
+  return (
+    <div
+      className="flex gap-1.5 overflow-x-auto pb-1 pt-2 scroll-smooth [scrollbar-width:thin]"
+      role="tablist"
+      aria-label="Jump to screenshot"
+    >
+      {slides.map((s, i) => (
+        <button
+          key={s.id}
+          type="button"
+          ref={(el) => {
+            thumbRefs.current[i] = el;
+          }}
+          role="tab"
+          aria-selected={i === activeIndex}
+          aria-label={s.caption?.trim() || `Screenshot ${i + 1}`}
+          title={s.caption?.trim() || `Screenshot ${i + 1}`}
+          onClick={() => onSelect(i)}
+          className={cn(
+            'shrink-0 overflow-hidden rounded-md border-2 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+            i === activeIndex
+              ? 'border-primary shadow-sm'
+              : 'border-transparent opacity-80 hover:border-muted-foreground/30 hover:opacity-100',
+          )}
+        >
+          {useNumbered ? (
+            <span
+              className={cn(
+                'flex h-10 min-w-10 items-center justify-center px-2 text-xs font-medium tabular-nums',
+                i === activeIndex ? 'bg-primary/10 text-primary' : 'bg-muted/50 text-muted-foreground',
+              )}
+            >
+              {i + 1}
+            </span>
+          ) : (
+            <ScreenshotImage url={s.image_url} alt="" frameClassName="h-16 w-[4.5rem] sm:h-[4.5rem] sm:w-20" />
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export default function ScreenshotCarousel({ slides, emptyMessage = 'No screenshots.' }: Props) {
   const [api, setApi] = useState<CarouselApi>();
@@ -93,6 +158,10 @@ export default function ScreenshotCarousel({ slides, emptyMessage = 'No screensh
             <CarouselPrevious />
             <CarouselNext />
           </Carousel>
+
+          {slides.length > 1 ? (
+            <ScreenshotThumbStrip slides={slides} activeIndex={index} onSelect={goTo} />
+          ) : null}
         </div>
 
         <div className="flex flex-wrap items-center justify-center gap-2 px-4">
@@ -134,6 +203,10 @@ export default function ScreenshotCarousel({ slides, emptyMessage = 'No screensh
             />
             {enlarged.caption ? <p className="mt-2 text-sm text-muted-foreground">{enlarged.caption}</p> : null}
           </div>
+
+          {slides.length > 1 ? (
+            <ScreenshotThumbStrip slides={slides} activeIndex={enlargeIndex} onSelect={goTo} />
+          ) : null}
 
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t pt-3">
             {slides.length > 1 ? (
