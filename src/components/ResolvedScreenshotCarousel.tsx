@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ExternalLink, Loader2, RefreshCw } from 'lucide-react';
 import ScreenshotCarousel, { type ScreenshotSlide } from '@/components/ScreenshotCarousel';
 import { Button } from '@/components/ui/button';
@@ -23,44 +23,62 @@ export default function ResolvedScreenshotCarousel({
   const [error, setError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
 
-  const load = useCallback(async () => {
-    if (!folderUrl?.trim() && rows.length === 0) {
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+
+  const rowsKey = useMemo(
+    () => rows.map((r) => `${r.id}:${r.image_url}`).join('|'),
+    [rows],
+  );
+
+  const folderKey = folderUrl?.trim() ?? '';
+
+  useEffect(() => {
+    let cancelled = false;
+    const currentRows = rowsRef.current;
+
+    if (!folderKey && currentRows.length === 0) {
       setSlides([]);
       setError(null);
+      setLoading(false);
       return;
     }
 
     setLoading(true);
     setError(null);
-    try {
-      const resolved = await resolveScreenshotSlides(rows, folderUrl);
-      setSlides(
-        resolved.map((s) => ({
-          id: s.id,
-          image_url: s.image_url,
-          caption: s.caption,
-        })),
-      );
-      if (resolved.length === 0 && folderUrl?.trim()) {
-        setError(
-          'No images found in this folder. Use a /drive/folders/… link, share the folder and each image as Anyone with the link, and upload PNG/JPG files (not Google Docs).',
+
+    void (async () => {
+      try {
+        const resolved = await resolveScreenshotSlides(currentRows, folderUrl);
+        if (cancelled) return;
+        setSlides(
+          resolved.map((s) => ({
+            id: s.id,
+            image_url: s.image_url,
+            caption: s.caption,
+          })),
         );
+        if (resolved.length === 0 && folderKey) {
+          setError(
+            'No images found in this folder. Use a /drive/folders/… link, share the folder and each image as Anyone with the link, and upload PNG/JPG files (not Google Docs).',
+          );
+        }
+      } catch (e) {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : 'Could not load screenshots');
+        setSlides([]);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not load screenshots');
-      setSlides([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [rows, folderUrl]);
+    })();
 
-  const rowsKey = rows.map((r) => `${r.id}:${r.image_url}`).join('|');
-
-  useEffect(() => {
-    void load();
-  }, [load, rowsKey, folderUrl, reloadToken]);
+    return () => {
+      cancelled = true;
+    };
+  }, [rowsKey, folderKey, folderUrl, reloadToken]);
 
   const embeddedFolder = folderUrl ? googleDriveEmbeddedFolderUrl(folderUrl) : null;
+  const showInitialLoading = loading && slides.length === 0;
 
   return (
     <div className="space-y-3">
@@ -80,28 +98,36 @@ export default function ResolvedScreenshotCarousel({
             onClick={() => setReloadToken((n) => n + 1)}
             disabled={loading}
           >
-            <RefreshCw className="h-3.5 w-3.5" />
+            <RefreshCw className={`h-3.5 w-3.5 ${loading && slides.length > 0 ? 'animate-spin' : ''}`} />
             Reload
           </Button>
         </div>
       ) : null}
 
-      {loading ? (
+      {showInitialLoading ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground py-6 justify-center">
           <Loader2 className="h-4 w-4 animate-spin" />
           Loading screenshots…
         </div>
       ) : null}
 
-      {!loading && error && slides.length === 0 ? (
-        <p className="text-sm text-amber-700 dark:text-amber-400">{error}</p>
+      {!showInitialLoading && error && slides.length === 0 ? (
+        <p className="whitespace-pre-wrap text-sm text-amber-700 dark:text-amber-400">{error}</p>
       ) : null}
 
-      {!loading && slides.length > 0 ? (
-        <ScreenshotCarousel slides={slides} emptyMessage={emptyMessage} />
+      {slides.length > 0 ? (
+        <div className="relative">
+          {loading ? (
+            <div className="absolute right-0 top-0 z-10 flex items-center gap-1 rounded-md border bg-background/90 px-2 py-1 text-xs text-muted-foreground shadow-sm">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Updating…
+            </div>
+          ) : null}
+          <ScreenshotCarousel slides={slides} emptyMessage={emptyMessage} />
+        </div>
       ) : null}
 
-      {!loading && slides.length === 0 && embeddedFolder ? (
+      {!showInitialLoading && slides.length === 0 && embeddedFolder ? (
         <div className="space-y-2">
           <p className="text-sm text-muted-foreground">Folder preview (open in Drive if images do not load above).</p>
           <div className="overflow-hidden rounded-lg border bg-muted/20">
@@ -121,7 +147,7 @@ export default function ResolvedScreenshotCarousel({
         </div>
       ) : null}
 
-      {!loading && slides.length === 0 && !embeddedFolder && !folderUrl ? (
+      {!showInitialLoading && slides.length === 0 && !embeddedFolder && !folderUrl ? (
         <p className="text-sm text-muted-foreground">{emptyMessage}</p>
       ) : null}
     </div>

@@ -18,7 +18,7 @@ export default function OAuthGoogleDriveCallback() {
       const err = params.get('error');
 
       const returnTo = () => {
-        const r = sessionStorage.getItem('gdrv_oauth_return') || '/admin/tasks';
+        const r = sessionStorage.getItem('gdrv_oauth_return') || '/admin/settings';
         sessionStorage.removeItem('gdrv_oauth_return');
         return r;
       };
@@ -70,7 +70,9 @@ export default function OAuthGoogleDriveCallback() {
 
       toast({
         title: 'Google Drive connected',
-        description: data?.email ? `Signed in as ${data.email}` : 'You can upload files from the task or project form.',
+        description: data?.email
+          ? `Signed in as ${data.email}. Private screenshot folders will load automatically.`
+          : 'Private screenshot folders will load automatically.',
       });
       navigate(returnTo(), { replace: true });
     })();

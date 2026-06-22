@@ -17,6 +17,7 @@ import {
   HelpCircle,
   ChevronLeft,
   CalendarClock,
+  Settings,
 } from 'lucide-react';
 import { JobInterviewReminders } from '@/components/JobInterviewReminders';
 import { useEffect, useState } from 'react';
@@ -40,6 +41,7 @@ const adminItems = [
   { to: '/admin/personnel', label: 'Manage Personnel', icon: Users2 },
   { to: '/admin/job-interviews', label: 'Job interviews', icon: CalendarClock },
   { to: '/admin/useful-links', label: 'Manage Help', icon: HelpCircle },
+  { to: '/admin/settings', label: 'Settings', icon: Settings },
 ] as const;
 
 function readCollapsedPreference(): boolean {

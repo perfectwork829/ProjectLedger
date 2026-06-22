@@ -29,7 +29,6 @@ import type { IdentityDocuments } from '@/lib/identityDocuments';
 import { identityDocumentsForDb, formatBirthday, normalizeIdentityDocuments } from '@/lib/identityDocuments';
 import { cn } from '@/lib/utils';
 import { RichTextEditor } from '@/components/RichTextEditor';
-import { CloudGoogleDriveUpload } from '@/components/CloudGoogleDriveUpload';
 
 interface Personnel {
   id: string;
@@ -1472,12 +1471,11 @@ export default function AdminPersonnel() {
                 <div className="space-y-2">
                   <Label>Resume / CV URL</Label>
                   <Input value={form.resume_cv_url} onChange={(e) => set('resume_cv_url', e.target.value)} placeholder="https://drive.google.com/..." />
+                  <p className="text-xs text-muted-foreground">
+                    Paste a Drive link, or upload elsewhere and paste the URL. To connect Google Drive for private
+                    folders, use <strong className="text-foreground">Settings</strong> in the admin sidebar.
+                  </p>
                 </div>
-                <CloudGoogleDriveUpload
-                  title="Upload Resume / CV to Google Drive"
-                  accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                  onUrlAdded={(url) => set('resume_cv_url', url)}
-                />
               </TabsContent>
 
               {/* Work & Skills */}

@@ -29,6 +29,7 @@ import JobInterviews from "@/pages/JobInterviews";
 import AdminJobInterviews from "@/pages/AdminJobInterviews";
 import JobInterviewDetail from "@/pages/JobInterviewDetail";
 import AdminPayments from "@/pages/AdminPayments";
+import AdminSettings from "@/pages/AdminSettings";
 import Payments from "@/pages/Payments";
 import NotFound from "./pages/NotFound";
 import OAuthGoogleDriveCallback from "@/pages/OAuthGoogleDriveCallback";
@@ -114,6 +115,7 @@ const App = () => (
               <Route path="job-interviews" element={<AdminJobInterviews />} />
               <Route path="job-interviews/:id" element={<JobInterviewDetail />} />
               <Route path="useful-links" element={<AdminUsefulLinks />} />
+              <Route path="settings" element={<AdminSettings />} />
             </Route>
 
             <Route path="*" element={<NotFound />} />

@@ -17,8 +17,9 @@ export function ScreenshotsDriveFolderField({ folderUrl, onFolderUrlChange }: Pr
         className="font-mono text-xs"
       />
       <p className="text-xs text-muted-foreground">
-        Paste the shared folder link, then Save. Set the folder and each image file to &quot;Anyone with the link&quot;
-        (use PNG/JPG uploads, not Google Docs). The Screenshots tab builds the slider from that folder.
+        Paste the root screenshots folder link, then Save. Images in <strong className="text-foreground">subfolders</strong>{' '}
+        are included automatically. For <strong className="text-foreground">private</strong> folders, connect Google Drive
+        once under <strong className="text-foreground">Admin → Settings</strong>. Use PNG/JPG files (not Google Docs).
       </p>
     </div>
   );

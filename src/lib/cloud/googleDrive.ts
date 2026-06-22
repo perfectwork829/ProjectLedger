@@ -1,4 +1,4 @@
-import { SUPABASE_ANON_KEY, supabase } from '@/lib/supabase';
+import { SUPABASE_ANON_KEY, SUPABASE_URL, supabase } from '@/lib/supabase';
 import { ensureSupabaseAccessTokenFresh } from '@/lib/supabaseJwtRetry';
 
 export type GoogleDriveInvokeResult<T> = { data: T | null; error: Error | null };
@@ -111,6 +111,33 @@ export async function googleDriveListFolderImagesViaEdge(folderUrlOrId: string):
     folder_url: folderUrlOrId.trim(),
   });
   return res.data?.files ?? [];
+}
+
+/** Fetch a Drive image via the edge proxy (OAuth or API key — works for private files). */
+export async function fetchGoogleDriveFileImageBlob(fileId: string): Promise<Blob> {
+  const token = await requireUserAccessToken();
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/cloud-storage-google`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      apikey: SUPABASE_ANON_KEY,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ action: 'drive_file_image', file_id: fileId }),
+  });
+
+  if (!res.ok) {
+    let detail = res.statusText || 'Could not load image';
+    try {
+      const j = (await res.json()) as { error?: string };
+      if (j?.error) detail = j.error;
+    } catch {
+      /* response may not be JSON */
+    }
+    throw new Error(detail);
+  }
+
+  return res.blob();
 }
 
 export async function uploadFileToGoogleDrive(file: File, accessToken: string): Promise<string> {

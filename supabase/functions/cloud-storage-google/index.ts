@@ -7,12 +7,19 @@ const corsHeaders: Record<string, string> = {
 };
 
 type Body = {
-  action: 'auth_url' | 'exchange' | 'access_token' | 'disconnect' | 'list_folder_images';
+  action:
+    | 'auth_url'
+    | 'exchange'
+    | 'access_token'
+    | 'disconnect'
+    | 'list_folder_images'
+    | 'drive_file_image';
   redirect_uri?: string;
   state?: string;
   code?: string;
   folder_url?: string;
   folder_id?: string;
+  file_id?: string;
 };
 
 const IMAGE_MIME_PREFIXES = ['image/'];
@@ -79,20 +86,41 @@ async function getValidAccessToken(
 
 type DriveListedFile = { id: string; name: string; mimeType?: string; image_url: string };
 
-async function listDriveFolderImages(
+type DriveListItem = {
+  id: string;
+  name: string;
+  mimeType: string;
+  shortcutDetails?: { targetId?: string; targetMimeType?: string };
+};
+
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|heif|svg)$/i;
+const FOLDER_MIME = 'application/vnd.google-apps.folder';
+const SHORTCUT_MIME = 'application/vnd.google-apps.shortcut';
+const MAX_FOLDER_DEPTH = 10;
+const MAX_SCREENSHOT_IMAGES = 500;
+
+function isImageDriveFile(mime: string, name: string): boolean {
+  if (IMAGE_MIME_PREFIXES.some((p) => mime.startsWith(p))) return true;
+  if (mime === 'application/octet-stream' && IMAGE_EXT.test(name)) return true;
+  return false;
+}
+
+async function fetchDriveFolderItems(
   folderId: string,
   accessToken: string | null,
   apiKey: string | null,
-): Promise<{ files: DriveListedFile[]; error?: string }> {
-  const files: DriveListedFile[] = [];
+): Promise<{ items: DriveListItem[]; error?: string }> {
+  const items: DriveListItem[] = [];
   let pageToken: string | undefined;
 
   do {
     const url = new URL('https://www.googleapis.com/drive/v3/files');
     url.searchParams.set('q', `'${folderId}' in parents and trashed=false`);
-    url.searchParams.set('fields', 'nextPageToken,files(id,name,mimeType,modifiedTime)');
+    url.searchParams.set('fields', 'nextPageToken,files(id,name,mimeType,shortcutDetails)');
     url.searchParams.set('pageSize', '200');
-    url.searchParams.set('orderBy', 'name');
+    url.searchParams.set('orderBy', 'folder,name');
+    url.searchParams.set('supportsAllDrives', 'true');
+    url.searchParams.set('includeItemsFromAllDrives', 'true');
     if (pageToken) url.searchParams.set('pageToken', pageToken);
     if (apiKey && !accessToken) url.searchParams.set('key', apiKey);
 
@@ -102,51 +130,168 @@ async function listDriveFolderImages(
     const listRes = await fetch(url.toString(), { headers });
     const listJson = await listRes.json();
     if (!listRes.ok) {
+      const msg = (listJson.error?.message as string) || 'Could not list folder';
+      const reason = listJson.error?.errors?.[0]?.reason as string | undefined;
       return {
-        files: [],
-        error: (listJson.error?.message as string) || 'Could not list folder',
+        items: [],
+        error: reason ? `${msg} (${reason})` : msg,
       };
     }
 
     for (const f of listJson.files ?? []) {
-      const mime = (f.mimeType as string) || '';
-      if (!IMAGE_MIME_PREFIXES.some((p) => mime.startsWith(p))) continue;
-      const id = f.id as string;
-      files.push({
+      const id = (f.id as string) || '';
+      if (!id) continue;
+      items.push({
         id,
-        name: (f.name as string) || 'Image',
-        mimeType: mime,
-        image_url: `https://drive.google.com/uc?export=view&id=${id}`,
+        name: (f.name as string) || 'Item',
+        mimeType: (f.mimeType as string) || '',
+        shortcutDetails: f.shortcutDetails as DriveListItem['shortcutDetails'],
       });
     }
     pageToken = listJson.nextPageToken as string | undefined;
   } while (pageToken);
 
-  return { files };
+  return { items };
+}
+
+/** List images in a folder and all nested subfolders (PNG/JPG, etc.). */
+async function listDriveFolderImages(
+  rootFolderId: string,
+  accessToken: string | null,
+  apiKey: string | null,
+): Promise<{ files: DriveListedFile[]; totalCount: number; error?: string }> {
+  const files: DriveListedFile[] = [];
+  let totalCount = 0;
+  let firstError: string | undefined;
+
+  const queue: { folderId: string; depth: number; pathPrefix: string }[] = [
+    { folderId: rootFolderId, depth: 0, pathPrefix: '' },
+  ];
+  const visited = new Set<string>();
+
+  while (queue.length > 0 && files.length < MAX_SCREENSHOT_IMAGES) {
+    const { folderId, depth, pathPrefix } = queue.shift()!;
+    if (visited.has(folderId)) continue;
+    visited.add(folderId);
+
+    const { items, error } = await fetchDriveFolderItems(folderId, accessToken, apiKey);
+    if (error && !firstError) firstError = error;
+    if (error) continue;
+
+    for (const item of items) {
+      totalCount += 1;
+      const mime = item.mimeType;
+      const name = item.name;
+
+      if (mime === FOLDER_MIME) {
+        if (depth < MAX_FOLDER_DEPTH) {
+          queue.push({
+            folderId: item.id,
+            depth: depth + 1,
+            pathPrefix: `${pathPrefix}${name}/`,
+          });
+        }
+        continue;
+      }
+
+      if (mime === SHORTCUT_MIME) {
+        const targetId = item.shortcutDetails?.targetId;
+        const targetMime = item.shortcutDetails?.targetMimeType || '';
+        if (!targetId) continue;
+        if (targetMime === FOLDER_MIME && depth < MAX_FOLDER_DEPTH) {
+          queue.push({
+            folderId: targetId,
+            depth: depth + 1,
+            pathPrefix: `${pathPrefix}${name}/`,
+          });
+          continue;
+        }
+        if (isImageDriveFile(targetMime, name)) {
+          files.push({
+            id: targetId,
+            name: pathPrefix ? `${pathPrefix}${name}` : name,
+            mimeType: targetMime,
+            image_url: `https://drive.google.com/uc?export=view&id=${targetId}`,
+          });
+        }
+        continue;
+      }
+
+      if (isImageDriveFile(mime, name)) {
+        files.push({
+          id: item.id,
+          name: pathPrefix ? `${pathPrefix}${name}` : name,
+          mimeType: mime,
+          image_url: `https://drive.google.com/uc?export=view&id=${item.id}`,
+        });
+      }
+    }
+  }
+
+  files.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+
+  if (files.length === 0 && firstError) {
+    return { files: [], totalCount, error: firstError };
+  }
+  return { files, totalCount };
 }
 
 const SCRAPE_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
-/** List images from a publicly shared folder (Anyone with the link) — no API key or OAuth. */
-async function scrapePublicFolderImages(folderId: string): Promise<DriveListedFile[]> {
-  const pages = [
-    `https://drive.google.com/embeddedfolderview?id=${folderId}#grid`,
-    `https://drive.google.com/drive/folders/${folderId}`,
-  ];
+/** List images from a publicly shared folder tree (Anyone with the link) — no API key or OAuth. */
+async function scrapePublicFolderImages(rootFolderId: string): Promise<DriveListedFile[]> {
+  const byId = new Map<string, DriveListedFile>();
+  const visited = new Set<string>();
+  let queue = [rootFolderId];
 
-  for (const pageUrl of pages) {
-    try {
-      const res = await fetch(pageUrl, { headers: { 'User-Agent': SCRAPE_UA } });
-      if (!res.ok) continue;
-      const html = await res.text();
-      const parsed = parsePublicFolderHtml(html, folderId);
-      if (parsed.length > 0) return parsed;
-    } catch {
-      /* try next page */
+  for (let depth = 0; depth < MAX_FOLDER_DEPTH && queue.length > 0 && byId.size < MAX_SCREENSHOT_IMAGES; depth += 1) {
+    const nextQueue: string[] = [];
+
+    for (const folderId of queue) {
+      if (visited.has(folderId)) continue;
+      visited.add(folderId);
+
+      const pages = [
+        `https://drive.google.com/embeddedfolderview?id=${folderId}#grid`,
+        `https://drive.google.com/embeddedfolderview?id=${folderId}#list`,
+        `https://drive.google.com/drive/folders/${folderId}`,
+        `https://drive.google.com/drive/folders/${folderId}?usp=sharing`,
+      ];
+
+      for (const pageUrl of pages) {
+        try {
+          const res = await fetch(pageUrl, { headers: { 'User-Agent': SCRAPE_UA } });
+          if (!res.ok) continue;
+          const html = await res.text();
+          for (const img of parsePublicFolderHtml(html, folderId)) {
+            if (!byId.has(img.id)) byId.set(img.id, img);
+          }
+          for (const subId of extractSubfolderIdsFromHtml(html, folderId)) {
+            if (!visited.has(subId)) nextQueue.push(subId);
+          }
+          if (html.length > 0) break;
+        } catch {
+          /* try next page */
+        }
+      }
     }
+
+    queue = nextQueue;
   }
-  return [];
+
+  return [...byId.values()].sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }),
+  );
+}
+
+function extractSubfolderIdsFromHtml(html: string, parentFolderId: string): string[] {
+  const ids = new Set<string>();
+  for (const m of html.matchAll(/\/folders\/([a-zA-Z0-9_-]{10,})/g)) {
+    const id = m[1];
+    if (id && id !== parentFolderId) ids.add(id);
+  }
+  return [...ids];
 }
 
 function parsePublicFolderHtml(html: string, folderId: string): DriveListedFile[] {
@@ -184,7 +329,39 @@ function parsePublicFolderHtml(html: string, folderId: string): DriveListedFile[
     add(m[1]);
   }
 
+  // Drive grid JSON: "id","name",...,"image/png"
+  for (const m of html.matchAll(/"([a-zA-Z0-9_-]{25,})","([^"]{0,200})"/g)) {
+    const id = m[1];
+    const name = m[2];
+    if (name && IMAGE_EXT.test(name)) add(id, name);
+  }
+
   return [...byId.values()];
+}
+
+function buildFolderListError(attempts: string[], oauthConfigured: boolean, oauthConnected: boolean): string {
+  const lines = [
+    'Could not load screenshots from this Drive folder.',
+    '',
+    ...attempts.map((a) => `• ${a}`),
+    '',
+    'Fix checklist:',
+    '1. In Google Drive → Share → set the folder to "Anyone with the link" (Viewer).',
+    '2. Upload PNG or JPG files (not Google Docs/Sheets).',
+    '3. In Google Cloud Console, enable the Google Drive API for the project that owns your API key.',
+    '4. If using GOOGLE_API_KEY: restrict it to Drive API only — do NOT restrict by HTTP referrer (Supabase runs server-side).',
+    '5. Redeploy the edge function after adding secrets: npx supabase functions deploy cloud-storage-google',
+  ];
+  if (oauthConfigured) {
+    lines.push(
+      oauthConnected
+        ? '6. Your Google account is connected but could not read this folder — use the account that owns the folder, or make the folder public.'
+        : '6. Or connect Google Drive once: Admin → Settings → Connect Google Drive.',
+    );
+  } else {
+    lines.push('6. Or set GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET and connect Google Drive for private folders.');
+  }
+  return lines.join('\n');
 }
 
 serve(async (req) => {
@@ -233,7 +410,7 @@ serve(async (req) => {
         redirect_uri: redirectUri,
         response_type: 'code',
         scope:
-          'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email openid',
+          'openid email profile https://www.googleapis.com/auth/drive.readonly',
         access_type: 'offline',
         prompt: 'consent',
       });
@@ -320,32 +497,139 @@ serve(async (req) => {
         return json({ error: 'folder_url or folder_id required' }, 400);
       }
 
+      const attempts: string[] = [];
+
       // 1) Public shared folder — no API key or Drive connect required
       const scraped = await scrapePublicFolderImages(folderId);
       if (scraped.length > 0) return json({ files: scraped });
+      attempts.push('Public preview scrape found no images (folder may not be shared publicly).');
 
       const apiKey = Deno.env.get('GOOGLE_API_KEY')?.trim() || null;
       if (apiKey) {
         const publicList = await listDriveFolderImages(folderId, null, apiKey);
-        if (!publicList.error && publicList.files.length > 0) return json({ files: publicList.files });
+        if (publicList.error) {
+          attempts.push(`Google API key: ${publicList.error}`);
+        } else if (publicList.files.length > 0) {
+          return json({ files: publicList.files });
+        } else if (publicList.totalCount > 0) {
+          attempts.push(
+            `Google API key: folder tree has ${publicList.totalCount} file(s) but none are PNG/JPG images.`,
+          );
+        } else {
+          attempts.push(
+            'Google API key: folder appears empty or is not publicly accessible with this key.',
+          );
+        }
+      } else {
+        attempts.push('GOOGLE_API_KEY is not set on the cloud-storage-google edge function.');
       }
 
       let accessToken: string | null = null;
-      if (clientId && clientSecret) {
+      const oauthConfigured = !!(clientId && clientSecret);
+      let oauthConnected = false;
+      if (oauthConfigured) {
         accessToken = await getValidAccessToken(supabase, user.id, clientId, clientSecret);
+        oauthConnected = !!accessToken;
       }
       if (accessToken) {
         const oauthList = await listDriveFolderImages(folderId, accessToken, null);
-        if (!oauthList.error && oauthList.files.length > 0) return json({ files: oauthList.files });
+        if (oauthList.error) {
+          attempts.push(`Connected Google account: ${oauthList.error}`);
+        } else if (oauthList.files.length > 0) {
+          return json({ files: oauthList.files });
+        } else if (oauthList.totalCount > 0) {
+          attempts.push(
+            `Connected Google account: folder tree has ${oauthList.totalCount} file(s) but none are PNG/JPG images.`,
+          );
+        } else {
+          attempts.push('Connected Google account: no files in this folder tree (check folder link).');
+        }
+      } else if (oauthConfigured) {
+        attempts.push('Google Drive is not connected for your user account.');
       }
 
       return json(
         {
-          error:
-            'No images found in this folder. Use a /drive/folders/… link, set the folder and every image to Anyone with the link, and use PNG/JPG files (not Google Docs).',
+          error: buildFolderListError(attempts, oauthConfigured, oauthConnected),
         },
         400,
       );
+    }
+
+    if (body.action === 'drive_file_image') {
+      const fileId = body.file_id?.trim();
+      if (!fileId || !/^[a-zA-Z0-9_-]+$/.test(fileId)) {
+        return json({ error: 'file_id required' }, 400);
+      }
+
+      const apiKey = Deno.env.get('GOOGLE_API_KEY')?.trim() || null;
+      let accessToken: string | null = null;
+      if (clientId && clientSecret) {
+        accessToken = await getValidAccessToken(supabase, user.id, clientId, clientSecret);
+      }
+
+      const authAttempts: { token: string | null; key: string | null }[] = [];
+      if (accessToken) authAttempts.push({ token: accessToken, key: null });
+      if (apiKey) authAttempts.push({ token: null, key: apiKey });
+
+      if (authAttempts.length === 0) {
+        return json(
+          { error: 'Connect Google Drive in Admin → Settings, or set GOOGLE_API_KEY for public files.' },
+          401,
+        );
+      }
+
+      let lastError = 'Could not load image';
+
+      for (const auth of authAttempts) {
+        const metaUrl = new URL(`https://www.googleapis.com/drive/v3/files/${fileId}`);
+        metaUrl.searchParams.set('fields', 'mimeType,name,trashed');
+        if (auth.key && !auth.token) metaUrl.searchParams.set('key', auth.key);
+
+        const metaHeaders: Record<string, string> = {};
+        if (auth.token) metaHeaders.Authorization = `Bearer ${auth.token}`;
+
+        const metaRes = await fetch(metaUrl.toString(), { headers: metaHeaders });
+        const metaJson = await metaRes.json();
+        if (!metaRes.ok) {
+          lastError = (metaJson.error?.message as string) || 'File not found or no access';
+          continue;
+        }
+        if (metaJson.trashed) {
+          return json({ error: 'File is in trash' }, 404);
+        }
+
+        const mime = (metaJson.mimeType as string) || '';
+        if (!isImageDriveFile(mime, (metaJson.name as string) || '')) {
+          return json({ error: 'Not an image file' }, 400);
+        }
+
+        const mediaUrl = new URL(`https://www.googleapis.com/drive/v3/files/${fileId}`);
+        mediaUrl.searchParams.set('alt', 'media');
+        if (auth.key && !auth.token) mediaUrl.searchParams.set('key', auth.key);
+
+        const mediaRes = await fetch(mediaUrl.toString(), { headers: metaHeaders });
+        if (!mediaRes.ok) {
+          lastError = 'Could not download image bytes';
+          continue;
+        }
+
+        const bytes = await mediaRes.arrayBuffer();
+        const contentType =
+          mediaRes.headers.get('content-type')?.split(';')[0]?.trim() ||
+          (mime.startsWith('image/') ? mime : 'image/png');
+
+        return new Response(bytes, {
+          status: 200,
+          headers: {
+            ...corsHeaders,
+            'Content-Type': contentType,
+            'Cache-Control': 'private, max-age=300',
+          },
+        });
+      }
+
+      return json({ error: lastError }, 403);
     }
 
     if (body.action === 'disconnect') {
