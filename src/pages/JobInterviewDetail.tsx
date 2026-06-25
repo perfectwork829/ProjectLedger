@@ -97,8 +97,8 @@ export default function JobInterviewDetail() {
   const { hasRole } = useAuth();
   const { toast } = useToast();
   const isAdmin = hasRole('admin');
-  const base = location.pathname.startsWith('/admin') ? '/admin' : '/dashboard';
-  const listHref = `${base}/job-interviews`;
+  const base = location.pathname.startsWith('/admin') ? '/admin/applied-jobs' : '/dashboard/applied-jobs';
+  const listHref = `${base}/interviews`;
 
   const [viewerTz, setViewerTz] = useState(() => getViewerIanaTimezone());
   const [loading, setLoading] = useState(true);

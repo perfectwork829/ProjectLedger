@@ -19,6 +19,7 @@ import ModuleSearchBar from '@/components/ModuleSearchBar';
 import { filterUsefulLinks } from '@/lib/clientSearch';
 import { RichTextEditor } from '@/components/RichTextEditor';
 import {
+  normalizeUsefulLinkCategory,
   orderedUsefulLinkCategoryKeys,
   usefulLinkCategoryLabel,
   USEFUL_LINK_CATEGORIES,
@@ -59,7 +60,7 @@ function CopyButton({ value }: { value: string }) {
 
 const emptyForm = {
   title: '',
-  category: 'general',
+  category: 'General',
   purpose: '',
   description: '' as string,
   how_to_use: '' as string,
@@ -152,7 +153,7 @@ export default function AdminUsefulLinks() {
     setEditingId(item.id);
     setForm({
       title: item.title,
-      category: item.category,
+      category: usefulLinkCategoryLabel(item.category || 'general'),
       purpose: item.purpose || '',
       description: item.description || '',
       how_to_use: item.how_to_use || '',
@@ -188,7 +189,7 @@ export default function AdminUsefulLinks() {
     const validLinks = form.links.filter(l => l.url.trim());
     const payload = {
       title: form.title,
-      category: form.category,
+      category: normalizeUsefulLinkCategory(form.category),
       purpose: form.purpose || null,
       description: form.description || null,
       how_to_use: form.how_to_use || null,
@@ -248,13 +249,13 @@ export default function AdminUsefulLinks() {
 
   const categoryKeysOrdered = useMemo(() => orderedUsefulLinkCategoryKeys(grouped), [grouped]);
 
-  const categorySelectOptions = useMemo(() => {
-    const known = new Map(USEFUL_LINK_CATEGORIES.map((c) => [c.value, c.label] as const));
-    if (form.category && !known.has(form.category)) {
-      known.set(form.category, `${form.category} (saved topic)`);
+  const topicSuggestions = useMemo(() => {
+    const suggestions = new Set<string>(USEFUL_LINK_CATEGORIES.map((c) => c.label));
+    for (const item of items) {
+      if (item.category) suggestions.add(usefulLinkCategoryLabel(item.category));
     }
-    return [...known.entries()].map(([value, label]) => ({ value, label }));
-  }, [form.category]);
+    return [...suggestions].sort((a, b) => a.localeCompare(b));
+  }, [items]);
 
   if (loading) {
     return <div className="flex items-center justify-center py-12"><div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" /></div>;
@@ -469,14 +470,20 @@ export default function AdminUsefulLinks() {
                 </div>
                 <div className="space-y-2">
                   <Label>Topic</Label>
-                  <Select value={form.category} onValueChange={(v) => set('category', v)}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {categorySelectOptions.map((c) => (
-                        <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Input
+                    list="useful-link-topic-options"
+                    value={form.category}
+                    onChange={(e) => set('category', e.target.value)}
+                    placeholder="e.g. Apple Test, Dev Tools, or type your own"
+                  />
+                  <datalist id="useful-link-topic-options">
+                    {topicSuggestions.map((topic) => (
+                      <option key={topic} value={topic} />
+                    ))}
+                  </datalist>
+                  <p className="text-xs text-muted-foreground">
+                    Pick a suggestion or type a custom topic (e.g. Apple Test for Apple Developer links).
+                  </p>
                 </div>
               </div>
 

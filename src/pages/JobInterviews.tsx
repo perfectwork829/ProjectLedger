@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useAppliedJobsBase } from '@/lib/useAppliedJobsBase';
 import { supabase } from '@/lib/supabase';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -74,9 +75,10 @@ type InterviewTableProps = {
   personnelMap: Record<string, PersonnelMini>;
   stagesByInterview: Record<string, JobInterviewStageRow[]>;
   viewerTz: string;
+  interviewsPathBase: string;
 };
 
-function InterviewScheduleTable({ rows, personnelMap, stagesByInterview, viewerTz }: InterviewTableProps) {
+function InterviewScheduleTable({ rows, personnelMap, stagesByInterview, viewerTz, interviewsPathBase }: InterviewTableProps) {
   return (
     <div className="overflow-x-auto rounded-lg border bg-card">
       <table className="min-w-full text-sm">
@@ -123,7 +125,7 @@ function InterviewScheduleTable({ rows, personnelMap, stagesByInterview, viewerT
                   </div>
                 </td>
                 <td className="px-3 py-2 align-top font-medium">
-                  <Link to={`/dashboard/job-interviews/${r.id}`} className="text-primary hover:underline">
+                  <Link to={`${interviewsPathBase}/${r.id}`} className="text-primary hover:underline">
                     {r.job_title}
                   </Link>
                 </td>
@@ -204,6 +206,8 @@ function InterviewScheduleTable({ rows, personnelMap, stagesByInterview, viewerT
 }
 
 export default function JobInterviews() {
+  const base = useAppliedJobsBase();
+  const interviewsPathBase = `${base}/interviews`;
   const { toast } = useToast();
   const [viewerTz, setViewerTz] = useState(() => getViewerIanaTimezone());
   useEffect(() => {
@@ -312,7 +316,7 @@ export default function JobInterviews() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h2 className="text-2xl font-semibold tracking-tight text-foreground">Job interviews</h2>
+        <h2 className="font-serif text-2xl font-semibold tracking-tight text-foreground">Interview schedule</h2>
         <ViewerTimezonePicker id="job-interviews-list-tz" />
       </div>
 
@@ -355,7 +359,7 @@ export default function JobInterviews() {
           <CardContent className="flex flex-col items-center justify-center py-12 text-center">
             <CalendarClock className="mb-2 h-10 w-10 text-muted-foreground" />
             <p className="text-lg font-medium text-foreground">No interviews scheduled</p>
-            <p className="mt-1 text-sm text-muted-foreground">Admins can add interviews under Admin → Job interviews.</p>
+            <p className="mt-1 text-sm text-muted-foreground">Admins can add interviews under Applied jobs → Interviews.</p>
           </CardContent>
         </Card>
       ) : listRows.length === 0 ? (
@@ -377,7 +381,7 @@ export default function JobInterviews() {
                 Excludes only rows whose upcoming pipeline time is <strong>tomorrow</strong> in {viewerTz} (those appear in the section
                 below).
               </p>
-              <InterviewScheduleTable personnelMap={map} stagesByInterview={stagesByInterview} viewerTz={viewerTz} rows={mainRows} />
+              <InterviewScheduleTable personnelMap={map} stagesByInterview={stagesByInterview} viewerTz={viewerTz} rows={mainRows} interviewsPathBase={interviewsPathBase} />
             </section>
           ) : null}
 
@@ -393,7 +397,7 @@ export default function JobInterviews() {
               <p className="text-sm text-muted-foreground">
                 The next pipeline slot for these rows falls on this calendar day in {viewerTz}.
               </p>
-              <InterviewScheduleTable personnelMap={map} stagesByInterview={stagesByInterview} viewerTz={viewerTz} rows={tomorrowRows} />
+              <InterviewScheduleTable personnelMap={map} stagesByInterview={stagesByInterview} viewerTz={viewerTz} rows={tomorrowRows} interviewsPathBase={interviewsPathBase} />
             </section>
           ) : null}
 

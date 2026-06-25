@@ -90,7 +90,8 @@ import { CopyDescriptionButton } from '@/components/CopyDescriptionButton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import PoolSubtaskKanban from '@/components/PoolSubtaskKanban';
 import PoolSubtaskDetailDialog from '@/components/PoolSubtaskDetailDialog';
-import { AlertTriangle, ArrowLeft, ArrowUpDown, Calendar, MessageSquare, Pencil, Plus, Trash2, FolderKanban, Link2, Clock, ListTodo } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, ArrowUpDown, Calendar, MessageSquare, Pencil, Plus, Trash2, FolderKanban, Link2, Clock, ListTodo, StickyNote } from 'lucide-react';
+import { ImportantNoteCard } from '@/components/ImportantNoteCard';
 import { PRIORITY_BADGE_CLASS, PRIORITY_OPTIONS, PRIORITY_RANK, taskDescriptionPreview } from '@/lib/taskPriority';
 import ResolvedScreenshotCarousel from '@/components/ResolvedScreenshotCarousel';
 import { ScreenshotsDriveFolderField } from '@/components/ScreenshotsDriveFolderField';
@@ -137,6 +138,7 @@ type PendingDel =
 
 const emptyForm = {
   name: '',
+  importantNote: '',
   description: '',
   readme: '',
   taskSource: '',
@@ -437,6 +439,7 @@ export default function AdminTaskPool() {
       const account = accounts.find((a) => a.id === p.account_id);
       const blob = [
         p.name,
+        p.important_note,
         p.description,
         p.readme,
         p.task_source,
@@ -652,6 +655,7 @@ export default function AdminTaskPool() {
     const published = parseLabeledLinks(row.published_links, null, 'Link');
     setForm({
       name: row.name,
+      importantNote: row.important_note || '',
       description: row.description || '',
       readme: row.readme || '',
       taskSource: row.task_source || '',
@@ -909,6 +913,7 @@ export default function AdminTaskPool() {
     const payload = {
       user_id: user.id,
       name: form.name.trim(),
+      important_note: form.importantNote.trim() || null,
       description: form.description.trim() || null,
       readme: form.readme.trim() || null,
       task_source: form.taskSource.trim() || null,
@@ -1547,7 +1552,12 @@ export default function AdminTaskPool() {
                 >
                   <CardContent className="cursor-pointer p-4" onClick={() => setSelectedId(row.id)}>
                     <div className="flex items-start justify-between gap-2">
-                      <p className="font-medium text-foreground line-clamp-2">#{idx + 1} {row.name}</p>
+                      <p className="font-medium text-foreground line-clamp-2 flex items-start gap-1.5">
+                        <span className="min-w-0 flex-1">#{idx + 1} {row.name}</span>
+                        {row.important_note?.trim() ? (
+                          <StickyNote className="h-3.5 w-3.5 shrink-0 text-amber-600" title="Has important note" />
+                        ) : null}
+                      </p>
                       <div className="flex flex-col items-end gap-1 shrink-0">
                         <Badge variant="secondary">{taskPoolItemStatusLabel(row.status)}</Badge>
                         <TaskPaymentDueBadge count={pendingCountByPool[row.id] ?? 0} />
@@ -1652,7 +1662,14 @@ export default function AdminTaskPool() {
                           }}
                           onDragEnd={() => setDraggingTaskId(null)}
                         >
-                      <td className="px-3 py-2 font-medium">#{idx + 1} {row.name}</td>
+                      <td className="px-3 py-2 font-medium">
+                        <span className="inline-flex items-center gap-1.5">
+                          #{idx + 1} {row.name}
+                          {row.important_note?.trim() ? (
+                            <StickyNote className="h-3.5 w-3.5 shrink-0 text-amber-600" title="Has important note" />
+                          ) : null}
+                        </span>
+                      </td>
                       <td className="px-3 py-2">
                         <Select
                           value={row.status}
@@ -1725,7 +1742,12 @@ export default function AdminTaskPool() {
                   onDragEnd={() => setDraggingTaskId(null)}
                 >
                   <div className="min-w-0">
-                    <p className="truncate font-medium">#{idx + 1} {row.name}</p>
+                    <p className="truncate font-medium flex items-center gap-1.5">
+                      <span className="min-w-0 truncate">#{idx + 1} {row.name}</span>
+                      {row.important_note?.trim() ? (
+                        <StickyNote className="h-3.5 w-3.5 shrink-0 text-amber-600" title="Has important note" />
+                      ) : null}
+                    </p>
                     <div className="mt-1 flex items-center gap-2">
                       <p className="text-xs text-muted-foreground capitalize">{(row.task_source || 'n/a').replace('_', ' ')}</p>
                       <Badge variant="outline" className={`text-[10px] capitalize ${PRIORITY_BADGE_CLASS[row.priority] || ''}`}>{row.priority}</Badge>
@@ -1795,7 +1817,12 @@ export default function AdminTaskPool() {
                 >
                   <CardContent className="flex items-center justify-between p-3">
                     <div className="min-w-0">
-                      <p className="truncate font-medium">#{idx + 1} {row.name}</p>
+                      <p className="truncate font-medium flex items-center gap-1.5">
+                      <span className="min-w-0 truncate">#{idx + 1} {row.name}</span>
+                      {row.important_note?.trim() ? (
+                        <StickyNote className="h-3.5 w-3.5 shrink-0 text-amber-600" title="Has important note" />
+                      ) : null}
+                    </p>
                       <div className="mt-1 flex items-center gap-2">
                         <Badge variant="outline" className={`text-[10px] capitalize ${PRIORITY_BADGE_CLASS[row.priority] || ''}`}>{row.priority}</Badge>
                         <p className="text-xs text-muted-foreground">
@@ -1903,6 +1930,7 @@ export default function AdminTaskPool() {
                 </div>
               </CardHeader>
               <CardContent className="pt-4">
+                <ImportantNoteCard note={selected.important_note} className="mb-4" />
                 <Tabs defaultValue="overview" className="w-full">
                   <TabsList className="grid w-full grid-cols-6">
                     <TabsTrigger value="overview">Overview</TabsTrigger>
@@ -2305,6 +2333,16 @@ export default function AdminTaskPool() {
             <div className="space-y-2 md:col-span-2">
               <Label>Task name *</Label>
               <Input value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label>Important Note</Label>
+              <p className="text-xs text-muted-foreground">Reminder to read before working on or contacting about this task.</p>
+              <Textarea
+                value={form.importantNote}
+                onChange={(e) => setForm((p) => ({ ...p, importantNote: e.target.value }))}
+                rows={3}
+                placeholder="e.g. Client is sensitive about deadlines, always confirm scope first…"
+              />
             </div>
             <div className="space-y-2 md:col-span-2">
               <div className="flex items-center justify-between gap-2">

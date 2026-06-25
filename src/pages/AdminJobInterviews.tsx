@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useAppliedJobsBase } from '@/lib/useAppliedJobsBase';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -95,6 +96,7 @@ const emptyForm = () => ({
 });
 
 export default function AdminJobInterviews() {
+  const interviewsPathBase = `${useAppliedJobsBase()}/interviews`;
   const { user } = useAuth();
   const { toast } = useToast();
   const [viewerTz, setViewerTz] = useState(() => getViewerIanaTimezone());
@@ -458,7 +460,7 @@ export default function AdminJobInterviews() {
                       </div>
                     </td>
                     <td className="px-3 py-2 align-top font-medium">
-                      <Link to={`/admin/job-interviews/${r.id}`} className="text-primary hover:underline">
+                      <Link to={`${interviewsPathBase}/${r.id}`} className="text-primary hover:underline">
                         {r.job_title}
                       </Link>
                     </td>
@@ -513,7 +515,7 @@ export default function AdminJobInterviews() {
                     <td className="px-3 py-2 align-top">
                       <div className="flex flex-wrap gap-2">
                         <Button size="sm" variant="secondary" className="gap-1" asChild>
-                          <Link to={`/admin/job-interviews/${r.id}`}>View</Link>
+                          <Link to={`${interviewsPathBase}/${r.id}`}>View</Link>
                         </Button>
                         <Button size="sm" variant="outline" className="gap-1" onClick={() => openEdit(r)}>
                           <Pencil className="h-3.5 w-3.5" />

@@ -17,7 +17,7 @@ import {
   Plus, Pencil, Trash2, ChevronRight, User, MapPin, Phone, Mail,
   Github, Linkedin, ExternalLink, GraduationCap, Heart, Briefcase,
   Star, Clock, Eye, EyeOff, Image, Images, MessageSquare, X, Check as CheckIcon,
-  Copy, ThumbsUp, Globe, DollarSign, Building, Languages, Search,
+  Copy, ThumbsUp, Globe, DollarSign, Building, Languages, Search, StickyNote,
 } from 'lucide-react';
 import { PERSONNEL_SEARCH_COLUMNS } from '@/lib/supabaseSearch';
 import { filterItemsBySearch } from '@/lib/clientSearch';
@@ -32,6 +32,7 @@ import { RichTextEditor } from '@/components/RichTextEditor';
 import { CountrySelect } from '@/components/CountrySelect';
 import { TimezoneSelect } from '@/components/TimezoneSelect';
 import { suggestedTimezoneForCountry } from '@/lib/timezones';
+import { ImportantNoteCard } from '@/components/ImportantNoteCard';
 
 interface Personnel {
   id: string;
@@ -86,6 +87,7 @@ interface Personnel {
   main_skill_list: string | null;
   met_place: string | null;
   notes: string | null;
+  important_note: string | null;
   overview: string | null;
   languages: string | null;
   hourly_rate_main: number | null;
@@ -262,7 +264,7 @@ const emptyForm = {
   marriage_status: '', children_status: '', skills: '' as string, achievements: '' as string,
   availability_status: 'available', employment_status: 'not_employed',
   activity_notes: '', working_project_name: '', working_history: '' as string,
-  main_skill_list: '' as string, met_place: '', notes: '',
+  main_skill_list: '' as string, met_place: '', notes: '', important_note: '',
   overview: '', languages: '' as string,
   profile_titles_json: '[]',
   profile_overviews_json: '[]',
@@ -788,7 +790,7 @@ export default function AdminPersonnel() {
       employment_status: p.employment_status || 'not_employed',
       activity_notes: p.activity_notes || '', working_project_name: p.working_project_name || '',
       working_history: p.working_history || '', main_skill_list: p.main_skill_list || '',
-      met_place: p.met_place || '', notes: p.notes || '',
+      met_place: p.met_place || '', notes: p.notes || '', important_note: p.important_note || '',
       overview: p.overview || '', languages: p.languages || '',
       profile_titles_json: JSON.stringify(parseTextItems(p.profile_titles_json)),
       profile_overviews_json: JSON.stringify(parseTextItems(p.profile_overviews_json)),
@@ -881,6 +883,7 @@ export default function AdminPersonnel() {
       })() : form.working_history) || null,
       main_skill_list: form.main_skill_list || null,
       met_place: form.met_place || null, notes: form.notes || null,
+      important_note: form.important_note || null,
       overview: (roleIsForJob ? (profileBlocks[0]?.overview || profileOverviews[0] || form.overview) : form.overview) || null, languages: form.languages || null,
       profile_titles_json: profileTitles,
       profile_overviews_json: profileOverviews,
@@ -1034,6 +1037,8 @@ export default function AdminPersonnel() {
             <Button size="sm" variant="outline" onClick={() => confirmDelete(p.id, fullName)} className="gap-1.5 text-destructive hover:bg-destructive hover:text-destructive-foreground"><Trash2 className="h-3.5 w-3.5" />Delete</Button>
           </div>
         </div>
+
+        <ImportantNoteCard note={p.important_note} />
 
         {isDeveloperForJob ? (
           profileBlocks.length > 0 ? (
@@ -1276,6 +1281,16 @@ export default function AdminPersonnel() {
 
               {/* Basic */}
               <TabsContent value="basic" className="space-y-4 pt-4">
+                <div className="space-y-2">
+                  <Label>Important Note</Label>
+                  <p className="text-xs text-muted-foreground">Reminder to read before contacting this person.</p>
+                  <Textarea
+                    value={form.important_note}
+                    onChange={(e) => set('important_note', e.target.value)}
+                    rows={3}
+                    placeholder="e.g. Prefers Telegram only, do not call on weekends…"
+                  />
+                </div>
                 <div className="grid grid-cols-3 gap-4">
                   <div className="space-y-2"><Label>First Name *</Label><Input value={form.first_name} onChange={(e) => set('first_name', e.target.value)} /></div>
                   <div className="space-y-2"><Label>Middle Name</Label><Input value={form.middle_name} onChange={(e) => set('middle_name', e.target.value)} /></div>
@@ -1639,6 +1654,7 @@ export default function AdminPersonnel() {
                       <div className="flex items-center gap-2">
                         <p className="font-medium text-foreground">{p.first_name} {p.last_name}</p>
                         {p.good_fit && <ThumbsUp className="h-3.5 w-3.5 text-emerald-500" />}
+                        {p.important_note?.trim() && <StickyNote className="h-3.5 w-3.5 text-amber-600" title="Has important note" />}
                       </div>
                       <div className="flex items-center gap-2 text-sm text-muted-foreground">
                         {p.title && <span>{p.title}</span>}

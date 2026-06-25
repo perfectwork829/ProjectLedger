@@ -28,6 +28,12 @@ import UsefulLinks from "@/pages/UsefulLinks";
 import JobInterviews from "@/pages/JobInterviews";
 import AdminJobInterviews from "@/pages/AdminJobInterviews";
 import JobInterviewDetail from "@/pages/JobInterviewDetail";
+import AppliedJobsLayout from "@/components/appliedJobs/AppliedJobsLayout";
+import AppliedJobsOverview from "@/pages/appliedJobs/AppliedJobsOverview";
+import AppliedJobsRecord from "@/pages/appliedJobs/AppliedJobsRecord";
+import AppliedJobsAnalytics from "@/pages/appliedJobs/AppliedJobsAnalytics";
+import AppliedJobsSettings from "@/pages/appliedJobs/AppliedJobsSettings";
+import { LegacyJobInterviewRedirect } from "@/components/appliedJobs/LegacyJobInterviewRedirect";
 import AdminPayments from "@/pages/AdminPayments";
 import AdminSettings from "@/pages/AdminSettings";
 import Payments from "@/pages/Payments";
@@ -83,8 +89,17 @@ const App = () => (
               <Route path="payments" element={<Payments />} />
               <Route path="tasks" element={<TaskPool />} />
               <Route path="personnel" element={<Personnel />} />
-              <Route path="job-interviews" element={<JobInterviews />} />
-              <Route path="job-interviews/:id" element={<JobInterviewDetail />} />
+              <Route path="applied-jobs" element={<AppliedJobsLayout />}>
+                <Route index element={<AppliedJobsOverview />} />
+                <Route path="record" element={<AppliedJobsRecord />} />
+                <Route path="record/:id" element={<AppliedJobsRecord />} />
+                <Route path="analytics" element={<AppliedJobsAnalytics />} />
+                <Route path="interviews" element={<JobInterviews />} />
+                <Route path="interviews/:id" element={<JobInterviewDetail />} />
+                <Route path="settings" element={<AppliedJobsSettings />} />
+              </Route>
+              <Route path="job-interviews" element={<Navigate to="/dashboard/applied-jobs/interviews" replace />} />
+              <Route path="job-interviews/:id" element={<LegacyJobInterviewRedirect />} />
               <Route path="useful-links" element={<UsefulLinks />} />
             </Route>
 
@@ -112,8 +127,17 @@ const App = () => (
               <Route path="payments" element={<AdminPayments />} />
               <Route path="tasks" element={<AdminTaskPool />} />
               <Route path="personnel" element={<AdminPersonnel />} />
-              <Route path="job-interviews" element={<AdminJobInterviews />} />
-              <Route path="job-interviews/:id" element={<JobInterviewDetail />} />
+              <Route path="applied-jobs" element={<AppliedJobsLayout />}>
+                <Route index element={<AppliedJobsOverview />} />
+                <Route path="record" element={<AppliedJobsRecord />} />
+                <Route path="record/:id" element={<AppliedJobsRecord />} />
+                <Route path="analytics" element={<AppliedJobsAnalytics />} />
+                <Route path="interviews" element={<AdminJobInterviews />} />
+                <Route path="interviews/:id" element={<JobInterviewDetail />} />
+                <Route path="settings" element={<AppliedJobsSettings />} />
+              </Route>
+              <Route path="job-interviews" element={<Navigate to="/admin/applied-jobs/interviews" replace />} />
+              <Route path="job-interviews/:id" element={<LegacyJobInterviewRedirect />} />
               <Route path="useful-links" element={<AdminUsefulLinks />} />
               <Route path="settings" element={<AdminSettings />} />
             </Route>

@@ -35,6 +35,7 @@ export const PERSONNEL_SEARCH_COLUMNS = [
   'whatsapp',
   'main_skill_list',
   'notes',
+  'important_note',
   'overview',
 ] as const;
 
@@ -52,6 +53,7 @@ export const CLIENT_SEARCH_COLUMNS = [
   'whatsapp',
   'main_skill_list',
   'notes',
+  'important_note',
   'overview',
   'client_source',
   'industry',

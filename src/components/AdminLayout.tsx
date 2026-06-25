@@ -39,7 +39,7 @@ const adminItems = [
   { to: '/admin/clients', label: 'Manage Clients', icon: Users },
   { to: '/admin/tasks', label: 'Manage Tasks', icon: ClipboardList },
   { to: '/admin/personnel', label: 'Manage Personnel', icon: Users2 },
-  { to: '/admin/job-interviews', label: 'Job interviews', icon: CalendarClock },
+  { to: '/admin/applied-jobs', label: 'Applied jobs', icon: CalendarClock },
   { to: '/admin/useful-links', label: 'Manage Help', icon: HelpCircle },
   { to: '/admin/settings', label: 'Settings', icon: Settings },
 ] as const;

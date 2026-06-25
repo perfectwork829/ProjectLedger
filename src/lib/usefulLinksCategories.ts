@@ -21,7 +21,24 @@ export const USEFUL_LINK_CATEGORIES = [
 export type UsefulLinkCategoryValue = (typeof USEFUL_LINK_CATEGORIES)[number]['value'];
 
 export function usefulLinkCategoryLabel(value: string): string {
-  return USEFUL_LINK_CATEGORIES.find((c) => c.value === value)?.label ?? value;
+  const known = USEFUL_LINK_CATEGORIES.find((c) => c.value === value);
+  if (known) return known.label;
+  return value
+    .split(/[\s_]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+}
+
+/** Map typed topic text to a stable stored key (known presets or custom lowercase phrase). */
+export function normalizeUsefulLinkCategory(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) return 'general';
+  const lower = trimmed.toLowerCase();
+  for (const c of USEFUL_LINK_CATEGORIES) {
+    if (c.value === lower || c.label.toLowerCase() === lower) return c.value;
+  }
+  return lower.replace(/\s+/g, ' ');
 }
 
 /** Known category order first, then any other keys present in data (e.g. legacy values). */

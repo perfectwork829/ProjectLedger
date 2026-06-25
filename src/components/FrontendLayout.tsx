@@ -37,7 +37,7 @@ const navItems = [
   { to: '/dashboard/payments', label: 'Payments', icon: DollarSign },
   { to: '/dashboard/tasks', label: 'Tasks', icon: ClipboardList },
   { to: '/dashboard/personnel', label: 'Personnel', icon: Users2 },
-  { to: '/dashboard/job-interviews', label: 'Job interviews', icon: CalendarClock },
+  { to: '/dashboard/applied-jobs', label: 'Applied jobs', icon: CalendarClock },
   { to: '/dashboard/useful-links', label: 'Help', icon: HelpCircle },
 ];
 

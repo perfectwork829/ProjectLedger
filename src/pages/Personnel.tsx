@@ -18,6 +18,7 @@ import { formatBirthday, normalizeIdentityDocuments } from '@/lib/identityDocume
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { parseProfileBlocks, type ProfileBlock, type WorkHistoryEntry } from '@/lib/personnelProfileBlocks';
+import { ImportantNoteCard } from '@/components/ImportantNoteCard';
 
 interface PersonnelItem {
   id: string;
@@ -68,6 +69,7 @@ interface PersonnelItem {
   main_skill_list: string | null;
   met_place: string | null;
   notes: string | null;
+  important_note: string | null;
   overview: string | null;
   languages: string | null;
   hourly_rate_main: number | null;
@@ -302,6 +304,8 @@ export default function Personnel() {
             </div>
           </div>
         </div>
+
+        <ImportantNoteCard note={p.important_note} />
 
         {isDeveloperForJob ? (
           profileBlocks.length > 0 ? (

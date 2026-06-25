@@ -87,6 +87,8 @@ export interface TaskPoolItemRecord {
   user_id: string | null;
   name: string;
   description: string | null;
+  /** Reminder to read before working on or contacting about this task. */
+  important_note: string | null;
   /** HTML handbook: overview, installation, issues, versions, etc. */
   readme: string | null;
   skillset_csv: string | null;

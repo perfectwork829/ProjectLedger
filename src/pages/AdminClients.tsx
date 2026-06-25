@@ -18,7 +18,7 @@ import { Separator } from '@/components/ui/separator';
 import {
   Plus, Pencil, Trash2, ChevronRight, User, MapPin, Phone, Mail,
   Github, Linkedin, ExternalLink, GraduationCap, Heart, Briefcase,
-  Star, X, Copy, ThumbsUp, Globe, DollarSign, Building, Languages, Images,
+  Star, X, Copy, ThumbsUp, Globe, DollarSign, Building, Languages, Images, StickyNote,
 } from 'lucide-react';
 import FileUpload from '@/components/FileUpload';
 import PhoneInput from '@/components/PhoneInput';
@@ -35,6 +35,7 @@ import { filterItemsBySearch } from '@/lib/clientSearch';
 import { suggestedTimezoneForCountry } from '@/lib/timezones';
 import { CountrySelect } from '@/components/CountrySelect';
 import { TimezoneSelect } from '@/components/TimezoneSelect';
+import { ImportantNoteCard } from '@/components/ImportantNoteCard';
 
 interface Client {
   id: string;
@@ -88,6 +89,7 @@ interface Client {
   main_skill_list: string | null;
   met_place: string | null;
   notes: string | null;
+  important_note: string | null;
   overview: string | null;
   languages: string | null;
   hourly_rate_main: number | null;
@@ -255,7 +257,7 @@ const emptyForm = {
   marriage_status: '', children_status: '', skills: '' as string, achievements: '' as string,
   availability_status: 'available', employment_status: 'not_employed',
   activity_notes: '', working_project_name: '', working_history: '' as string,
-  main_skill_list: '' as string, met_place: '', notes: '',
+  main_skill_list: '' as string, met_place: '', notes: '', important_note: '',
   overview: '', languages: '' as string,
   hourly_rate_main: '', hourly_rate_discussed: '', expected_monthly_salary: '',
   preferred_payments: [] as string[],
@@ -494,7 +496,7 @@ export default function AdminClients() {
       employment_status: c.employment_status || 'not_employed',
       activity_notes: c.activity_notes || '', working_project_name: c.working_project_name || '',
       working_history: c.working_history || '', main_skill_list: c.main_skill_list || '',
-      met_place: c.met_place || '', notes: c.notes || '',
+      met_place: c.met_place || '', notes: c.notes || '', important_note: c.important_note || '',
       overview: c.overview || '', languages: c.languages || '',
       hourly_rate_main: c.hourly_rate_main?.toString() || '',
       hourly_rate_discussed: c.hourly_rate_discussed?.toString() || '',
@@ -549,6 +551,7 @@ export default function AdminClients() {
       working_history: form.working_history || null,
       main_skill_list: form.main_skill_list || null,
       met_place: form.met_place || null, notes: form.notes || null,
+      important_note: form.important_note || null,
       overview: form.overview || null, languages: form.languages || null,
       hourly_rate_main: form.hourly_rate_main ? parseFloat(form.hourly_rate_main) : null,
       hourly_rate_discussed: form.hourly_rate_discussed ? parseFloat(form.hourly_rate_discussed) : null,
@@ -692,6 +695,8 @@ export default function AdminClients() {
             <Button size="sm" variant="outline" onClick={() => confirmDelete(c.id, fullName)} className="gap-1.5 text-destructive hover:bg-destructive hover:text-destructive-foreground"><Trash2 className="h-3.5 w-3.5" />Delete</Button>
           </div>
         </div>
+
+        <ImportantNoteCard note={c.important_note} />
 
         {c.overview && <div className="bg-muted/50 rounded-lg p-4"><p className="text-sm text-foreground/80 whitespace-pre-line">{c.overview}</p></div>}
 
@@ -837,6 +842,16 @@ export default function AdminClients() {
               </TabsList>
 
               <TabsContent value="basic" className="space-y-4 pt-4">
+                <div className="space-y-2">
+                  <Label>Important Note</Label>
+                  <p className="text-xs text-muted-foreground">Reminder to read before contacting this client.</p>
+                  <Textarea
+                    value={form.important_note}
+                    onChange={(e) => set('important_note', e.target.value)}
+                    rows={3}
+                    placeholder="e.g. Only contact via company email, budget sensitive…"
+                  />
+                </div>
                 <div className="grid grid-cols-3 gap-4">
                   <div className="space-y-2"><Label>First Name *</Label><Input value={form.first_name} onChange={(e) => set('first_name', e.target.value)} /></div>
                   <div className="space-y-2"><Label>Middle Name</Label><Input value={form.middle_name} onChange={(e) => set('middle_name', e.target.value)} /></div>
@@ -1209,6 +1224,7 @@ export default function AdminClients() {
                       <div className="flex items-center gap-2">
                         <p className="font-medium text-foreground">{c.first_name} {c.last_name}</p>
                         {c.good_fit && <ThumbsUp className="h-3.5 w-3.5 text-emerald-500" />}
+                        {c.important_note?.trim() && <StickyNote className="h-3.5 w-3.5 text-amber-600" title="Has important note" />}
                       </div>
                       <div className="flex items-center gap-2 text-sm text-muted-foreground">
                         {c.title && <span>{c.title}</span>}

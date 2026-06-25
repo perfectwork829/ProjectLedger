@@ -19,6 +19,7 @@ import { ClientLinkedProjectsSection } from '@/components/ClientLinkedProjectsSe
 import { ClientLinkedTasksSection } from '@/components/ClientLinkedTasksSection';
 import { CLIENT_SEARCH_COLUMNS } from '@/lib/supabaseSearch';
 import { filterItemsBySearch } from '@/lib/clientSearch';
+import { ImportantNoteCard } from '@/components/ImportantNoteCard';
 
 interface ClientItem {
   id: string;
@@ -71,6 +72,7 @@ interface ClientItem {
   main_skill_list: string | null;
   met_place: string | null;
   notes: string | null;
+  important_note: string | null;
   overview: string | null;
   languages: string | null;
   hourly_rate_main: number | null;
@@ -264,6 +266,8 @@ export default function Clients() {
             </div>
           </div>
         </div>
+
+        <ImportantNoteCard note={c.important_note} />
 
         {c.overview && <div className="bg-muted/50 rounded-lg p-4"><p className="text-sm text-foreground/80 whitespace-pre-line">{c.overview}</p></div>}
 

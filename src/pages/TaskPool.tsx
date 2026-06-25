@@ -42,6 +42,7 @@ import {
   type TaskPoolListFilter,
 } from '@/lib/taskPoolFinance';
 import { formatJstYmdFromIso } from '@/lib/jst';
+import { ImportantNoteCard } from '@/components/ImportantNoteCard';
 import PoolSubtaskKanban from '@/components/PoolSubtaskKanban';
 import PoolSubtaskDetailDialog from '@/components/PoolSubtaskDetailDialog';
 import { LabeledLinksListWithCopy } from '@/components/LabeledLinksListWithCopy';
@@ -226,7 +227,7 @@ export default function TaskPool() {
     const q = searchInput.trim().toLowerCase();
     if (!q) return itemsForClientFilter;
     return itemsForClientFilter.filter((p) =>
-      [p.name, p.description, p.readme, p.task_source, p.main_stack, p.skillset_csv, p.tags_csv, p.status].filter(Boolean).join(' ').toLowerCase().includes(q),
+      [p.name, p.important_note, p.description, p.readme, p.task_source, p.main_stack, p.skillset_csv, p.tags_csv, p.status].filter(Boolean).join(' ').toLowerCase().includes(q),
     );
   }, [itemsForClientFilter, searchInput]);
 
@@ -1096,6 +1097,8 @@ export default function TaskPool() {
                   <span>Withdraw fee: {selected.currency} {Number(selected.withdraw_fee ?? 0).toFixed(2)}</span>
                 </div>
               </div>
+
+              <ImportantNoteCard note={selected.important_note} className="mb-4" />
 
               <Tabs defaultValue="overview" className="w-full">
                 <TabsList className="grid w-full grid-cols-6">
