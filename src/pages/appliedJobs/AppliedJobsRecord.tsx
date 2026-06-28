@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -14,6 +14,9 @@ import {
 } from '@/lib/jobApplications';
 import { allSourceOptions, parseJobPostingPaste } from '@/lib/jobApplicationParse';
 import { generateCoverLetter, generateTailoredResume } from '@/lib/jobApplicationCoverLetter';
+import { invokeJobApplicationAi } from '@/lib/jobApplicationAi';
+import { downloadTextAsDocx, downloadTextAsPdf, safeDownloadBasename } from '@/lib/jobApplicationDocuments';
+import { extractDocxText } from '@/lib/resumeDocxExtract';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -23,7 +26,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
-import { ArrowLeft, Copy, Download, Sparkles } from 'lucide-react';
+import { ArrowLeft, Copy, Download, Sparkles, Upload, Loader2 } from 'lucide-react';
 import { formatInTimeZone } from 'date-fns-tz';
 
 const emptyForm = {
@@ -40,6 +43,8 @@ const emptyForm = {
   application_status: 'applied',
   applied_at: new Date().toISOString().slice(0, 16),
   raw_posting_paste: '',
+  master_resume_text: '',
+  master_resume_url: '',
 };
 
 export default function AppliedJobsRecord() {
@@ -53,6 +58,10 @@ export default function AppliedJobsRecord() {
   const [saving, setSaving] = useState(false);
   const [companyHistory, setCompanyHistory] = useState<JobApplicationRow[]>([]);
   const [newSource, setNewSource] = useState('');
+  const [resumeUploading, setResumeUploading] = useState(false);
+  const [aiCoverLoading, setAiCoverLoading] = useState(false);
+  const [aiResumeLoading, setAiResumeLoading] = useState(false);
+  const resumeFileRef = useRef<HTMLInputElement>(null);
   const customSources = parseCustomSources(settings?.custom_sources);
   const sourceOptions = allSourceOptions(customSources);
   const tz = settings?.timezone || 'America/New_York';
@@ -78,8 +87,18 @@ export default function AppliedJobsRecord() {
       application_status: row.application_status,
       applied_at: row.applied_at.slice(0, 16),
       raw_posting_paste: row.raw_posting_paste || '',
+      master_resume_text: row.master_resume_text || '',
+      master_resume_url: row.master_resume_url || '',
     });
   }, [id, user?.id]);
+
+  useEffect(() => {
+    if (id || !settings) return;
+    setForm((p) => ({
+      ...p,
+      master_resume_text: p.master_resume_text || settings.master_resume_text || '',
+    }));
+  }, [id, settings]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -95,6 +114,14 @@ export default function AppliedJobsRecord() {
       .then(({ data }) => setCompanyHistory((data || []) as JobApplicationRow[]));
   }, [form.company_name, id, user?.id]);
 
+  const letterSettings = useMemo(() => {
+    if (!settings) return null;
+    return { ...settings, master_resume_text: form.master_resume_text || settings.master_resume_text || '' };
+  }, [settings, form.master_resume_text]);
+
+  const downloadBase = safeDownloadBasename(form.company_name, form.job_title, 'resume');
+  const coverBase = safeDownloadBasename(form.company_name, form.job_title, 'cover-letter');
+
   const toggleEmployment = (type: EmploymentType) => {
     setForm((p) => ({
       ...p,
@@ -104,53 +131,140 @@ export default function AppliedJobsRecord() {
     }));
   };
 
+  const handleResumeDocxUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.docx')) {
+      toast({ title: 'Please upload a .docx file', variant: 'destructive' });
+      return;
+    }
+    setResumeUploading(true);
+    try {
+      const text = await extractDocxText(file);
+      if (!text) {
+        toast({ title: 'Could not read resume text', description: 'Try pasting the content manually.', variant: 'destructive' });
+        return;
+      }
+      set('master_resume_text', text);
+
+      const ext = file.name.split('.').pop();
+      const fileName = `job-applications/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+      const { error } = await supabase.storage.from('account-files').upload(fileName, file);
+      if (!error) {
+        const { data: urlData } = supabase.storage.from('account-files').getPublicUrl(fileName);
+        set('master_resume_url', urlData.publicUrl);
+      }
+      toast({ title: 'Master resume loaded from .docx' });
+    } catch (err) {
+      toast({ title: 'Upload failed', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
+    } finally {
+      setResumeUploading(false);
+      if (resumeFileRef.current) resumeFileRef.current.value = '';
+    }
+  };
+
+  const generateCoverLetterWithAi = async (overrides?: {
+    company_name?: string;
+    job_title?: string;
+    job_description?: string;
+    location?: string;
+    compensation?: string;
+  }) => {
+    if (!letterSettings) return;
+    setAiCoverLoading(true);
+    try {
+      const { text } = await invokeJobApplicationAi({
+        action: 'cover_letter',
+        company_name: overrides?.company_name ?? form.company_name,
+        job_title: overrides?.job_title ?? form.job_title,
+        job_description: overrides?.job_description ?? form.job_description,
+        master_resume_text: letterSettings.master_resume_text || '',
+        cover_letter_name: letterSettings.cover_letter_name,
+        cover_letter_prefix: letterSettings.cover_letter_prefix,
+        cover_letter_infix: letterSettings.cover_letter_infix,
+        cover_letter_sentences: letterSettings.cover_letter_sentences,
+        location: overrides?.location ?? form.location,
+        compensation: overrides?.compensation ?? form.compensation,
+      });
+      set('cover_letter', text);
+      toast({ title: 'Cover letter generated with Gemini' });
+    } catch (err) {
+      const letter = generateCoverLetter({
+        company_name: overrides?.company_name ?? form.company_name,
+        job_title: overrides?.job_title ?? form.job_title,
+        job_description: overrides?.job_description ?? form.job_description,
+        settings: letterSettings,
+      });
+      set('cover_letter', letter);
+      toast({
+        title: 'AI unavailable — used local template',
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    } finally {
+      setAiCoverLoading(false);
+    }
+  };
+
   const parsePaste = () => {
     if (!form.raw_posting_paste.trim()) return;
     const parsed = parseJobPostingPaste(form.raw_posting_paste);
-    setForm((p) => {
-      const next = {
-        ...p,
-        company_name: parsed.company_name || p.company_name,
-        job_title: parsed.job_title || p.job_title,
-        employment_types: parsed.employment_types.length ? parsed.employment_types : p.employment_types,
-        compensation: parsed.compensation || p.compensation,
-        location: parsed.location || p.location,
-        source_platform: parsed.source_platform || p.source_platform,
-        job_link: parsed.job_link || p.job_link,
-        job_description: parsed.job_description || p.job_description,
-      };
-      return next;
+    setForm((p) => ({
+      ...p,
+      company_name: parsed.company_name || p.company_name,
+      job_title: parsed.job_title || p.job_title,
+      employment_types: parsed.employment_types.length ? parsed.employment_types : p.employment_types,
+      compensation: parsed.compensation || p.compensation,
+      location: parsed.location || p.location,
+      source_platform: parsed.source_platform || p.source_platform,
+      job_link: parsed.job_link || p.job_link,
+      job_description: parsed.job_description || p.job_description,
+    }));
+    void generateCoverLetterWithAi({
+      company_name: parsed.company_name,
+      job_title: parsed.job_title,
+      job_description: parsed.job_description,
+      location: parsed.location,
+      compensation: parsed.compensation,
     });
-    if (settings) {
-      const letter = generateCoverLetter({
-        company_name: parsed.company_name,
-        job_title: parsed.job_title,
-        job_description: parsed.job_description,
-        settings,
-      });
-      set('cover_letter', letter);
-    }
     toast({ title: 'Fields filled from posting' });
   };
 
   const regenCoverLetter = () => {
-    if (!settings) return;
-    const letter = generateCoverLetter({
-      company_name: form.company_name,
-      job_title: form.job_title,
-      job_description: form.job_description,
-      settings,
-    });
-    set('cover_letter', letter);
+    void generateCoverLetterWithAi();
   };
 
-  const regenResume = () => {
-    const text = generateTailoredResume({
-      job_title: form.job_title,
-      job_description: form.job_description,
-      master_resume_text: settings?.master_resume_text || '',
-    });
-    set('tailored_resume_text', text);
+  const regenResume = async () => {
+    if (!form.master_resume_text.trim()) {
+      toast({ title: 'Add your master resume first', variant: 'destructive' });
+      return;
+    }
+    setAiResumeLoading(true);
+    try {
+      const { text } = await invokeJobApplicationAi({
+        action: 'tailored_resume',
+        company_name: form.company_name,
+        job_title: form.job_title,
+        job_description: form.job_description,
+        master_resume_text: form.master_resume_text,
+      });
+      set('tailored_resume_text', text);
+      toast({ title: 'Tailored resume generated with Gemini' });
+    } catch (err) {
+      const text = generateTailoredResume({
+        job_title: form.job_title,
+        job_description: form.job_description,
+        master_resume_text: form.master_resume_text,
+      });
+      set('tailored_resume_text', text);
+      toast({
+        title: 'AI unavailable — used local template',
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    } finally {
+      setAiResumeLoading(false);
+    }
   };
 
   const handleSave = async () => {
@@ -174,6 +288,8 @@ export default function AppliedJobsRecord() {
       application_status: form.application_status,
       applied_at: new Date(form.applied_at).toISOString(),
       raw_posting_paste: form.raw_posting_paste || null,
+      master_resume_text: form.master_resume_text || null,
+      master_resume_url: form.master_resume_url || null,
       updated_at: new Date().toISOString(),
     };
     const res = id
@@ -275,13 +391,47 @@ export default function AppliedJobsRecord() {
             <Textarea value={form.job_description} onChange={(e) => set('job_description', e.target.value)} rows={8} />
           </div>
 
+          <div className="space-y-2 rounded-xl border bg-muted/20 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <Label>Your master resume</Label>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Paste your resume or attach a .docx — used to generate the tailored resume and cover letter for this application.
+                </p>
+              </div>
+              <Button type="button" size="sm" variant="outline" className="gap-1.5" disabled={resumeUploading} onClick={() => resumeFileRef.current?.click()}>
+                {resumeUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                Attach .docx
+              </Button>
+              <input ref={resumeFileRef} type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" className="hidden" onChange={(e) => void handleResumeDocxUpload(e)} />
+            </div>
+            {form.master_resume_url ? (
+              <p className="text-xs text-muted-foreground">
+                Attached file: <a href={form.master_resume_url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">Open uploaded .docx</a>
+              </p>
+            ) : null}
+            <Textarea
+              value={form.master_resume_text}
+              onChange={(e) => set('master_resume_text', e.target.value)}
+              rows={10}
+              placeholder="Paste your resume here — experience, skills, achievements, education…"
+            />
+          </div>
+
           <div className="space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <Label>Cover letter</Label>
               <div className="flex flex-wrap gap-2">
-                <Button type="button" size="sm" variant="outline" onClick={() => { void navigator.clipboard.writeText(form.cover_letter); toast({ title: 'Copied' }); }}><Copy className="h-3.5 w-3.5 mr-1" />Copy</Button>
-                <Button type="button" size="sm" variant="outline" onClick={regenCoverLetter}>Re-generate</Button>
-                <Button type="button" size="sm" variant="outline" onClick={regenResume}>Generate resume</Button>
+                <Button type="button" size="sm" variant="outline" disabled={!form.cover_letter.trim()} onClick={() => { void navigator.clipboard.writeText(form.cover_letter); toast({ title: 'Copied' }); }}><Copy className="h-3.5 w-3.5 mr-1" />Copy</Button>
+                <Button type="button" size="sm" variant="outline" disabled={!form.cover_letter.trim()} onClick={() => void downloadTextAsDocx(form.cover_letter, coverBase)}><Download className="h-3.5 w-3.5 mr-1" />Download .docx</Button>
+                <Button type="button" size="sm" variant="outline" disabled={aiCoverLoading} onClick={regenCoverLetter}>
+                  {aiCoverLoading ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : null}
+                  Re-generate
+                </Button>
+                <Button type="button" size="sm" variant="outline" disabled={aiResumeLoading} onClick={() => void regenResume()}>
+                  {aiResumeLoading ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : null}
+                  Generate resume
+                </Button>
               </div>
             </div>
             <Textarea value={form.cover_letter} onChange={(e) => set('cover_letter', e.target.value)} rows={10} placeholder="Paste a job posting above to auto-generate." />
@@ -289,13 +439,16 @@ export default function AppliedJobsRecord() {
 
           {form.tailored_resume_text ? (
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <Label>Tailored resume</Label>
-                <Button type="button" size="sm" variant="outline" onClick={() => {
-                  const blob = new Blob([form.tailored_resume_text], { type: 'text/plain' });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a'); a.href = url; a.download = 'resume-tailored.txt'; a.click();
-                }}><Download className="h-3.5 w-3.5 mr-1" />Download</Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" size="sm" variant="outline" onClick={() => void downloadTextAsDocx(form.tailored_resume_text, downloadBase)}>
+                    <Download className="h-3.5 w-3.5 mr-1" />Download .docx
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" onClick={() => downloadTextAsPdf(form.tailored_resume_text, downloadBase)}>
+                    <Download className="h-3.5 w-3.5 mr-1" />Download .pdf
+                  </Button>
+                </div>
               </div>
               <Textarea value={form.tailored_resume_text} onChange={(e) => set('tailored_resume_text', e.target.value)} rows={12} />
             </div>
@@ -307,6 +460,10 @@ export default function AppliedJobsRecord() {
           </div>
         </CardContent>
       </Card>
+
+      <p className="text-xs text-muted-foreground">
+        Cover letter and resume generation uses Google Gemini (free tier) via a secure edge function. If the API is unavailable, a local template is used instead.
+      </p>
 
       {companyHistory.length > 0 ? (
         <Card className="rounded-2xl shadow-md">

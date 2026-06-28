@@ -56,7 +56,7 @@ export function generateTailoredResume(opts: {
 }): string {
   const { job_title, job_description, master_resume_text } = opts;
   if (!master_resume_text.trim()) {
-    return 'Add your master resume in Settings to generate tailored versions.';
+    return 'Add your master resume on this page (paste or attach .docx) to generate tailored versions.';
   }
   const keywords = matchKeywords(job_description, master_resume_text);
   const header = job_title ? `TARGET ROLE: ${job_title}\n\n` : '';

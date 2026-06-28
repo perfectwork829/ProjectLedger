@@ -11,6 +11,13 @@ node_modules
 dist
 dist-ssr
 *.local
+.env
+.env.backup
+supabase/.env.local
+
+# Supabase backups and CLI temp state (never commit dumps or secrets)
+backups/
+supabase/.temp/
 
 # Editor directories and files
 .vscode/*

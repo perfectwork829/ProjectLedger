@@ -52,6 +52,8 @@ export interface JobApplicationRow {
   application_status: ApplicationStatus;
   applied_at: string;
   raw_posting_paste: string | null;
+  master_resume_text: string | null;
+  master_resume_url: string | null;
   metadata_json: Record<string, unknown> | null;
   archived_at: string | null;
   created_at: string;

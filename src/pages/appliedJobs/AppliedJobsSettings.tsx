@@ -1,27 +1,21 @@
-import { useState } from 'react';
 import { useJobApplicationSettings } from '@/hooks/useJobApplicationSettings';
 import { COMMON_TIMEZONES, timezoneDisplayName } from '@/lib/timezones';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 
 export default function AppliedJobsSettings() {
   const { settings, loading, save } = useJobApplicationSettings();
   const { toast } = useToast();
-  const [saving, setSaving] = useState(false);
 
   if (loading || !settings) {
     return <div className="flex justify-center py-16"><div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" /></div>;
   }
 
   const patch = async (p: Record<string, unknown>) => {
-    setSaving(true);
     const { error } = await save(p);
-    setSaving(false);
     if (error) toast({ title: 'Save failed', description: error.message, variant: 'destructive' });
     else toast({ title: 'Settings saved' });
   };
@@ -89,20 +83,12 @@ export default function AppliedJobsSettings() {
       </Card>
 
       <Card className="rounded-2xl">
-        <CardHeader><CardTitle className="text-base">Cover letter defaults</CardTitle><p className="text-sm text-muted-foreground">Used when auto-generating cover letters.</p></CardHeader>
+        <CardHeader><CardTitle className="text-base">Cover letter defaults</CardTitle><p className="text-sm text-muted-foreground">Name and greeting used when generating cover letters on the Record page.</p></CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2"><Label>Number of sentences</Label><Input type="number" value={settings.cover_letter_sentences} onChange={(e) => void patch({ cover_letter_sentences: Number(e.target.value) })} /></div>
           <div className="space-y-2"><Label>Your name</Label><Input value={settings.cover_letter_name || ''} onChange={(e) => void patch({ cover_letter_name: e.target.value })} /></div>
           <div className="space-y-2"><Label>Prefix (greeting)</Label><Input value={settings.cover_letter_prefix} onChange={(e) => void patch({ cover_letter_prefix: e.target.value })} /></div>
           <div className="space-y-2"><Label>Infix (sign-off)</Label><Input value={settings.cover_letter_infix} onChange={(e) => void patch({ cover_letter_infix: e.target.value })} /></div>
-        </CardContent>
-      </Card>
-
-      <Card className="rounded-2xl">
-        <CardHeader><CardTitle className="text-base">Your resume</CardTitle><p className="text-sm text-muted-foreground">Paste your master resume for tailoring and cover letters.</p></CardHeader>
-        <CardContent className="space-y-3">
-          <Textarea rows={12} value={settings.master_resume_text || ''} onChange={(e) => void patch({ master_resume_text: e.target.value })} placeholder="Paste your resume here — experience, skills, achievements, education…" />
-          <Button disabled={saving} onClick={() => toast({ title: 'Resume saved' })}>Save resume</Button>
         </CardContent>
       </Card>
     </div>
