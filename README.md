@@ -11,10 +11,13 @@ Freelance operations app (tasks, projects, clients, payments, personnel, and mor
 | [Env config guide](docs/guides/env-based-supabase-config.md) | Cloud vs local frontend |
 | [Local Supabase guide](docs/guides/local-supabase-development.md) | Docker local stack |
 
-Quick backup (after `supabase login` + `supabase link`):
+Quick backup:
 
 ```powershell
 copy .env.backup.example .env.backup
-# Set SUPABASE_SERVICE_ROLE_KEY in .env.backup
+# Set SUPABASE_DB_PASSWORD and SUPABASE_SERVICE_ROLE_KEY in .env.backup
+winget install PostgreSQL.PostgreSQL.17
 npm run backup:supabase
 ```
+
+See [Backup guide](docs/guides/backup-supabase.md) for details.
