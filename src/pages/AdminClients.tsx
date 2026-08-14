@@ -824,7 +824,11 @@ export default function AdminClients() {
 
   const FormDialog = (
     <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-      <DialogContent className="max-w-3xl max-h-[85vh] p-0">
+      <DialogContent
+        className="max-w-3xl max-h-[85vh] p-0"
+        onPointerDownOutside={(e) => e.preventDefault()}
+        onInteractOutside={(e) => e.preventDefault()}
+      >
         <DialogHeader className="px-6 pt-6 pb-0">
           <DialogTitle>{editingId ? 'Edit Client' : 'Add Client'}</DialogTitle>
         </DialogHeader>
