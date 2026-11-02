@@ -26,8 +26,8 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { PanelLeftClose, PanelLeftOpen, Trash2 } from 'lucide-react';
-import { CopyDescriptionButton } from '@/components/CopyDescriptionButton';
-import { ReadmePanel } from '@/components/ReadmePanel';
+import { DescriptionPanel, ReadmePanel } from '@/components/ReadmePanel';
+import { taskDescriptionPreview } from '@/lib/taskPriority';
 import { LabeledLinksListWithCopy, UrlFieldWithCopy } from '@/components/LabeledLinksListWithCopy';
 import { parseLabeledLinks } from '@/lib/taskPool';
 
@@ -336,7 +336,7 @@ export default function Projects() {
                     </div>
                     {project.project_source ? <p className="mt-1 text-xs text-muted-foreground capitalize">Project source(from): {project.project_source.replace('_', ' ')}</p> : null}
                     {project.main_stack ? <p className="mt-1 text-xs text-primary/90 capitalize">Stack: {project.main_stack.replace('_', ' ')}</p> : null}
-                    <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{project.description || 'No description'}</p>
+                    <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{taskDescriptionPreview(project.description, 20)}</p>
                     <p className="mt-2 text-xs text-muted-foreground">{clientLabel(project)}</p>
                   </button>
                   {project.client_id ? (
@@ -363,10 +363,6 @@ export default function Projects() {
             <CardContent className="pt-6">
               <div className="mb-4">
                 <h3 className="text-xl font-semibold">{selectedProject.name}</h3>
-                <div className="mt-1 flex items-start justify-between gap-2">
-                  <p className="text-sm text-muted-foreground flex-1 min-w-0">{selectedProject.description || 'No description added.'}</p>
-                  <CopyDescriptionButton description={selectedProject.description} />
-                </div>
                 {selectedProject.main_stack ? <Badge className="mt-2 capitalize">{selectedProject.main_stack.replace('_', ' ')}</Badge> : null}
                 {selectedProject.project_source ? <Badge variant="outline" className="mt-2 ml-2 capitalize">Project source(from): {selectedProject.project_source.replace('_', ' ')}</Badge> : null}
                 <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -519,6 +515,7 @@ export default function Projects() {
                   </div>
                 </TabsContent>
               </Tabs>
+              <DescriptionPanel description={selectedProject.description} className="mt-4" />
             </CardContent>
           )}
         </Card>

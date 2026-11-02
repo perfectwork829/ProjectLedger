@@ -53,7 +53,8 @@ import { LabeledLinksEditor } from '@/components/LabeledLinksEditor';
 import { LabeledLinksListWithCopy, UrlFieldWithCopy } from '@/components/LabeledLinksListWithCopy';
 import { CopyDescriptionButton } from '@/components/CopyDescriptionButton';
 import { RichTextEditor } from '@/components/RichTextEditor';
-import { ReadmePanel, README_EDITOR_PLACEHOLDER } from '@/components/ReadmePanel';
+import { DescriptionPanel, ReadmePanel, README_EDITOR_PLACEHOLDER } from '@/components/ReadmePanel';
+import { taskDescriptionPreview } from '@/lib/taskPriority';
 import { TagChipsInput } from '@/components/TagChipsInput';
 import type { LabeledLink } from '@/lib/taskPool';
 import { parseLabeledLinks, serializeLabeledLinks } from '@/lib/taskPool';
@@ -654,7 +655,7 @@ export default function AdminProjects() {
                     </div>
                     {project.project_source ? <p className="mt-1 text-xs text-muted-foreground capitalize">Project source(from): {project.project_source.replace('_', ' ')}</p> : null}
                     {project.main_stack ? <p className="mt-1 text-xs text-primary/90 capitalize">Stack: {project.main_stack.replace('_', ' ')}</p> : null}
-                    <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{project.description || 'No description'}</p>
+                    <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{taskDescriptionPreview(project.description, 20)}</p>
                     <div className="mt-2 flex flex-wrap gap-1">
                       {(project.tags_csv || '').split(',').map((t) => t.trim()).filter(Boolean).slice(0, 3).map((tag) => (
                         <Badge key={tag} variant="outline" className="text-[10px]">{tag}</Badge>
@@ -691,10 +692,6 @@ export default function AdminProjects() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <CardTitle className="text-xl">{selectedProject.name}</CardTitle>
-                    <div className="mt-1 flex items-start justify-between gap-2">
-                      <p className="text-sm text-muted-foreground flex-1 min-w-0">{selectedProject.description || 'No description added.'}</p>
-                      <CopyDescriptionButton description={selectedProject.description} />
-                    </div>
                     {selectedProject.main_stack ? <Badge className="mt-2 capitalize">{selectedProject.main_stack.replace('_', ' ')}</Badge> : null}
                     {selectedProject.project_source ? <Badge variant="outline" className="mt-2 ml-2 capitalize">Project source(from): {selectedProject.project_source.replace('_', ' ')}</Badge> : null}
                   </div>
@@ -932,6 +929,7 @@ export default function AdminProjects() {
                     </div>
                   </TabsContent>
                 </Tabs>
+                <DescriptionPanel description={selectedProject.description} className="mt-4" />
               </CardContent>
             </>
           )}
@@ -948,7 +946,11 @@ export default function AdminProjects() {
                 <Label>Description</Label>
                 <CopyDescriptionButton description={form.description} />
               </div>
-              <Textarea value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} />
+              <RichTextEditor
+                value={form.description}
+                onChange={(val) => setForm((p) => ({ ...p, description: val }))}
+                placeholder="Project details…"
+              />
             </div>
             <div className="space-y-2 md:col-span-2">
               <div className="flex items-center justify-between gap-2">
