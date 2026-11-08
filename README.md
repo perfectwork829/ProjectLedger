@@ -2,6 +2,12 @@
 
 Freelance operations app (tasks, projects, clients, payments, personnel, and more).
 
+## Project handover
+
+| Guide | Description |
+|-------|-------------|
+| [PROJECT-OVERVIEW.md](docs/PROJECT-OVERVIEW.md) | Architecture, modules, integrations, risks — start here for onboarding |
+
 ## Supabase backup & recovery
 
 | Guide | Description |
