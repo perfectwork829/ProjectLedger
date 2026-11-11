@@ -70,6 +70,14 @@ import TaskMilestonePaymentsPanel from '@/components/TaskMilestonePaymentsPanel'
 import TaskPaymentDueBadge from '@/components/TaskPaymentDueBadge';
 import TaskFinishPaymentDialog from '@/components/TaskFinishPaymentDialog';
 import TaskFinishButton from '@/components/TaskFinishButton';
+import ProjectLinksImportDialog from '@/components/ProjectLinksImportDialog';
+import {
+  candidatesFromPublishedLinks,
+  createProjectLinksFromCompletedTask,
+  publishedLinksFromPoolItem,
+  skillTagsFromPoolItem,
+  type ProjectLinkImportCandidate,
+} from '@/lib/projectLinks';
 import TaskPoolTableBandHeader from '@/components/TaskPoolTableBandHeader';
 import { cn } from '@/lib/utils';
 import {
@@ -125,6 +133,11 @@ export default function TaskPool() {
   const [newSubtaskColumn, setNewSubtaskColumn] = useState<PoolSubtaskStatus>('todo');
   const [taskDeleteConfirm, setTaskDeleteConfirm] = useState<{ id: string; title: string } | null>(null);
   const [finishDialog, setFinishDialog] = useState<{ task: TaskPoolItemRecord } | null>(null);
+  const [projectLinksOffer, setProjectLinksOffer] = useState<{
+    task: TaskPoolItemRecord;
+    candidates: ProjectLinkImportCandidate[];
+    skillTags: string[];
+  } | null>(null);
   const [subtaskDetailId, setSubtaskDetailId] = useState<string | null>(null);
   const [accrualPeriods, setAccrualPeriods] = useState<TaskPoolAccrualPeriodRow[]>([]);
   const [selectedPeriod, setSelectedPeriod] = useState<TaskPoolAccrualPeriodRow | null>(null);
@@ -417,16 +430,55 @@ export default function TaskPool() {
     setItems((prev) => prev.map((x) => (x.id === taskId ? (res.data as TaskPoolItemRecord) : x)));
   };
 
+  const offerProjectLinksIfNeeded = (task: TaskPoolItemRecord) => {
+    const links = publishedLinksFromPoolItem(task);
+    if (links.length === 0) return;
+    setProjectLinksOffer({
+      task,
+      candidates: candidatesFromPublishedLinks(links),
+      skillTags: skillTagsFromPoolItem(task),
+    });
+  };
+
   const confirmFinishTask = async (moveToProject: boolean) => {
     if (!finishDialog) return;
     const { task } = finishDialog;
     const finishedAt = new Date().toISOString();
     await applyPoolStatus(task.id, 'completed', finishedAt);
     setFinishDialog(null);
+    let latest: TaskPoolItemRecord = { ...task, status: 'completed', finished_at: finishedAt };
     if (moveToProject && !task.promoted_project_id) {
       await promoteIfNeeded(task.id);
+      const row = await supabase.from('task_pool_items').select('*').eq('id', task.id).maybeSingle();
+      if (row.data) latest = row.data as TaskPoolItemRecord;
     }
     toast({ title: 'Task completed' });
+    offerProjectLinksIfNeeded(latest);
+  };
+
+  const confirmProjectLinksImport = async (
+    candidates: ProjectLinkImportCandidate[],
+    skillTags: string[],
+  ) => {
+    if (!projectLinksOffer || !user?.id) return;
+    const { task } = projectLinksOffer;
+    setProjectLinksOffer(null);
+    const { data, error } = await createProjectLinksFromCompletedTask({
+      userId: user.id,
+      task,
+      candidates,
+      skillTags,
+    });
+    if (error) {
+      toast({ title: 'Could not add Project Links', description: error, variant: 'destructive' });
+      return;
+    }
+    if (data.length > 0) {
+      toast({
+        title: 'Added to Project Links',
+        description: `${data.length} link${data.length === 1 ? '' : 's'} saved under Projects → Project Links.`,
+      });
+    }
   };
 
   const openMilestoneConfirm = async (milestoneId: string) => {
@@ -1368,6 +1420,15 @@ export default function TaskPool() {
         }
         canPromoteToProject={!!finishDialog && !finishDialog.task.promoted_project_id}
         onConfirmFinish={(moveToProject) => void confirmFinishTask(moveToProject)}
+      />
+
+      <ProjectLinksImportDialog
+        open={!!projectLinksOffer}
+        onOpenChange={(open) => !open && setProjectLinksOffer(null)}
+        task={projectLinksOffer?.task ?? null}
+        initialCandidates={projectLinksOffer?.candidates ?? []}
+        initialSkillTags={projectLinksOffer?.skillTags ?? []}
+        onConfirm={(candidates, skillTags) => void confirmProjectLinksImport(candidates, skillTags)}
       />
 
       <AlertDialog open={!!taskDeleteConfirm} onOpenChange={(open) => !open && setTaskDeleteConfirm(null)}>

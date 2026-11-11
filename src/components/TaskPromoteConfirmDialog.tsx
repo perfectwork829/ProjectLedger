@@ -14,9 +14,17 @@ type Props = {
   onOpenChange: (open: boolean) => void;
   taskName: string | null;
   onConfirmPromote: () => void;
+  /** Fired when user declines moving to Projects (keep in pool). */
+  onDeclinePromote?: () => void;
 };
 
-export default function TaskPromoteConfirmDialog({ open, onOpenChange, taskName, onConfirmPromote }: Props) {
+export default function TaskPromoteConfirmDialog({
+  open,
+  onOpenChange,
+  taskName,
+  onConfirmPromote,
+  onDeclinePromote,
+}: Props) {
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
@@ -28,7 +36,7 @@ export default function TaskPromoteConfirmDialog({ open, onOpenChange, taskName,
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>No, keep in task pool</AlertDialogCancel>
+          <AlertDialogCancel onClick={() => onDeclinePromote?.()}>No, keep in task pool</AlertDialogCancel>
           <AlertDialogAction onClick={onConfirmPromote}>Yes, move to Projects</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

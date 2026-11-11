@@ -17,6 +17,8 @@ import AdminAccounts from "@/pages/AdminAccounts";
 import FreelancingAccounts from "@/pages/FreelancingAccounts";
 import Projects from "@/pages/Projects";
 import AdminProjects from "@/pages/AdminProjects";
+import ProjectLinks from "@/pages/ProjectLinks";
+import AdminProjectLinks from "@/pages/AdminProjectLinks";
 import AdminTaskPool from "@/pages/AdminTaskPool";
 import TaskPool from "@/pages/TaskPool";
 import AdminPersonnel from "@/pages/AdminPersonnel";
@@ -84,6 +86,7 @@ const App = () => (
             >
               <Route index element={<DashboardOverview />} />
               <Route path="projects" element={<Projects />} />
+              <Route path="projects/links" element={<ProjectLinks />} />
               <Route path="clients" element={<Clients />} />
               <Route path="accounts" element={<FreelancingAccounts />} />
               <Route path="payments" element={<Payments />} />
@@ -123,6 +126,7 @@ const App = () => (
               />
               <Route path="accounts" element={<AdminAccounts />} />
               <Route path="projects" element={<AdminProjects />} />
+              <Route path="projects/links" element={<AdminProjectLinks />} />
               <Route path="clients" element={<AdminClients />} />
               <Route path="payments" element={<AdminPayments />} />
               <Route path="tasks" element={<AdminTaskPool />} />

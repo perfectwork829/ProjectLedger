@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { X } from 'lucide-react';
 
 type TagChipsInputProps = {
@@ -9,6 +10,8 @@ type TagChipsInputProps = {
   values: string[];
   onChange: (next: string[]) => void;
   placeholder?: string;
+  /** Optional default / suggested tags shown as clickable chips. */
+  suggestions?: readonly string[];
 };
 
 function splitTokens(raw: string): string[] {
@@ -18,23 +21,34 @@ function splitTokens(raw: string): string[] {
     .filter(Boolean);
 }
 
-export function TagChipsInput({ label, values, onChange, placeholder }: TagChipsInputProps) {
+export function TagChipsInput({ label, values, onChange, placeholder, suggestions }: TagChipsInputProps) {
   const [draft, setDraft] = useState('');
+
+  const addTags = (parts: string[]) => {
+    if (parts.length === 0) return;
+    const next = [...values];
+    for (const p of parts) {
+      const t = p.trim();
+      if (!t) continue;
+      if (!next.some((x) => x.toLowerCase() === t.toLowerCase())) next.push(t);
+    }
+    onChange(next);
+  };
 
   const commitDraft = () => {
     const parts = splitTokens(draft);
     if (parts.length === 0) return;
-    const next = [...values];
-    for (const p of parts) {
-      if (!next.some((x) => x.toLowerCase() === p.toLowerCase())) next.push(p);
-    }
-    onChange(next);
+    addTags(parts);
     setDraft('');
   };
 
   const remove = (v: string) => {
     onChange(values.filter((x) => x !== v));
   };
+
+  const unusedSuggestions = (suggestions || []).filter(
+    (s) => !values.some((v) => v.toLowerCase() === s.toLowerCase()),
+  );
 
   return (
     <div className="space-y-2">
@@ -71,6 +85,22 @@ export function TagChipsInput({ label, values, onChange, placeholder }: TagChips
           }}
         />
       </div>
+      {unusedSuggestions.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {unusedSuggestions.map((s) => (
+            <Button
+              key={s}
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 text-xs font-normal text-muted-foreground"
+              onClick={() => addTags([s])}
+            >
+              + {s}
+            </Button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

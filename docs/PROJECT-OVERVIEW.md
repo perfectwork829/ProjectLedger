@@ -104,6 +104,7 @@ Both share the same data model; RLS is the real tenancy boundary.
 |-------|------|----------------|
 | `/dashboard` | `DashboardOverview.tsx` | Cross-module KPIs |
 | `/dashboard/projects` | `Projects.tsx` | Project list/detail |
+| `/dashboard/projects/links` | `ProjectLinks.tsx` | Client-shareable demos by skill (+ screenshots) |
 | `/dashboard/clients` | `Clients.tsx` | Client browse |
 | `/dashboard/accounts` | `FreelancingAccounts.tsx` | Marketplace/tool accounts |
 | `/dashboard/payments` | `Payments.tsx` | Ledger view |
@@ -132,6 +133,7 @@ Both share the same data model; RLS is the real tenancy boundary.
 | `/admin/accounts` | `AdminAccounts.tsx` | Full freelancing-account CRUD |
 | `/admin/payments` | `AdminPayments.tsx` | Manual ledger + task finance confirmations |
 | `/admin/projects` | `AdminProjects.tsx` | Full project CRUD |
+| `/admin/projects/links` | `AdminProjectLinks.tsx` | Project Links CRUD (skills, source, screenshots) |
 | `/admin/clients` | `AdminClients.tsx` | Full client CRUD |
 | `/admin/tasks` | `AdminTaskPool.tsx` | Largest module: pool CRUD, finance, accrual, promote-to-project, kanban |
 | `/admin/personnel` | `AdminPersonnel.tsx` | Personnel CRUD + profile blocks |
@@ -153,6 +155,7 @@ Both share the same data model; RLS is the real tenancy boundary.
 | Job applications | `jobApplications.ts`, `jobApplicationAi.ts`, parse/docs/cover letter | `job_applications`, `job_application_settings` |
 | Cloud | `cloud/googleDrive.ts`, `cloud/box.ts`, `driveFolderList.ts` | `user_cloud_storage_connections` |
 | Help | `usefulLinksCategories.ts` | `useful_links` |
+| Project Links | `projectLinks.ts`, `projectLinkSkills.ts` | `project_links` (skill tags, screenshots, source attribution; import prompt on task **completed**) |
 
 **Richest domain:** task pool → finance/accrual → promote-to-project (`promote_task_pool_to_project`).
 

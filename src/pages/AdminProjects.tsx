@@ -58,6 +58,7 @@ import { taskDescriptionPreview } from '@/lib/taskPriority';
 import { TagChipsInput } from '@/components/TagChipsInput';
 import type { LabeledLink } from '@/lib/taskPool';
 import { parseLabeledLinks, serializeLabeledLinks } from '@/lib/taskPool';
+import { ProjectsSectionNav } from '@/components/ProjectsSectionNav';
 
 const STATUS_OPTIONS = ['planning', 'active', 'blocked', 'qa', 'completed', 'cancelled'] as const;
 const PRIORITY_OPTIONS = ['low', 'medium', 'high', 'critical'] as const;
@@ -528,9 +529,12 @@ export default function AdminProjects() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight text-foreground">Manage Projects</h2>
-          <p className="text-sm text-muted-foreground">Project pool with client/account linkage, screenshots, chat, and developer tasks.</p>
+        <div className="space-y-2">
+          <ProjectsSectionNav base="admin" />
+          <div>
+            <h2 className="text-2xl font-semibold tracking-tight text-foreground">Manage Projects</h2>
+            <p className="text-sm text-muted-foreground">Project pool with client/account linkage, screenshots, chat, and developer tasks.</p>
+          </div>
         </div>
         <div className="flex w-full max-w-2xl gap-3">
           <ModuleSearchBar value={searchInput} onChange={setSearchInput} placeholder="Search projects, clients, tags, statuses..." id="admin-project-search" />

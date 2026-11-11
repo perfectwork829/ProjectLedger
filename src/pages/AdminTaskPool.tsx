@@ -118,6 +118,14 @@ import { buildPoolStatusTransitionFields } from '@/lib/taskPoolStatusTransitions
 import TaskPaymentDueBadge from '@/components/TaskPaymentDueBadge';
 import TaskFinishPaymentDialog from '@/components/TaskFinishPaymentDialog';
 import TaskFinishButton from '@/components/TaskFinishButton';
+import ProjectLinksImportDialog from '@/components/ProjectLinksImportDialog';
+import {
+  candidatesFromPublishedLinks,
+  createProjectLinksFromCompletedTask,
+  publishedLinksFromPoolItem,
+  skillTagsFromPoolItem,
+  type ProjectLinkImportCandidate,
+} from '@/lib/projectLinks';
 import TaskPromoteConfirmDialog from '@/components/TaskPromoteConfirmDialog';
 import TaskPoolTableBandHeader from '@/components/TaskPoolTableBandHeader';
 import { cn } from '@/lib/utils';
@@ -274,7 +282,16 @@ export default function AdminTaskPool() {
   const [selectedPeriod, setSelectedPeriod] = useState<TaskPoolAccrualPeriodRow | null>(null);
   const [milestoneConfirmLoadingId, setMilestoneConfirmLoadingId] = useState<string | null>(null);
   const [finishDialog, setFinishDialog] = useState<{ task: TaskPoolItemRecord; newStatus: string } | null>(null);
-  const [promoteConfirm, setPromoteConfirm] = useState<{ poolId: string; taskName: string } | null>(null);
+  const [promoteConfirm, setPromoteConfirm] = useState<{
+    poolId: string;
+    taskName: string;
+    task: TaskPoolItemRecord;
+  } | null>(null);
+  const [projectLinksOffer, setProjectLinksOffer] = useState<{
+    task: TaskPoolItemRecord;
+    candidates: ProjectLinkImportCandidate[];
+    skillTags: string[];
+  } | null>(null);
 
   const formFees = useMemo(
     () =>
@@ -1030,8 +1047,20 @@ export default function AdminTaskPool() {
     const newlyCompleted =
       form.status === 'completed' && (existing?.status !== 'completed' || !editingId);
     if (newlyCompleted && !existing?.promoted_project_id) {
-      setPromoteConfirm({ poolId, taskName: form.name.trim() });
+      setPromoteConfirm({ poolId, taskName: form.name.trim(), task: savedRow });
+    } else if (newlyCompleted) {
+      offerProjectLinksIfNeeded(savedRow);
     }
+  };
+
+  const offerProjectLinksIfNeeded = (task: TaskPoolItemRecord) => {
+    const links = publishedLinksFromPoolItem(task);
+    if (links.length === 0) return;
+    setProjectLinksOffer({
+      task,
+      candidates: candidatesFromPublishedLinks(links),
+      skillTags: skillTagsFromPoolItem(task),
+    });
   };
 
   const openEditLastHourlyAccrual = async (row: TaskPoolItemRecord) => {
@@ -1231,17 +1260,48 @@ export default function AdminTaskPool() {
     const finishedAt = new Date().toISOString();
     await applyDetailStatus(task.id, finishDialog.newStatus, finishedAt);
     setFinishDialog(null);
+    let latest: TaskPoolItemRecord = { ...task, status: 'completed', finished_at: finishedAt };
     if (moveToProject && !task.promoted_project_id) {
       await promoteIfNeeded(task.id, 'completed');
+      const row = await supabase.from('task_pool_items').select('*').eq('id', task.id).maybeSingle();
+      if (row.data) latest = row.data as TaskPoolItemRecord;
     }
     toast({ title: 'Task completed', description: 'Confirm any due payments on the Payments page.' });
+    offerProjectLinksIfNeeded(latest);
   };
 
   const confirmPromoteToProject = async () => {
     if (!promoteConfirm) return;
-    const { poolId } = promoteConfirm;
+    const { poolId, task } = promoteConfirm;
     setPromoteConfirm(null);
     await promoteIfNeeded(poolId, 'completed');
+    const row = await supabase.from('task_pool_items').select('*').eq('id', poolId).maybeSingle();
+    offerProjectLinksIfNeeded((row.data as TaskPoolItemRecord) || task);
+  };
+
+  const confirmProjectLinksImport = async (
+    candidates: ProjectLinkImportCandidate[],
+    skillTags: string[],
+  ) => {
+    if (!projectLinksOffer || !user?.id) return;
+    const { task } = projectLinksOffer;
+    setProjectLinksOffer(null);
+    const { data, error } = await createProjectLinksFromCompletedTask({
+      userId: user.id,
+      task,
+      candidates,
+      skillTags,
+    });
+    if (error) {
+      toast({ title: 'Could not add Project Links', description: error, variant: 'destructive' });
+      return;
+    }
+    if (data.length > 0) {
+      toast({
+        title: 'Added to Project Links',
+        description: `${data.length} link${data.length === 1 ? '' : 's'} saved. Manage under Projects → Project Links.`,
+      });
+    }
   };
 
   const addSubtask = async () => {
@@ -2315,8 +2375,19 @@ export default function AdminTaskPool() {
         onOpenChange={(open) => !open && setPromoteConfirm(null)}
         taskName={promoteConfirm?.taskName ?? null}
         onConfirmPromote={() => void confirmPromoteToProject()}
+        onDeclinePromote={() => {
+          if (promoteConfirm) offerProjectLinksIfNeeded(promoteConfirm.task);
+        }}
       />
 
+      <ProjectLinksImportDialog
+        open={!!projectLinksOffer}
+        onOpenChange={(open) => !open && setProjectLinksOffer(null)}
+        task={projectLinksOffer?.task ?? null}
+        initialCandidates={projectLinksOffer?.candidates ?? []}
+        initialSkillTags={projectLinksOffer?.skillTags ?? []}
+        onConfirm={(candidates, skillTags) => void confirmProjectLinksImport(candidates, skillTags)}
+      />
 
       <Dialog
         open={dialogOpen}

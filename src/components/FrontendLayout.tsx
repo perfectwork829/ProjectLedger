@@ -1,4 +1,4 @@
-import { Outlet, NavLink, Link, useNavigate } from 'react-router-dom';
+import { Outlet, NavLink, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import {
@@ -16,6 +16,7 @@ import {
   HelpCircle,
   ChevronDown,
   CalendarClock,
+  Link2,
 } from 'lucide-react';
 import { JobInterviewReminders } from '@/components/JobInterviewReminders';
 import { useState } from 'react';
@@ -31,7 +32,6 @@ import {
 
 const navItems = [
   { to: '/dashboard', label: 'Overview', icon: LayoutDashboard },
-  { to: '/dashboard/projects', label: 'Projects', icon: FolderKanban },
   { to: '/dashboard/clients', label: 'Clients', icon: Users },
   { to: '/dashboard/accounts', label: 'Accounts', icon: CreditCard },
   { to: '/dashboard/payments', label: 'Payments', icon: DollarSign },
@@ -39,12 +39,68 @@ const navItems = [
   { to: '/dashboard/personnel', label: 'Personnel', icon: Users2 },
   { to: '/dashboard/applied-jobs', label: 'Applied jobs', icon: CalendarClock },
   { to: '/dashboard/useful-links', label: 'Help', icon: HelpCircle },
-];
+] as const;
+
+function ProjectsNavHover({ linkClass }: { linkClass: (args: { isActive: boolean }) => string }) {
+  const { pathname } = useLocation();
+  const projectsActive =
+    pathname === '/dashboard/projects' || pathname.startsWith('/dashboard/projects/');
+
+  return (
+    <div className="group relative flex items-stretch">
+      <NavLink
+        to="/dashboard/projects"
+        className={() => linkClass({ isActive: projectsActive })}
+        aria-haspopup="menu"
+      >
+        <FolderKanban className="h-[15px] w-[15px] shrink-0 opacity-90" strokeWidth={2} />
+        Projects
+        <ChevronDown className="h-3 w-3 opacity-70" />
+      </NavLink>
+      {/* Hover bridge + flyout */}
+      <div
+        className={cn(
+          'invisible absolute left-0 top-full z-50 min-w-[200px] pt-1 opacity-0 transition-opacity',
+          'group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100',
+        )}
+        role="menu"
+        aria-label="Projects submenu"
+      >
+        <div className="rounded-md border bg-popover p-1 text-popover-foreground shadow-md">
+          <Link
+            to="/dashboard/projects"
+            role="menuitem"
+            className={cn(
+              'flex items-center gap-2 rounded-sm px-3 py-2 text-sm outline-none transition-colors hover:bg-accent hover:text-accent-foreground',
+              pathname === '/dashboard/projects' && 'bg-accent/60 font-medium',
+            )}
+          >
+            <FolderKanban className="h-4 w-4 shrink-0 opacity-80" />
+            Projects
+          </Link>
+          <Link
+            to="/dashboard/projects/links"
+            role="menuitem"
+            className={cn(
+              'flex items-center gap-2 rounded-sm px-3 py-2 text-sm outline-none transition-colors hover:bg-accent hover:text-accent-foreground',
+              pathname.startsWith('/dashboard/projects/links') && 'bg-accent/60 font-medium',
+            )}
+          >
+            <Link2 className="h-4 w-4 shrink-0 opacity-80" />
+            Project Links
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function FrontendLayout() {
   const { user, signOut, hasRole } = useAuth();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [mobileProjectsOpen, setMobileProjectsOpen] = useState(false);
   const isAdmin = hasRole('admin');
   const email = user?.email || '';
   const userInitial = email ? email.charAt(0).toUpperCase() : 'U';
@@ -68,6 +124,9 @@ export default function FrontendLayout() {
     navigate('/login');
   };
 
+  const projectsActive =
+    pathname === '/dashboard/projects' || pathname.startsWith('/dashboard/projects/');
+
   return (
     <div className="flex min-h-screen flex-col bg-background">
       <JobInterviewReminders />
@@ -88,8 +147,13 @@ export default function FrontendLayout() {
             </Link>
 
             <nav className="hidden items-stretch md:flex md:gap-0 lg:gap-1">
+              <NavLink to="/dashboard" end className={linkClass}>
+                <LayoutDashboard className="h-[15px] w-[15px] shrink-0 opacity-90" strokeWidth={2} />
+                Overview
+              </NavLink>
+              <ProjectsNavHover linkClass={linkClass} />
               {navItems.map((item) => (
-                <NavLink key={item.to} to={item.to} end={item.to === '/dashboard'} className={linkClass}>
+                <NavLink key={item.to} to={item.to} className={linkClass}>
                   <item.icon className="h-[15px] w-[15px] shrink-0 opacity-90" strokeWidth={2} />
                   {item.label}
                 </NavLink>
@@ -156,11 +220,55 @@ export default function FrontendLayout() {
         {mobileMenuOpen && (
           <nav className="border-t border-border bg-card px-4 py-3 md:hidden">
             <div className="flex flex-col gap-0.5">
+              <NavLink
+                to="/dashboard"
+                end
+                className={mobileLinkClass}
+                onClick={() => setMobileMenuOpen(false)}
+              >
+                <LayoutDashboard className="h-4 w-4" />
+                Overview
+              </NavLink>
+              <button
+                type="button"
+                className={cn(
+                  'flex w-full items-center justify-between rounded-md px-3 py-2.5 text-sm font-medium transition-colors',
+                  projectsActive ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                )}
+                onClick={() => setMobileProjectsOpen((v) => !v)}
+                aria-expanded={mobileProjectsOpen}
+              >
+                <span className="flex items-center gap-2">
+                  <FolderKanban className="h-4 w-4" />
+                  Projects
+                </span>
+                <ChevronDown className={cn('h-4 w-4 transition-transform', mobileProjectsOpen && 'rotate-180')} />
+              </button>
+              {mobileProjectsOpen ? (
+                <div className="mb-1 ml-4 flex flex-col gap-0.5 border-l border-border pl-2">
+                  <NavLink
+                    to="/dashboard/projects"
+                    end
+                    className={mobileLinkClass}
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    <FolderKanban className="h-4 w-4" />
+                    Projects
+                  </NavLink>
+                  <NavLink
+                    to="/dashboard/projects/links"
+                    className={mobileLinkClass}
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    <Link2 className="h-4 w-4" />
+                    Project Links
+                  </NavLink>
+                </div>
+              ) : null}
               {navItems.map((item) => (
                 <NavLink
                   key={item.to}
                   to={item.to}
-                  end={item.to === '/dashboard'}
                   className={mobileLinkClass}
                   onClick={() => setMobileMenuOpen(false)}
                 >
