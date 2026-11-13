@@ -30,8 +30,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 
+/** Flat nav items after Overview + Projects (Projects is a hover submenu). */
 const navItems = [
-  { to: '/dashboard', label: 'Overview', icon: LayoutDashboard },
   { to: '/dashboard/clients', label: 'Clients', icon: Users },
   { to: '/dashboard/accounts', label: 'Accounts', icon: CreditCard },
   { to: '/dashboard/payments', label: 'Payments', icon: DollarSign },
